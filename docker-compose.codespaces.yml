@@ -9,8 +9,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      api-gateway:
-        condition: service_started
       web:
         condition: service_started
       mcp:
