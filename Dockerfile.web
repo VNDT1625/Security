@@ -4,6 +4,7 @@ WORKDIR /app
 COPY frontend/web/package*.json ./
 RUN npm ci
 COPY frontend/web/ ./
+COPY logo-removebg.png ./logo-removebg.png
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_API_BASE_URL=https://api.prewise.site
 ARG NEXT_PUBLIC_WS_BASE_URL=wss://api.prewise.site
@@ -21,6 +22,7 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/logo-removebg.png ./logo-removebg.png
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/next.config.js ./next.config.js
 EXPOSE 3000
