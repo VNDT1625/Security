@@ -1,5 +1,6 @@
 *
 !Dockerfile.web
+!logo-removebg.png
 !frontend/
 !frontend/web/
 !frontend/web/**
