@@ -9,6 +9,6 @@ if [[ ! -s .aisec-data/armor.db ]]; then
 fi
 
 docker compose --env-file .env.codespaces -f docker-compose.production.yml up -d postgres
-docker compose --env-file .env.codespaces -f docker-compose.production.yml run --rm migrate
-docker compose --profile data-migration --env-file .env.codespaces -f docker-compose.production.yml run --rm data-migrate
+docker compose --env-file .env.codespaces -f docker-compose.production.yml run --build --rm migrate
+docker compose --profile data-migration --env-file .env.codespaces -f docker-compose.production.yml run --build --rm data-migrate
 echo "Existing SQLite data has been copied and verified in PostgreSQL."
