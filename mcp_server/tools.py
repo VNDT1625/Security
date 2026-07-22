@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from backend.config import settings
 from backend.dependencies import get_inference_service
 from backend.middleware import sanitize_text
+from backend.services.exe_quick_scan_service import exe_quick_scan_service
 from backend.services.inference_service import InferenceService
+from security.exe_quick_scan import ExeQuickScanService
 from shared.schemas import AgentContext, Decision
+from shared.trusted_popular_domains import trusted_popular_assessment
 
 _DECISION_TO_VERDICT = {
     Decision.ALLOW: "ALLOW",
@@ -81,12 +88,61 @@ class FileInput(StrictInput):
     path: str = Field(min_length=1, max_length=512)
 
 
+class ExeQuickScanInput(FileInput):
+    share_with_provider: bool = Field(
+        default=False,
+        description=(
+            "Upload the executable to the configured reputation provider only after "
+            "the user has explicitly consented. False still performs local PE analysis "
+            "and a hash reputation lookup when available."
+        ),
+    )
+
+
+class ExeProviderReportInput(StrictInput):
+    data_id: str = Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9._~=-]+$")
+
+
+class ExeQuickScanContentInput(StrictInput):
+    filename: str = Field(min_length=5, max_length=180)
+    content_base64: str = Field(
+        min_length=4,
+        max_length=20_000_000,
+        description="Base64-encoded EXE bytes. Content is never executed.",
+    )
+    share_with_provider: bool = Field(
+        default=False,
+        description=(
+            "Upload the executable to the configured reputation provider only after "
+            "the user has explicitly consented."
+        ),
+    )
+
+    @field_validator("filename")
+    @classmethod
+    def require_safe_exe_filename(cls, value: str) -> str:
+        if "/" in value or "\\" in value or not value.lower().endswith(".exe"):
+            raise ValueError("filename must be a basename ending in .exe")
+        return value
+
+    @field_validator("content_base64")
+    @classmethod
+    def require_valid_bounded_base64(cls, value: str) -> str:
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("content_base64 is invalid") from exc
+        if len(decoded) > settings.max_upload_bytes:
+            raise ValueError(f"decoded file exceeds {settings.max_upload_bytes} bytes")
+        return value
+
+
 class SummaryInput(StrictInput):
     risk_score: float = Field(ge=0.0, le=1.0)
     evidence: list[str] = Field(default_factory=list, max_length=50)
 
 
-TOOL_SCHEMAS: dict[str, type[StrictInput]] = {
+TOOL_SCHEMAS: dict[str, type[BaseModel]] = {
     "prewise_connection_test": PingInput,
     "assess_url": URLInput,
     "assess_text": TextInput,
@@ -95,11 +151,36 @@ TOOL_SCHEMAS: dict[str, type[StrictInput]] = {
     "assess_action": ActionInput,
     "assess_page": PageInput,
     "assess_file_static": FileInput,
+    "quick_scan_exe": ExeQuickScanInput,
+    "quick_scan_exe_content": ExeQuickScanContentInput,
+    "get_exe_quick_scan_report": ExeProviderReportInput,
     "summarize_risk_safely": SummaryInput,
     # Backward-compatible names used by early extension/agent integrations.
     "check_url_before_click": URLInput,
     "check_content_before_processing": TextInput,
     "check_action_before_execution": ActionInput,
+}
+
+TOOL_REQUIRED_SCOPES: dict[str, str] = {
+    "assess_url": "assess:url",
+    "assess_text": "assess:content",
+    "assess_tool_output": "assess:content",
+    "scan_prompt_injection": "assess:prompt",
+    "assess_action": "assess:action",
+    "assess_page": "assess:content",
+    "assess_file_static": "assess:file",
+    "quick_scan_exe": "assess:file",
+    "quick_scan_exe_content": "assess:file",
+    "get_exe_quick_scan_report": "assess:file",
+    "check_url_before_click": "assess:url",
+    "check_content_before_processing": "assess:content",
+    "check_action_before_execution": "assess:action",
+}
+
+FREE_TOOLS = {
+    "prewise_connection_test",
+    "summarize_risk_safely",
+    "get_exe_quick_scan_report",
 }
 
 
@@ -120,6 +201,22 @@ TOOL_DEFINITIONS = [
     _schema("assess_action", "Assess an agent action before execution."),
     _schema("assess_page", "Assess sanitized HTML/page content and forms."),
     _schema("assess_file_static", "Statically inspect a file inside the MCP sandbox directory."),
+    _schema(
+        "quick_scan_exe",
+        "Quick-scan a Windows .exe inside the MCP sandbox without executing it. "
+        "Performs local PE analysis and optional reputation lookup; sample upload "
+        "requires explicit user consent.",
+    ),
+    _schema(
+        "quick_scan_exe_content",
+        "Quick-scan base64-encoded Windows EXE content supplied by a remote MCP client. "
+        "The file is never executed; external sample upload requires explicit consent "
+        "and a dedicated scope.",
+    ),
+    _schema(
+        "get_exe_quick_scan_report",
+        "Poll the configured reputation provider for a queued EXE quick-scan report.",
+    ),
     _schema("summarize_risk_safely", "Create a deterministic summary from evidence only."),
 ]
 
@@ -161,16 +258,29 @@ def _assessment_json(result) -> dict[str, Any]:
     }
 
 
+def normalize_tool_response(result: dict[str, Any]) -> dict[str, Any]:
+    """Add a stable agent-facing envelope without removing legacy fields."""
+    response = dict(result)
+    response.setdefault("schema_version", "1.0")
+    response.setdefault("request_id", str(uuid4()))
+    response.setdefault("ok", "error" not in response)
+    if "verdict" in response:
+        response.setdefault("agent_verdict", response["verdict"])
+    return response
+
+
 class MCPTools:
     def __init__(
         self,
         service: InferenceService | None = None,
         sandbox_dir: Path | None = None,
+        exe_scan_service: ExeQuickScanService | None = None,
     ) -> None:
         # Reuse the gateway singleton so MCP loads the configured ai/models artifacts
         # and the exact same thresholds/policy as web, extension, and desktop clients.
         self.service = service or get_inference_service()
         self.sandbox_dir = (sandbox_dir or Path(os.getenv("MCP_SANDBOX_DIR", ".mcp-sandbox"))).resolve()
+        self.exe_scan_service = exe_scan_service or exe_quick_scan_service
 
     @staticmethod
     def prewise_connection_test(payload: PingInput) -> dict[str, Any]:
@@ -182,7 +292,10 @@ class MCPTools:
         }
 
     def assess_url(self, payload: URLInput) -> dict[str, Any]:
-        return _assessment_json(self.service.assess_url(payload.url, payload.context))
+        trusted_result = trusted_popular_assessment(payload.url)
+        return _assessment_json(
+            trusted_result or self.service.assess_url(payload.url, payload.context)
+        )
 
     def assess_text(self, payload: TextInput) -> dict[str, Any]:
         modality = payload.content_type if payload.content_type in {"email", "sms", "text"} else "text"
@@ -264,6 +377,9 @@ class MCPTools:
             "evidence": _evidence_json(result.evidence),
             "recommended_agent_behavior": result.recommended_agent_behavior,
             "requires_user_confirmation": result.requires_user_confirmation,
+            "legal_rag_status": result.legal_rag_status,
+            "legal_review_required": result.legal_review_required,
+            "legal_references": result.legal_references,
             "enforcement": {
                 "proceed": result.decision in {Decision.ALLOW, Decision.WARN},
                 "ask_user": result.requires_user_confirmation,
@@ -297,6 +413,100 @@ class MCPTools:
             return {"error": "invalid_input", "detail": "file exceeds 10 MB", "request_id": ""}
         return _assessment_json(self.service.assess_file(candidate.read_bytes(), candidate.name))
 
+    def quick_scan_exe(self, payload: ExeQuickScanInput) -> dict[str, Any]:
+        candidate = (self.sandbox_dir / payload.path).resolve()
+        if not candidate.is_relative_to(self.sandbox_dir):
+            return {"error": "invalid_input", "detail": "path escapes MCP sandbox", "request_id": ""}
+        if not candidate.is_file():
+            return {"error": "not_found", "detail": "file not found in MCP sandbox", "request_id": ""}
+        if candidate.suffix.lower() != ".exe":
+            return {"error": "invalid_input", "detail": "quick scan only accepts .exe files", "request_id": ""}
+        if candidate.stat().st_size > settings.max_upload_bytes:
+            return {
+                "error": "invalid_input",
+                "detail": f"file exceeds {settings.max_upload_bytes} bytes",
+                "request_id": "",
+            }
+        result = self.exe_scan_service.inspect(
+            candidate.read_bytes(),
+            candidate.name,
+            share_with_provider=payload.share_with_provider,
+        )
+        return self._format_exe_result(result)
+
+    def quick_scan_exe_content(
+        self,
+        payload: ExeQuickScanContentInput,
+    ) -> dict[str, Any]:
+        try:
+            data = base64.b64decode(payload.content_base64, validate=True)
+        except (binascii.Error, ValueError):
+            return {"error": "invalid_input", "detail": "content_base64 is invalid"}
+        if len(data) > settings.max_upload_bytes:
+            return {
+                "error": "invalid_input",
+                "detail": f"file exceeds {settings.max_upload_bytes} bytes",
+            }
+        result = self.exe_scan_service.inspect(
+            data,
+            payload.filename,
+            share_with_provider=payload.share_with_provider,
+        )
+        return self._format_exe_result(result)
+
+    @staticmethod
+    def _format_exe_result(result: dict[str, Any]) -> dict[str, Any]:
+        scan_verdict = result.get("verdict", "unknown")
+        scan_risk_score = max(0, min(100, int(result.get("risk_score", 0))))
+        agent_verdict = {
+            "dangerous": "BLOCK",
+            "suspicious": "WARN",
+            "no_obvious_theft_detected": "ALLOW",
+            "unknown": "WARN",
+        }.get(str(scan_verdict), "WARN")
+        result.update(
+            {
+                "scan_verdict": scan_verdict,
+                "scan_risk_score": scan_risk_score,
+                "risk_score": round(scan_risk_score / 100, 4),
+                "verdict": agent_verdict,
+                "agent_verdict": agent_verdict,
+                "requires_user_confirmation": False,
+                "recommended_agent_behavior": {
+                    "ALLOW": "Static checks found no obvious threat; retain normal caution.",
+                    "WARN": "Do not execute automatically; request review or deeper sandbox analysis.",
+                    "BLOCK": "Do not execute; quarantine the file.",
+                }[agent_verdict],
+                "enforcement": {
+                    "proceed": agent_verdict == "ALLOW",
+                    "ask_user": agent_verdict == "WARN",
+                    "disable_tools": agent_verdict == "BLOCK",
+                    "quarantine_content": agent_verdict == "BLOCK",
+                },
+            }
+        )
+        return result
+
+    def get_exe_quick_scan_report(
+        self,
+        payload: ExeProviderReportInput,
+    ) -> dict[str, Any]:
+        result = self.exe_scan_service.provider_report(payload.data_id)
+        provider_risk_score = max(0, min(100, int(result.get("risk_score", 0))))
+        result["provider_risk_score"] = provider_risk_score
+        result["risk_score"] = round(provider_risk_score / 100, 4)
+        if result.get("status") in {"known", "completed"}:
+            verdict = (
+                "BLOCK"
+                if provider_risk_score >= 75
+                else "WARN"
+                if provider_risk_score >= 35
+                else "ALLOW"
+            )
+            result["verdict"] = verdict
+            result["agent_verdict"] = verdict
+        return result
+
     @staticmethod
     def summarize_risk_safely(payload: SummaryInput) -> dict[str, Any]:
         level = "cao" if payload.risk_score >= 0.7 else "trung bình" if payload.risk_score >= 0.4 else "thấp"
@@ -307,7 +517,11 @@ class MCPTools:
             "evidence_count": len(evidence),
         }
 
-    def dispatch(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def validate(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> tuple[str, BaseModel] | dict[str, Any]:
         canonical = {
             "check_url_before_click": "assess_url",
             "check_content_before_processing": "assess_text",
@@ -316,16 +530,38 @@ class MCPTools:
         schema = TOOL_SCHEMAS.get(name)
         handler = getattr(self, canonical, None)
         if schema is None or handler is None:
-            return {"error": "invalid_input", "detail": f"unknown tool {name}", "request_id": ""}
+            return normalize_tool_response(
+                {"error": "invalid_input", "detail": f"unknown tool {name}"}
+            )
         try:
             payload = schema.model_validate(arguments)
         except ValidationError as exc:
-            return {
-                "error": "invalid_input",
-                "detail": exc.errors(include_url=False),
-                "request_id": "",
-            }
-        return handler(payload)
+            return normalize_tool_response(
+                {
+                    "error": "invalid_input",
+                    "detail": exc.errors(include_url=False, include_context=False),
+                }
+            )
+        return canonical, payload
+
+    def execute(
+        self,
+        canonical: str,
+        payload: BaseModel,
+    ) -> dict[str, Any]:
+        handler = getattr(self, canonical)
+        return normalize_tool_response(handler(payload))
+
+    def dispatch(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        validated = self.validate(name, arguments)
+        if isinstance(validated, dict):
+            return validated
+        canonical, payload = validated
+        return self.execute(canonical, payload)
 
     # Compatibility methods for direct callers of the original Python API.
     def check_url_before_click(self, url: str, context: str = "") -> dict[str, Any]:

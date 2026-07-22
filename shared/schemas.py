@@ -29,6 +29,16 @@ class Modality(StrEnum):
     WEBPAGE = "webpage"
 
 
+class LegalEvidenceStatus(StrEnum):
+    """Outcome of the legal evidence layer, never a permission decision."""
+
+    NOT_APPLICABLE = "not_applicable"
+    REFERENCE_FOUND = "reference_found"
+    REVIEW_REQUIRED = "review_required"
+    INSUFFICIENT_BASIS = "insufficient_basis"
+    CONFLICT_DETECTED = "conflict_detected"
+
+
 class RiskLevel(StrEnum):
     SAFE = "safe"
     LOW = "low"
@@ -109,8 +119,8 @@ class RiskCoreTrace(BaseModel):
     timestamps: dict[str, str] = Field(default_factory=dict)
     source_adapter_versions: dict[str, str] = Field(default_factory=dict)
     reasoning: list[str] = Field(default_factory=list)
-    ai_context_weight_percent: int = Field(default=0, ge=0, le=40)
-    ai_context_effective_weight_percent: float = Field(default=0.0, ge=0.0, le=40.0)
+    ai_context_weight_percent: int = Field(default=0, ge=0, le=100)
+    ai_context_effective_weight_percent: float = Field(default=0.0, ge=0.0, le=100.0)
     ai_context_score: float | None = Field(default=None, ge=0.0, le=100.0)
     blended_final_score: float | None = Field(default=None, ge=0.0, le=100.0)
 
@@ -413,6 +423,10 @@ class AgentRiskResponse(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     recommended_agent_behavior: str = ""
     requires_user_confirmation: bool = False
+    legal_rag_status: Literal["completed", "unavailable", "not_applicable"] = "not_applicable"
+    legal_evidence_status: LegalEvidenceStatus = LegalEvidenceStatus.NOT_APPLICABLE
+    legal_review_required: bool = False
+    legal_references: list[dict[str, Any]] = Field(default_factory=list)
     request_id: str = ""
 
 

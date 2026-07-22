@@ -1,0 +1,129 @@
+/* Shared mobile guardrails. Page-specific responsive rules stay with each surface. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+img,
+svg,
+video,
+canvas,
+iframe,
+object {
+  max-width: 100%;
+}
+
+pre,
+code,
+kbd,
+samp {
+  overflow-wrap: anywhere;
+}
+
+.app-ui :where(.workspace, .inner-page, .report, .account-shell, .sandbox-page),
+.app-ui :where(section, article, aside, form, fieldset, div) {
+  min-width: 0;
+}
+
+/* Defer heavy below-the-fold landing paint until it approaches the viewport. */
+@supports (content-visibility: auto) {
+  .witness main > section:not(.cold-open),
+  .witness > .site-footer {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 900px;
+  }
+}
+
+@media (max-width: 700px), (pointer: coarse) {
+  button,
+  input,
+  select,
+  textarea,
+  a {
+    touch-action: manipulation;
+  }
+
+  input,
+  select,
+  textarea {
+    /* Prevent focus zoom in mobile Safari without reducing readability. */
+    font-size: max(16px, 1em);
+  }
+
+  .eye-scroll-track,
+  .paper-magnifier,
+  .cursor-light {
+    display: none !important;
+  }
+
+  :where(.layer-modal, .mcp-modal, [role="dialog"]) {
+    max-height: calc(100dvh - 16px);
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 600px) {
+  .app-section-content {
+    padding-bottom: calc(66px + env(safe-area-inset-bottom));
+  }
+
+  .app-section-rail {
+    height: calc(60px + env(safe-area-inset-bottom));
+    padding: 4px max(8px, env(safe-area-inset-left)) env(safe-area-inset-bottom)
+      max(8px, env(safe-area-inset-left));
+    justify-content: flex-start;
+    gap: 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+  }
+
+  .app-section-rail > a,
+  .app-section-rail .rail-bottom,
+  .app-section-rail .rail-profile,
+  .app-section-rail .rail-profile > button {
+    flex: 0 0 44px;
+  }
+
+  .app-section-rail > a,
+  .app-section-rail .rail-profile > button {
+    width: 44px;
+    height: 44px;
+    scroll-snap-align: center;
+  }
+
+  .rail-profile .profile-popover {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    width: min(272px, calc(100vw - 16px));
+  }
+
+  .app-ui :where(button, [role="button"], input, select, textarea) {
+    min-height: 44px;
+  }
+
+  .app-ui :where(pre, .criteria-table-wrap, .table-wrap, [class*="tableWrap"]) {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (prefers-reduced-data: reduce) {
+  .eye-scroll-track,
+  .paper-magnifier,
+  .bug-field,
+  .phish-field,
+  .perimeter,
+  .threat-mask {
+    display: none !important;
+  }
+
+  .witness *,
+  .app-ui * {
+    scroll-behavior: auto !important;
+  }
+}

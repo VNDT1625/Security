@@ -63,6 +63,7 @@ export interface AssessResult {
     messageMetadata?: Record<string, unknown>;
     embeddedUrlAssessments?: Array<Record<string, unknown>>;
     contextualAnalysis?: ContextualAnalysis;
+    riskCore?: Record<string, unknown>;
 }
 
 export interface ContextualAnalysis {
@@ -279,6 +280,42 @@ export interface ChatMessageModel {
     text: string;
     createdAt: number;
     assessment?: AssessResult; // gắn khi assistant trả kết quả đánh giá
+    legalAnswer?: LegalAnswerResult;
+}
+
+export interface LegalContext {
+    jurisdiction: string;
+    as_of_date: string;
+    actor: string;
+    action: string;
+    data_or_asset: string;
+}
+
+export interface LegalCitation {
+    chunk_id: string;
+    title: string;
+    document_number: string;
+    section: string;
+    page_start: number | null;
+    page_end: number | null;
+    status: string;
+    effective_date: string;
+    status_checked_at: string;
+    source_page_url: string;
+}
+
+export interface LegalAnswerResult {
+    status: "answered" | "need_more_facts" | "insufficient_legal_basis" |
+        "conflicting_sources" | "human_legal_review";
+    jurisdiction: string;
+    as_of_date: string;
+    answer: string;
+    legal_conclusions: Array<{ claim: string; citation_ids: string[] }>;
+    citations: LegalCitation[];
+    missing_facts: string[];
+    uncertainties: string[];
+    requires_human_review: boolean;
+    disclaimer: string;
 }
 
 export interface ChatRequest {
@@ -289,6 +326,7 @@ export interface ChatRequest {
         operator_context?: string;
         analysis_id?: string;
     };
+    legal_context?: LegalContext;
     history: ChatMessageModel[];
 }
 
@@ -299,6 +337,7 @@ export interface ChatChunk {
 export interface ChatFinal {
     messageId: string;
     assessment?: AssessResult;
+    legalAnswer?: LegalAnswerResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +383,42 @@ export interface ScanRecord {
     type: "URL" | "Email" | "SMS";
     score: number; // 0..100
     riskLevel: RiskLevelKey;
+    target?: string;
+    decision?: string;
+    confidence?: number;
+    modelVersion?: string;
+    evidence?: Array<{
+        source: string;
+        message: string;
+        severity: string;
+        feature?: string | null;
+    }>;
+}
+
+/** Server-authoritative daily quota snapshot for the signed-in account. */
+export interface QuotaInfo {
+    usageDay: string;
+    usedToday: number;
+    dailyScanLimit: number;
+    remaining: number;
+    aiUsedToday: number;
+    aiEvaluationUsedToday: number;
+    aiExplanationUsedToday: number;
+    aiCreditDailyLimit: number;
+    aiRemaining: number;
+    deepUsedToday: number;
+    deepScanDailyLimit: number;
+    deepRemaining: number;
+}
+
+export interface ScanRecordDetail extends ScanRecord {
+    createdAt: string;
+    modality: "url" | "email" | "sms" | "text";
+    latencyMs: number;
+    reasons: string[];
+    schemaVersion?: string | null;
+    scoringVersion?: string | null;
+    riskCore?: Record<string, unknown> | null;
 }
 
 export interface ApiKeyInfo {
@@ -415,4 +490,91 @@ export interface ValidationError extends AppError {
 /** Lỗi khi đã hết lượt quét trong ngày. */
 export interface QuotaError extends AppError {
     error: "quota";
+}
+
+export type FeedbackType = "false_positive" | "false_negative" | "report_site";
+
+export type FeedbackReason =
+    | "incorrect_verdict"
+    | "missed_threat"
+    | "suspicious_site"
+    | "incorrect_evidence"
+    | "other";
+
+export interface FeedbackInput {
+    requestId: string;
+    feedbackType: FeedbackType;
+    reason: FeedbackReason;
+    details?: string;
+    idempotencyKey?: string;
+}
+
+export interface FeedbackReceipt {
+    id: string;
+    requestId: string;
+    feedbackType: FeedbackType;
+    reason: FeedbackReason;
+    status: "received";
+    createdAt: string;
+}
+
+export type ReportShareExpiry = "1h" | "24h" | "7d";
+
+export interface ReportShareSnapshot {
+    score: number;
+    type: "url" | "email" | "sms" | "text";
+    decision: string;
+    riskLevel: string;
+    confidence: number;
+    evidence: Array<{
+        source: string;
+        message: string;
+        severity: Severity;
+        feature?: string | null;
+    }>;
+}
+
+export interface CreateReportShareInput {
+    requestId: string;
+    expiresIn: ReportShareExpiry;
+}
+
+export interface CreatedReportShare {
+    id: string;
+    shareToken: string;
+    expiresAt: string;
+}
+
+export interface PublicReportShare {
+    id: string;
+    snapshot: ReportShareSnapshot;
+    expiresAt: string;
+}
+
+export type AIProvider = "auto" | "adapter" | "local" | "endpoint";
+
+export interface UserAISettings {
+    provider: AIProvider;
+    baseUrl: string;
+    model: string;
+    apiKeyConfigured: boolean;
+    configured: boolean;
+    source: "environment" | "database" | "account";
+    percent: number;
+    minPercent: number;
+    maxPercent: number;
+    weightPercent: number;
+    weightEligible: boolean;
+    weightSource: "global" | "account";
+    allowedProviders: AIProvider[];
+    allowedModels: string[];
+}
+
+export interface UserAISettingsInput {
+    provider: AIProvider;
+    baseUrl: string;
+    model: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+    weightPercent?: number;
 }

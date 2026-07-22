@@ -196,6 +196,7 @@ export default function ScrollHero({
 
     // Phát hiện prefers-reduced-motion phía client (SSR-safe).
     const [systemReducedMotion, setSystemReducedMotion] = useState(false);
+    const [mobileViewport, setMobileViewport] = useState(false);
 
     // Nội dung ô quét nhanh.
     const [quickScanInput, setQuickScanInput] = useState("");
@@ -208,7 +209,7 @@ export default function ScrollHero({
     heroStateRef.current = heroState;
 
     // Chế độ giảm hiệu ứng hiệu lực = prop HOẶC cài đặt hệ thống.
-    const effectiveReducedMotion = reducedMotion || systemReducedMotion;
+    const effectiveReducedMotion = reducedMotion || systemReducedMotion || mobileViewport;
 
     // -------------------------------------------------------------------
     // Phát hiện prefers-reduced-motion (client-only, SSR-safe)
@@ -224,6 +225,18 @@ export default function ScrollHero({
             setSystemReducedMotion(e.matches);
         mq.addEventListener?.("change", onChange);
         return () => mq.removeEventListener?.("change", onChange);
+    }, []);
+
+    // Trên mobile dùng hero tĩnh: không gắn scroll listener và không autoplay video.
+    useEffect(() => {
+        if (typeof window === "undefined" || !window.matchMedia) {
+            return;
+        }
+        const mq = window.matchMedia("(max-width: 800px)");
+        const update = () => setMobileViewport(mq.matches);
+        update();
+        mq.addEventListener?.("change", update);
+        return () => mq.removeEventListener?.("change", update);
     }, []);
 
     // -------------------------------------------------------------------
@@ -344,9 +357,9 @@ export default function ScrollHero({
                 data-hero-state="idle"
                 data-reduced-motion="true"
                 aria-label="Hero — chế độ giảm chuyển động"
-                className="relative flex min-h-screen w-full flex-col items-center justify-center gap-6 bg-neutral-950 px-6 py-16 text-center text-white"
+                className="relative flex min-h-[100svh] w-full flex-col items-center justify-center gap-4 overflow-hidden bg-neutral-950 px-4 py-10 text-center text-white sm:gap-6 sm:px-6 sm:py-16"
             >
-                <HeroMedia className="w-full max-w-2xl" videoSrc={videoSrc} />
+                <HeroMedia className="w-full max-w-2xl" />
                 <HeroCallout opacity={1} compact />
                 <QuickScanBox
                     value={quickScanInput}
@@ -533,7 +546,7 @@ function QuickScanBox({
     return (
         <form
             onSubmit={onSubmit}
-            className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-full bg-white/95 p-1.5 shadow-lg"
+            className="pointer-events-auto flex w-full max-w-xl flex-col items-stretch gap-2 rounded-2xl bg-white/95 p-1.5 shadow-lg sm:flex-row sm:items-center sm:rounded-full"
         >
             <input
                 type="text"
@@ -545,7 +558,7 @@ function QuickScanBox({
             />
             <button
                 type="submit"
-                className="shrink-0 rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+                className="min-h-11 w-full shrink-0 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700 sm:w-auto sm:rounded-full"
             >
                 Quét
             </button>
@@ -556,16 +569,16 @@ function QuickScanBox({
 /** Cụm CTA dẫn vào hai luồng demo chính của sản phẩm. */
 function HeroCtas() {
     return (
-        <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-3">
+        <div className="pointer-events-auto flex w-full max-w-xl flex-col items-stretch justify-center gap-3 sm:w-auto sm:flex-row sm:items-center">
             <a
                 href="/analyze"
-                className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition-colors hover:bg-neutral-200"
+                className="min-h-11 rounded-full bg-white px-5 py-2.5 text-center text-sm font-semibold text-neutral-900 transition-colors hover:bg-neutral-200"
             >
                 Mở demo trực tiếp
             </a>
             <a
                 href="/about"
-                className="rounded-full border border-white/40 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-white/10"
+                className="min-h-11 rounded-full border border-white/40 px-5 py-2.5 text-center text-sm font-semibold text-white transition-colors hover:bg-white/10"
             >
                 Tìm hiểu giải pháp
             </a>

@@ -17,12 +17,8 @@ export async function GET(
             },
         });
 
-        if (!response.ok) {
-            throw new Error('Failed to fetch status');
-        }
-
         const data = await response.json();
-        return NextResponse.json(data);
+        return NextResponse.json(data, { status: response.status });
     } catch (error) {
         console.error('Error fetching status:', error);
         return NextResponse.json(

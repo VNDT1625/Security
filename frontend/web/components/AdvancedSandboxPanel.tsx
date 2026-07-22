@@ -73,9 +73,9 @@ export default function AdvancedSandboxPanel({
     const fieldSummary = result ? displayRecord(result.canary.field_types) : "";
 
     return (
-        <div className="border border-neutral-200 bg-white p-5">
+        <div className="min-w-0 max-w-full overflow-hidden border border-neutral-200 bg-white p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                     <h3 className="text-base font-semibold text-neutral-900">
                         Browser sandbox nang cao
                     </h3>
@@ -96,27 +96,27 @@ export default function AdvancedSandboxPanel({
 
             {!loading && result && (
                 <>
-                    <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                        <div>
+                    <dl className="mt-4 grid min-w-0 gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">Trang</dt>
                             <dd className="mt-0.5 font-medium text-neutral-900">
                                 {result.status_code ?? "Khong co HTTP"} {result.page_title}
                             </dd>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">Canary clone</dt>
                             <dd className="mt-0.5 break-all font-medium text-neutral-900">
                                 {result.canary.clone_email || "Chua tao"}
                             </dd>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">Field da bom gia</dt>
                             <dd className="mt-0.5 font-medium text-neutral-900">
                                 {result.canary.fields_filled}
                                 {fieldSummary ? ` (${fieldSummary})` : ""}
                             </dd>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">Request bi chan</dt>
                             <dd className="mt-0.5 font-medium text-neutral-900">
                                 {blockedEvents.length}
@@ -135,7 +135,7 @@ export default function AdvancedSandboxPanel({
                     <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                         <div className="border border-neutral-200 bg-neutral-50 p-3">
                             <p className="font-medium text-neutral-900">Co lap</p>
-                            <p className="mt-1 text-xs text-neutral-600">
+                            <p className="mt-1 break-words text-xs text-neutral-600">
                                 {displayRecord(result.isolation) || "Khong co du lieu"}
                             </p>
                         </div>
@@ -147,7 +147,7 @@ export default function AdvancedSandboxPanel({
                                     : "Khong thay du lieu clone bi gui ra ngoai."}
                             </p>
                             {result.canary.form_submissions_blocked > 0 && (
-                                <p className="mt-1 text-xs text-neutral-600">
+                                <p className="mt-1 break-words text-xs text-neutral-600">
                                     Da chan {result.canary.form_submissions_blocked} lan submit form.
                                 </p>
                             )}
@@ -184,9 +184,9 @@ export default function AdvancedSandboxPanel({
                                     key={`${issue.code}-${index}`}
                                     className={`border p-3 text-sm ${SEVERITY_STYLES[issue.severity]}`}
                                 >
-                                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                                        <p className="font-medium">{issue.message}</p>
-                                        <code className="text-xs">{issue.code}</code>
+                                    <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-2">
+                                        <p className="min-w-0 break-words font-medium">{issue.message}</p>
+                                        <code className="break-all text-xs">{issue.code}</code>
                                     </div>
                                     {issue.detail && (
                                         <p className="mt-1 break-all text-xs opacity-80">{issue.detail}</p>

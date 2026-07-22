@@ -13,12 +13,8 @@ export async function GET(request: NextRequest) {
             },
         });
 
-        if (!response.ok) {
-            throw new Error('Failed to fetch training status');
-        }
-
         const data = await response.json();
-        return NextResponse.json(data);
+        return NextResponse.json(data, { status: response.status });
     } catch (error) {
         console.error('Error fetching training status:', error);
         return NextResponse.json(

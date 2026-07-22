@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prewise.local/schemas/legal-rag-reviewer-case-v1.json",
+  "title": "Legal RAG reviewed benchmark case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "query", "split", "slice", "context", "relevance", "annotation"],
+  "properties": {
+    "case_id": {"type": "string", "minLength": 1},
+    "scenario_id": {"type": "string", "minLength": 1},
+    "query": {"type": "string", "minLength": 1},
+    "split": {"enum": ["dev", "test", "hidden_test"]},
+    "slice": {
+      "enum": [
+        "single_provision",
+        "multi_provision",
+        "temporal",
+        "hard_negative",
+        "out_of_scope",
+        "exact_citation"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "relevance": {
+      "type": "object",
+      "description": "Gold chunk IDs. Grades: 1 related, 2 supporting, 3 directly answer-bearing.",
+      "additionalProperties": {"type": "integer", "minimum": 1, "maximum": 3}
+    },
+    "exact_citation": {"type": "boolean", "default": false},
+    "expected_abstention": {"type": "boolean", "default": false},
+    "notes": {"type": "string"},
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "annotator_ids", "legal_reviewer_id", "reviewed_at"],
+      "properties": {
+        "status": {"enum": ["draft", "adjudicated"]},
+        "annotator_ids": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "legal_reviewer_id": {"type": "string"},
+        "reviewed_at": {"type": "string"},
+        "agreement_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "adjudication_notes": {"type": "string"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"expected_abstention": {"const": false}}},
+      "then": {"properties": {"relevance": {"minProperties": 1}}}
+    },
+    {
+      "if": {"properties": {"annotation": {"properties": {"status": {"const": "adjudicated"}}}}},
+      "then": {
+        "properties": {
+          "annotation": {
+            "properties": {
+              "annotator_ids": {"minItems": 2},
+              "legal_reviewer_id": {"minLength": 1},
+              "reviewed_at": {"format": "date-time"}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

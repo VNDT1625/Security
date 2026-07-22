@@ -1,11 +1,13 @@
 import { getRiskLevel } from "../shared/risk.js";
 const $ = (id) => document.getElementById(id);
-const sections = ["disabled", "loading", "unsupported", "result", "offline"];
+const sections = ["disabled", "monitoring", "loading", "unsupported", "result", "offline"];
 const stepIds = ["step-page", "step-gateway", "step-analysis"];
 let currentTab = null;
 let loadingTimer = null;
 let loadingStartedAt = 0;
 let loadingToken = 0;
+let warningThreshold = 60;
+let websiteProtection = true;
 
 function withTimeout(promise, timeoutMs, message) {
   let timer;
@@ -121,10 +123,27 @@ function showError(error) {
 }
 function render(entry, tab) {
   if (!entry) return false;
+  if (entry.disabled) {
+    $("monitor-title").textContent = "Cảnh báo website đang tắt";
+    $("monitor-hostname").textContent = "";
+    $("monitor-scan-time").textContent = "";
+    $("monitor-detail").textContent = "Bạn vẫn có thể giữ bảo vệ Gmail hoặc bật lại trong Cài đặt.";
+    show("monitoring");
+    return true;
+  }
   if (entry.status === "loading") { startLoading(entry.startedAt); return false; }
   if (entry.error) { showError(entry.error); return true; }
   if (entry.url !== tab.url) { scan(true); return true; }
   setConnection(true, `Gateway hoạt động · ${entry.latencyMs || 0} ms`);
+  if (Number(entry.score || 0) <= warningThreshold) {
+    let parsed; try { parsed = new URL(tab.url); } catch { parsed = { hostname: tab.url || "" }; }
+    $("monitor-title").textContent = "Không phát hiện rủi ro vượt ngưỡng";
+    $("monitor-hostname").textContent = parsed.hostname;
+    $("monitor-scan-time").textContent = `Đã kiểm tra lúc ${new Date(entry.completedAt).toLocaleTimeString("vi-VN")} · ${entry.score}/100`;
+    $("monitor-detail").textContent = "Extension tiếp tục bảo vệ âm thầm trong nền.";
+    show("monitoring");
+    return true;
+  }
   const level = getRiskLevel(entry.score);
   $("risk-card").style.setProperty("--risk", level.color);
   $("score").textContent = entry.score;
@@ -140,9 +159,15 @@ function render(entry, tab) {
 }
 async function waitForTabResult(token) {
   try {
-    for (let count = 0; count < 75 && token === loadingToken; count += 1) {
+    for (let count = 0; count < 260 && token === loadingToken; count += 1) {
       await new Promise((resolve) => setTimeout(resolve, 250));
       const entry = await send({ type: "GET_TAB_RESULT", tabId: currentTab.id, url: currentTab.url }, 1500);
+      if (!entry) {
+        // A Manifest V3 service worker restart clears its in-memory tab state.
+        // Start a fresh request instead of polling a result that can no longer appear.
+        scan(true);
+        return;
+      }
       if (entry && entry.status !== "loading") { render(entry, currentTab); return; }
     }
     if (token === loadingToken) showError({ type: "timeout", message: "Không nhận được trạng thái hoàn tất từ tiến trình nền. Hãy thử quét lại." });
@@ -154,7 +179,7 @@ async function scan(force = false) {
   if (!currentTab || !validPage(currentTab.url)) return show("unsupported");
   const token = ++loadingToken; startLoading();
   try {
-    const entry = await send({ type: "ASSESS_URL", url: currentTab.url, tabId: currentTab.id, force }, 17000);
+    const entry = await send({ type: "ASSESS_URL", url: currentTab.url, tabId: currentTab.id, force }, 65000);
     if (token === loadingToken) render(entry, currentTab);
   } catch { if (token === loadingToken) showError({ type: "runtime", message: "Mất kết nối với tiến trình nền của extension. Hãy tải lại extension." }); }
 }
@@ -162,7 +187,10 @@ async function init() {
   try {
     const state = await send({ type: "GET_PROTECTION_STATE" }, 2000);
     $("protection-enabled").checked = state?.enabled === true;
+    warningThreshold = Number.isFinite(state?.warningThreshold) ? state.warningThreshold : 60;
+    websiteProtection = state?.websiteProtection !== false;
     if (!state?.enabled) return show("disabled");
+    if (!websiteProtection) return render({ disabled: true }, { url: "" });
     [currentTab] = await queryActiveTab();
     if (!currentTab || !validPage(currentTab.url)) return show("unsupported");
     const entry = await send({ type: "GET_TAB_RESULT", tabId: currentTab.id, url: currentTab.url }, 1500);

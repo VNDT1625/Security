@@ -1,0 +1,9 @@
+*
+!Dockerfile.web
+!frontend/
+!frontend/web/
+!frontend/web/**
+frontend/web/node_modules
+frontend/web/.next*
+frontend/web/coverage
+frontend/web/*.log

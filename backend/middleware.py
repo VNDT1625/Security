@@ -17,6 +17,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from backend.config import settings
+
 _ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"), None)
 
 
@@ -100,7 +102,30 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
-        if request.url.path.startswith(("/v1/assess", "/v1/integrations/gmail")):
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        )
+        if settings.app_env == "production":
+            # TLS is terminated by the production reverse proxy. HSTS still
+            # belongs on API responses so browsers cannot later downgrade the
+            # public origin to cleartext HTTP.
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
+        if request.url.path.startswith(
+            (
+                "/v1/assess",
+                "/v1/auth",
+                "/v1/account",
+                "/v1/admin",
+                "/v1/feedback",
+                "/v1/integrations/gmail",
+                "/v1/report-shares",
+                "/v1/sandbox-cloud",
+            )
+        ):
             response.headers["Cache-Control"] = "no-store"
             response.headers["Pragma"] = "no-cache"
         return response
@@ -134,7 +159,14 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         self._last_prune = now
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/v1/") and request.url.path != "/v1/health":
+        if (
+            not (
+                settings.app_env == "development"
+                and settings.local_testing_unlimited
+            )
+            and request.url.path.startswith("/v1/")
+            and request.url.path != "/v1/health"
+        ):
             client = request.client.host if request.client else "unknown"
             now = time.time()
             self._prune_stale_buckets(now)

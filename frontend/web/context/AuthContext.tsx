@@ -29,9 +29,9 @@ import {
 } from "react";
 
 import { getApiClient } from "@/lib/api";
-import { SESSION_STORAGE_KEY } from "@/lib/auth-session";
+import { SESSION_INVALID_EVENT, SESSION_STORAGE_KEY } from "@/lib/auth-session";
 import { QuotaGuard } from "@/lib/quota";
-import type { PlanInfo, PlanTier, Session } from "@/lib/types";
+import type { PlanInfo, PlanTier, QuotaInfo, Session } from "@/lib/types";
 
 export { SESSION_STORAGE_KEY } from "@/lib/auth-session";
 
@@ -48,6 +48,10 @@ export interface AuthContextValue {
     plan: PlanInfo | null;
     /** QuotaGuard gắn với gói hiện tại (mặc định "free" khi chưa đăng nhập). */
     quota: QuotaGuard;
+    /** Quota snapshot từ backend; null khi chưa tải hoặc chưa đăng nhập. */
+    quotaInfo: QuotaInfo | null;
+    /** Đồng bộ lại quota sau một lần đánh giá. */
+    refreshQuota: () => Promise<void>;
     /** Đặt phiên mới và bền hóa vào localStorage. */
     setSession: (session: Session | null) => void;
     /** Đăng xuất: gọi api.logout(), xóa phiên khỏi state + localStorage. */
@@ -123,6 +127,8 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     // phiên thực được nạp trong useEffect sau khi mount.
     const [session, setSessionState] = useState<Session | null>(null);
     const [isHydrated, setIsHydrated] = useState(false);
+    const [planNotice, setPlanNotice] = useState("");
+    const [quotaInfo, setQuotaInfo] = useState<QuotaInfo | null>(null);
 
     // Gói suy ra từ phiên (nguồn duy nhất là session.plan).
     const plan: PlanInfo | null = session?.plan ?? null;
@@ -137,6 +143,12 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     }
     const quota = quotaRef.current;
 
+    useEffect(() => {
+        const clearInvalidSession = () => setSessionState(null);
+        window.addEventListener(SESSION_INVALID_EVENT, clearInvalidSession);
+        return () => window.removeEventListener(SESSION_INVALID_EVENT, clearInvalidSession);
+    }, []);
+
     // Đồng bộ gói của QuotaGuard khi tier đổi (đăng nhập/đăng xuất/nâng cấp).
     useEffect(() => {
         quota.setPlan(tier);
@@ -147,6 +159,21 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
         const stored = readStoredSession();
         if (stored !== null) {
             setSessionState(stored);
+            // localStorage may contain the plan from before a payment, downgrade,
+            // or another tab. Refresh it from the server on every app load.
+            void getApiClient()
+                .getPlan()
+                .then((freshPlan) => {
+                    const refreshed = { ...stored, plan: freshPlan };
+                    setSessionState(refreshed);
+                    writeStoredSession(refreshed);
+                    if (freshPlan.tier !== stored.plan.tier) {
+                        setPlanNotice(`Thanh toán thành công · Gói ${freshPlan.label} đã được kích hoạt.`);
+                    }
+                })
+                .catch(() => {
+                    // Keep the stored session during a temporary backend outage.
+                });
             // Admin đăng nhập từ luồng mặc định được đưa vào control center.
             // Không ép chuyển khi họ chủ động mở một công cụ hoặc trang khác.
             if (
@@ -158,6 +185,64 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
         }
         setIsHydrated(true);
     }, []);
+
+    useEffect(() => {
+        if (!session?.token) return;
+        let stopped = false;
+        const refreshPlan = async () => {
+            try {
+                const freshPlan = await getApiClient().getPlan();
+                if (stopped) return;
+                setSessionState((current) => {
+                    if (!current || current.plan.tier === freshPlan.tier) return current;
+                    const refreshed = { ...current, plan: freshPlan };
+                    writeStoredSession(refreshed);
+                    setPlanNotice(`Thanh toán thành công · Gói ${freshPlan.label} đã được kích hoạt.`);
+                    return refreshed;
+                });
+            } catch {
+                // Retry during a temporary backend outage.
+            }
+        };
+        const timer = window.setInterval(() => void refreshPlan(), 5000);
+        const onVisible = () => {
+            if (document.visibilityState === "visible") void refreshPlan();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            stopped = true;
+            window.clearInterval(timer);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
+    }, [session?.token]);
+
+    const refreshQuota = useCallback(async (): Promise<void> => {
+        if (!session?.token) {
+            setQuotaInfo(null);
+            return;
+        }
+        try {
+            setQuotaInfo(await getApiClient().getQuota());
+        } catch {
+            // Backend remains the enforcement point; retain the last good snapshot.
+        }
+    }, [session?.token]);
+
+    useEffect(() => {
+        if (!session?.token) {
+            setQuotaInfo(null);
+            return;
+        }
+        void refreshQuota();
+        const timer = window.setInterval(() => void refreshQuota(), 30_000);
+        return () => window.clearInterval(timer);
+    }, [refreshQuota, session?.token]);
+
+    useEffect(() => {
+        if (!planNotice) return;
+        const timer = window.setTimeout(() => setPlanNotice(""), 10000);
+        return () => window.clearTimeout(timer);
+    }, [planNotice]);
 
     // Đặt phiên mới và bền hóa vào localStorage.
     const setSession = useCallback((next: Session | null): void => {
@@ -177,12 +262,22 @@ export function AuthProvider({ children }: AuthProviderProps): JSX.Element {
     }, []);
 
     const value = useMemo<AuthContextValue>(
-        () => ({ session, isHydrated, plan, quota, setSession, logout }),
-        [session, isHydrated, plan, quota, setSession, logout],
+        () => ({ session, isHydrated, plan, quota, quotaInfo, refreshQuota, setSession, logout }),
+        [session, isHydrated, plan, quota, quotaInfo, refreshQuota, setSession, logout],
     );
 
     return (
-        <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+        <AuthContext.Provider value={value}>
+            {planNotice && (
+                <div className="plan-upgrade-notice" role="status">
+                    <strong>✓ {planNotice}</strong>
+                    <button type="button" onClick={() => setPlanNotice("")} aria-label="Đóng thông báo">
+                        ×
+                    </button>
+                </div>
+            )}
+            {children}
+        </AuthContext.Provider>
     );
 }
 

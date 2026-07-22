@@ -4,6 +4,11 @@ contextBridge.exposeInMainWorld('desktop', {
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
   localSecurity: {
     chooseExecutable: () => ipcRenderer.invoke('local:choose'),
+    readForCloud: (filePath: string, expectedSha256: string) => ipcRenderer.invoke(
+      'local:read-for-cloud',
+      filePath,
+      expectedSha256,
+    ),
     quarantine: (filePath: string) => ipcRenderer.invoke('local:quarantine', filePath),
     getDownloadGuardSettings: () => ipcRenderer.invoke('local:download-guard-settings'),
     setDownloadGuard: (enabled: boolean) => ipcRenderer.invoke('local:set-download-guard-settings', enabled),

@@ -85,7 +85,7 @@ export default function NavigationBar({
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-950 text-white">
                         <ShieldCheck className="h-5 w-5" aria-hidden="true" />
                     </span>
-                    <span className="truncate text-sm font-bold sm:text-base">AI Security Armor</span>
+                    <span className="truncate text-sm font-bold sm:text-base">Prewise</span>
                 </Link>
 
                 <ul className="ml-auto hidden items-center gap-1 lg:flex">{links}</ul>

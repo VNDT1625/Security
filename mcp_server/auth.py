@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import hmac
+import re
 import time
 from collections import defaultdict, deque
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy import select
 from starlette.datastructures import Headers
 
 from backend.config import settings
 from backend.db import SessionLocal, initialize_database
 from backend.models import ApiKey, AuditLog, OAuthTokenRecord, User
-from backend.routers.auth import ActorContext
+from backend.routers.auth import ActorContext, require_api_key_entitlement
 from backend.security_utils import hash_api_key, hash_metadata, session_key, utcnow
 from backend.services.quota_service import reserve_scan_quota
 
@@ -27,6 +28,7 @@ class MCPIdentity:
     api_key_id: str | None
     client_ip: str
     user_agent: str
+    scopes: tuple[str, ...] = ()
 
     @property
     def authenticated(self) -> bool:
@@ -36,6 +38,88 @@ class MCPIdentity:
 current_mcp_identity: ContextVar[MCPIdentity | None] = ContextVar(
     "current_mcp_identity", default=None
 )
+
+_SAFE_AUDIT_ERROR_CODE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
+
+
+def authorize_mcp_tool(required_scope: str | None, *, external_share: bool = False) -> bool:
+    """Apply tool-level least privilege for authenticated remote MCP calls.
+
+    Local stdio has no HTTP identity and remains available to the local operator.
+    ``mcp:invoke`` is retained as a compatibility umbrella for existing clients,
+    except that external sample sharing always requires its dedicated scope.
+    """
+    identity = current_mcp_identity.get()
+    if identity is None:
+        return True
+    granted = set(identity.scopes)
+    if external_share:
+        return "mcp:file:share_external" in granted
+    if required_scope is None:
+        return True
+    assessment_scopes = {
+        "assess:url",
+        "assess:content",
+        "assess:prompt",
+        "assess:file",
+        "assess:action",
+    }
+    # Keys that already advertise granular assessment permissions are held to
+    # them. A credential containing only mcp:invoke remains a legacy umbrella.
+    if granted & assessment_scopes:
+        return required_scope in granted
+    return "mcp:invoke" in granted
+
+
+def audit_mcp_tool_call(
+    tool_name: str,
+    result: dict[str, Any],
+    *,
+    elapsed_ms: float,
+    quota_consumed: bool,
+) -> None:
+    """Persist one privacy-minimized audit event per authenticated tool call."""
+    identity = current_mcp_identity.get()
+    if identity is None or not identity.authenticated:
+        return
+    metadata: dict[str, Any] = {
+        "tool": tool_name[:100],
+        "ok": bool(result.get("ok", "error" not in result)),
+        "elapsed_ms": round(max(0.0, elapsed_ms), 2),
+        "quota_consumed": quota_consumed,
+        "request_id": str(result.get("request_id", ""))[:64],
+    }
+    if result.get("verdict"):
+        metadata["verdict"] = str(result["verdict"])[:32]
+    if isinstance(result.get("risk_score"), (int, float)):
+        metadata["risk_score"] = round(float(result["risk_score"]), 4)
+    provider = result.get("provider")
+    if isinstance(provider, dict):
+        metadata["provider_status"] = str(provider.get("status", ""))[:32]
+        metadata["sample_shared"] = bool(provider.get("sample_shared", False))
+    if result.get("error"):
+        # Error text may originate in a provider or user-derived validation
+        # message. Persist only a machine-like code; never a prompt, owner ID,
+        # URL or other free-form value.
+        candidate = str(result["error"]).strip().lower()
+        metadata["error"] = (
+            candidate if _SAFE_AUDIT_ERROR_CODE.fullmatch(candidate) else "tool_error"
+        )
+
+    with SessionLocal() as db:
+        db.add(
+            AuditLog(
+                actor_user_id=identity.user_id,
+                actor_api_key_id=identity.api_key_id,
+                actor_channel="mcp",
+                action="mcp.tool.invoke",
+                resource_type="mcp_tool",
+                source_ip_hash=hash_metadata(identity.client_ip),
+                user_agent_hash=hash_metadata(identity.user_agent),
+                extra_metadata=metadata,
+            )
+        )
+        db.commit()
 
 
 def reserve_mcp_scan_quota() -> MCPIdentity | None:
@@ -103,7 +187,13 @@ class MCPApiKeyMiddleware:
                 await self._reject(send, 429, "rate_limited", request_id)
                 return
             token = current_mcp_identity.set(
-                MCPIdentity(None, None, client_ip, headers.get("user-agent", ""))
+                MCPIdentity(
+                    None,
+                    None,
+                    client_ip,
+                    headers.get("user-agent", ""),
+                    ("mcp:invoke",),
+                )
             )
             try:
                 await self.app(scope, receive, send)
@@ -142,6 +232,7 @@ class MCPApiKeyMiddleware:
                     return
                 api_key_id = None
                 user_id = user.id
+                granted_scopes = tuple(oauth_token.scopes or [])
             else:
                 user = None
             valid = (
@@ -159,6 +250,11 @@ class MCPApiKeyMiddleware:
                 user = db.get(User, record.user_id)
             if user is None or user.status != "active":
                 await self._reject(send, 401, "invalid_api_key", request_id, authenticate=True)
+                return
+            try:
+                require_api_key_entitlement(db, user.id)
+            except HTTPException:
+                await self._reject(send, 403, "plan_entitlement_required:team", request_id)
                 return
             if oauth_token is None and "mcp:invoke" not in (record.scopes or []):
                 await self._reject(send, 403, "missing_scope:mcp:invoke", request_id)
@@ -184,6 +280,7 @@ class MCPApiKeyMiddleware:
                 )
                 api_key_id = record.id
                 user_id = user.id
+                granted_scopes = tuple(record.scopes or [])
                 db.commit()
             else:
                 db.add(
@@ -203,7 +300,13 @@ class MCPApiKeyMiddleware:
         scope.setdefault("state", {})["prewise_api_key_id"] = api_key_id
         scope["state"]["prewise_user_id"] = user_id
         token = current_mcp_identity.set(
-            MCPIdentity(user_id, api_key_id, client_ip, headers.get("user-agent", ""))
+            MCPIdentity(
+                user_id,
+                api_key_id,
+                client_ip,
+                headers.get("user-agent", ""),
+                granted_scopes,
+            )
         )
         try:
             await self.app(scope, receive, send)

@@ -22,6 +22,7 @@ import type { ApiClient } from "@/lib/api/client";
 import { sortEvidenceBySeverity } from "@/lib/evidence";
 import { getRiskLevel } from "@/lib/risk";
 import { formatScanTimestamp } from "@/lib/time";
+import { trustedPopularResult } from "@/lib/trusted-popular-domains";
 import type {
     ApiKeyInfo,
     AssessMetadata,
@@ -30,12 +31,17 @@ import type {
     ExeSandboxResult,
 
     ExeProviderResult,
+    FeedbackInput,
+    FeedbackReceipt,
     ChatChunk,
     ChatFinal,
     ChatRequest,
+    CreateReportShareInput,
+    CreatedReportShare,
     Credentials,
     Evidence,
     PlanInfo,
+    PublicReportShare,
     PlanTier,
     RegisterInput,
     ScanRecord,
@@ -283,6 +289,8 @@ function buildResult(
  * tất định với cùng `url`.
  */
 export function mockAssessUrl(url: string): AssessResult {
+    const trusted = trustedPopularResult(url);
+    if (trusted) return trusted;
     const evidence: Evidence[] = [];
     let score = 5;
 
@@ -463,7 +471,7 @@ function buildPlanInfo(tier: PlanTier): PlanInfo {
         renewsAt: tier === "free" ? undefined : "02/08/2026",
         dailyScanLimit: tier === "free" ? 50 : Number.POSITIVE_INFINITY,
         aiCreditDailyLimit: tier === "free" ? 5 : tier === "pro" ? 50 : tier === "team" ? 100 : Number.POSITIVE_INFINITY,
-        deepScanDailyLimit: tier === "free" ? 1 : tier === "pro" ? 10 : tier === "team" ? 100 : Number.POSITIVE_INFINITY,
+        deepScanDailyLimit: tier === "enterprise" ? Number.POSITIVE_INFINITY : 100,
         chatFollowupLimit: tier === "free" ? 3 : tier === "pro" ? 20 : tier === "team" ? 50 : Number.POSITIVE_INFINITY,
         autoMessageContext: tier !== "free",
         autoWebContext: tier !== "free",
@@ -522,6 +530,7 @@ export class MockApiClient implements ApiClient {
     private session: Session | null;
     /** API/MCP key hiện tại (lazy khởi tạo). */
     private apiKey: ApiKeyInfo | null;
+    private reportShares = new Map<string, PublicReportShare>();
 
     constructor() {
         this.history = readStored<ScanRecord[]>(MOCK_HISTORY_KEY) ?? [];
@@ -766,8 +775,57 @@ export class MockApiClient implements ApiClient {
         if (!this.session) throw new Error("Bạn cần đăng nhập.");
     }
 
+    async getAISettings(): Promise<import("@/lib/types").UserAISettings> {
+        if (!this.session) throw new Error("Bạn cần đăng nhập.");
+        return readStored<import("@/lib/types").UserAISettings>("prewise-mock-ai-settings") ?? {
+            provider: "auto", baseUrl: "", model: "", apiKeyConfigured: false,
+            configured: false, source: "account", percent: 0, minPercent: 0,
+            maxPercent: 40, weightPercent: 0,
+            weightEligible: this.session.plan.tier !== "free", weightSource: "global",
+            allowedProviders: ["auto", "adapter", "local", "endpoint"], allowedModels: [],
+        };
+    }
+
+    async updateAISettings(input: import("@/lib/types").UserAISettingsInput): Promise<import("@/lib/types").UserAISettings> {
+        if (!this.session) throw new Error("Bạn cần đăng nhập.");
+        const value: import("@/lib/types").UserAISettings = {
+            provider: input.provider, baseUrl: input.baseUrl, model: input.model,
+            apiKeyConfigured: Boolean(input.apiKey), configured: true, source: "account",
+            percent: 0, minPercent: 0, maxPercent: 40,
+            weightPercent: input.weightPercent ?? 0,
+            weightEligible: this.session.plan.tier !== "free",
+            weightSource: input.weightPercent == null ? "global" : "account",
+            allowedProviders: ["auto", "adapter", "local", "endpoint"], allowedModels: [],
+        };
+        writeStored("prewise-mock-ai-settings", value);
+        return value;
+    }
+
+    async testAISettings(): Promise<{ok: boolean; modelAvailable: boolean; modelsCount: number}> {
+        return {ok: true, modelAvailable: true, modelsCount: 1};
+    }
+
     async getPlan(): Promise<PlanInfo> {
         return this.session?.plan ?? buildPlanInfo("free");
+    }
+
+    async getQuota(): Promise<import("@/lib/types").QuotaInfo> {
+        const plan = this.session?.plan ?? buildPlanInfo("free");
+        const unlimited = plan.dailyScanLimit >= 999_999;
+        return {
+            usageDay: new Date().toISOString().slice(0, 10),
+            usedToday: 0,
+            dailyScanLimit: plan.dailyScanLimit,
+            remaining: unlimited ? 999_999 : plan.dailyScanLimit,
+            aiUsedToday: 0,
+            aiEvaluationUsedToday: 0,
+            aiExplanationUsedToday: 0,
+            aiCreditDailyLimit: plan.aiCreditDailyLimit,
+            aiRemaining: plan.aiCreditDailyLimit,
+            deepUsedToday: 0,
+            deepScanDailyLimit: plan.deepScanDailyLimit,
+            deepRemaining: plan.deepScanDailyLimit,
+        };
     }
 
     async cancelSubscription(): Promise<PlanInfo> {
@@ -795,6 +853,69 @@ export class MockApiClient implements ApiClient {
         this.apiKey = this.createApiKey();
         writeStored(MOCK_APIKEY_KEY, this.apiKey);
         return this.apiKey;
+    }
+
+    async getScanHistoryDetail(requestId: string): Promise<import("@/lib/types").ScanRecordDetail> {
+        const record = this.history.find((item) => item.id === requestId);
+        if (!record) throw new Error("Không tìm thấy lượt phân tích này.");
+        return {
+            ...record,
+            createdAt: new Date().toISOString(),
+            modality: record.type.toLowerCase() as "url" | "email" | "sms",
+            latencyMs: 0,
+            reasons: record.evidence?.map((item) => item.message) ?? [],
+            riskCore: null,
+        };
+    }
+
+    async deleteScanHistory(requestId: string): Promise<{deleted: number}> {
+        const before = this.history.length;
+        this.history = this.history.filter((item) => item.id !== requestId);
+        writeStored(MOCK_HISTORY_KEY, this.history);
+        if (before === this.history.length) throw new Error("Không tìm thấy lượt phân tích này.");
+        return {deleted: 1};
+    }
+
+    async clearScanHistory(): Promise<{deleted: number}> {
+        const deleted = this.history.length;
+        this.history = [];
+        writeStored(MOCK_HISTORY_KEY, this.history);
+        return {deleted};
+    }
+
+    async submitFeedback(input: FeedbackInput): Promise<FeedbackReceipt> {
+        return {
+            id: generateId(),
+            requestId: input.requestId,
+            feedbackType: input.feedbackType,
+            reason: input.reason,
+            status: "received",
+            createdAt: new Date().toISOString(),
+        };
+    }
+
+    async createReportShare(input: CreateReportShareInput): Promise<CreatedReportShare> {
+        if (!this.session) throw new Error("Bạn cần đăng nhập để tạo liên kết chia sẻ.");
+        const id = generateId();
+        const shareToken = `${generateId().replaceAll("-", "")}${generateId().replaceAll("-", "")}`;
+        const hours = input.expiresIn === "1h" ? 1 : input.expiresIn === "7d" ? 168 : 24;
+        const expiresAt = new Date(Date.now() + hours * 3_600_000).toISOString();
+        this.reportShares.set(shareToken, {
+            id,
+            expiresAt,
+            snapshot: { score: 0, type: "url", decision: "REVIEW", riskLevel: "unknown", confidence: 0, evidence: [] },
+        });
+        return { id, shareToken, expiresAt };
+    }
+
+    async getPublicReportShare(token: string): Promise<PublicReportShare> {
+        const share = this.reportShares.get(token);
+        if (!share || new Date(share.expiresAt).getTime() <= Date.now()) throw new Error("Liên kết chia sẻ không tồn tại hoặc đã hết hạn.");
+        return share;
+    }
+
+    async revokeReportShare(shareId: string): Promise<void> {
+        for (const [token, share] of this.reportShares) if (share.id === shareId) this.reportShares.delete(token);
     }
 
     // -----------------------------------------------------------------------

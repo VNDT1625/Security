@@ -31,7 +31,11 @@ from backend.models import (
 )
 from backend.security_utils import hash_api_key, session_key, utcnow
 
-OAUTH_SCOPES = ["mcp:invoke"]
+OAUTH_REQUIRED_SCOPES = ["mcp:invoke"]
+OAUTH_SCOPES = [
+    "mcp:invoke",
+    "mcp:file:share_external",
+]
 
 
 class PrewiseOAuthProvider(
@@ -62,7 +66,9 @@ class PrewiseOAuthProvider(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
         request_id = secrets.token_urlsafe(32)
-        scopes = params.scopes or OAUTH_SCOPES
+        scopes = params.scopes or OAUTH_REQUIRED_SCOPES
+        if "mcp:invoke" not in scopes or not set(scopes).issubset(set(OAUTH_SCOPES)):
+            raise ValueError("invalid MCP OAuth scope request")
         with SessionLocal() as db:
             db.add(
                 OAuthAuthorizationRequest(
@@ -250,10 +256,12 @@ class PrewiseOAuthProvider(
                 db.commit()
 
 
-def _form(request_id: str, error: str = "") -> str:
+def _form(request_id: str, error: str = "", scopes: list[str] | None = None) -> str:
     error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    scope_items = "".join(f"<li>{html.escape(scope)}</li>" for scope in (scopes or []))
+    scope_html = f"<p>Quyền được yêu cầu:</p><ul>{scope_items}</ul>" if scope_items else ""
     return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kết nối Prewise</title><style>
-body{{font-family:system-ui;background:#0e1116;color:#eef2f7;display:grid;place-items:center;min-height:100vh;margin:0}}.card{{width:min(430px,calc(100% - 36px));background:#171b22;border:1px solid #303743;border-radius:18px;padding:28px;box-sizing:border-box}}h1{{margin:0 0 8px}}p{{color:#aab4c2}}label{{display:block;margin:16px 0 6px}}input{{width:100%;box-sizing:border-box;padding:12px;border-radius:9px;border:1px solid #465063;background:#0e1116;color:white}}button{{width:100%;margin-top:20px;padding:12px;border:0;border-radius:9px;background:#ff9f43;font-weight:700}}.hint{{font-size:13px;color:#778292}}.error{{background:#4a1f25;color:#ffbec5;padding:10px;border-radius:8px}}</style></head><body><main class="card"><h1>Kết nối Prewise</h1><p>Nhập API key một lần để ChatGPT sử dụng Security AI theo plan và quota của bạn.</p>{error_html}<form method="post"><input type="hidden" name="request" value="{html.escape(request_id)}"><label>Prewise API key</label><input name="api_key" type="password" autocomplete="off" required placeholder="pw_live_..."><p class="hint">API key chỉ được kiểm tra, không được lưu dưới dạng văn bản rõ.</p><button type="submit">Cho phép kết nối</button></form></main></body></html>"""
+body{{font-family:system-ui;background:#0e1116;color:#eef2f7;display:grid;place-items:center;min-height:100vh;margin:0}}.card{{width:min(430px,calc(100% - 36px));background:#171b22;border:1px solid #303743;border-radius:18px;padding:28px;box-sizing:border-box}}h1{{margin:0 0 8px}}p{{color:#aab4c2}}label{{display:block;margin:16px 0 6px}}input{{width:100%;box-sizing:border-box;padding:12px;border-radius:9px;border:1px solid #465063;background:#0e1116;color:white}}button{{width:100%;margin-top:20px;padding:12px;border:0;border-radius:9px;background:#ff9f43;font-weight:700}}.hint{{font-size:13px;color:#778292}}.error{{background:#4a1f25;color:#ffbec5;padding:10px;border-radius:8px}}</style></head><body><main class="card"><h1>Kết nối Prewise</h1><p>Nhập API key một lần để ChatGPT sử dụng Security AI theo plan và quota của bạn.</p>{scope_html}{error_html}<form method="post"><input type="hidden" name="request" value="{html.escape(request_id)}"><label>Prewise API key</label><input name="api_key" type="password" autocomplete="off" required placeholder="pw_live_..."><p class="hint">API key chỉ được kiểm tra, không được lưu dưới dạng văn bản rõ.</p><button type="submit">Cho phép kết nối</button></form></main></body></html>"""
 
 
 def install_oauth_routes(server) -> None:
@@ -267,7 +275,7 @@ def install_oauth_routes(server) -> None:
             if pending is None or pending.consumed_at is not None or pending.expires_at <= utcnow():
                 return HTMLResponse(_form(request_id, "Yêu cầu kết nối đã hết hạn."), status_code=400)
             if request.method == "GET":
-                return HTMLResponse(_form(request_id))
+                return HTMLResponse(_form(request_id, scopes=list(pending.scopes)))
 
             raw_key = str(form.get("api_key", "")).strip()
             key = db.execute(
@@ -283,7 +291,24 @@ def install_oauth_routes(server) -> None:
             ):
                 user = db.get(User, key.user_id)
             if user is None or user.status != "active":
-                return HTMLResponse(_form(request_id, "Thông tin xác thực không hợp lệ."), status_code=401)
+                return HTMLResponse(
+                    _form(
+                        request_id,
+                        "Thông tin xác thực không hợp lệ.",
+                        list(pending.scopes),
+                    ),
+                    status_code=401,
+                )
+            requested_sensitive = set(pending.scopes) - {"mcp:invoke"}
+            if not requested_sensitive.issubset(set(key.scopes or [])):
+                return HTMLResponse(
+                    _form(
+                        request_id,
+                        "API key không cấp đủ quyền nhạy cảm được yêu cầu.",
+                        list(pending.scopes),
+                    ),
+                    status_code=403,
+                )
 
             code = secrets.token_urlsafe(32)
             db.add(

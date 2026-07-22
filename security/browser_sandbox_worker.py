@@ -1159,7 +1159,7 @@ def run(payload: dict) -> dict:
                             for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
                                 try { visit(JSON.parse(node.textContent || 'null')); } catch (_) {}
                             }
-                            const commercial = prices.length > 0 || payment_methods.length > 0 || /add to cart|buy now|checkout|mua ngay|gio hang/.test(folded);
+                            const commercial = prices.length > 0 || payment_methods.length > 0 || recipient_hints.length > 0 || /add to cart|buy now|checkout|mua ngay|gio hang/.test(folded);
                             const image_hosts = Array.from(new Set(Array.from(document.images).map((image) => { try { return new URL(image.currentSrc || image.src, location.href).hostname; } catch (_) { return ''; } }).filter(Boolean))).slice(0, 20);
                             const script_hosts = Array.from(new Set(Array.from(document.scripts).map((script) => { try { return script.src ? new URL(script.src, location.href).hostname : ''; } catch (_) { return ''; } }).filter(Boolean))).slice(0, 20);
                             return {

@@ -1,0 +1,41 @@
+.risk-score-stack {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+}
+
+.ai-score-chip {
+  min-width: 200px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 14px;
+  padding: 11px 13px;
+  border: 1px solid #2c625f;
+  background: #0b1d1e;
+  color: #8da6a5;
+}
+
+.ai-score-chip > span {
+  font: 9px JetBrains Mono;
+  letter-spacing: .12em;
+  color: var(--cyan);
+}
+
+.ai-score-chip > b {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  font: 24px JetBrains Mono;
+  color: #eafffc;
+}
+
+.ai-score-chip small {
+  font-size: 10px;
+  color: #78918f;
+}
+
+.ai-score-chip em {
+  font: 10px JetBrains Mono;
+  font-style: normal;
+  color: #78918f;
+}

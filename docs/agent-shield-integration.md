@@ -22,7 +22,17 @@ Streamable HTTP mặc định **bắt buộc** header:
 Authorization: Bearer pw_live_...
 ```
 
-Key phải active, chưa hết hạn, thuộc user active và có scope `mcp:invoke`. Key bị rotate/revoke bị từ chối ngay. Anonymous bị tắt mặc định và bị cấm khi `APP_ENV=production`. Mỗi lần gọi hợp lệ cập nhật `last_used_at` và ghi audit log đã băm IP/User-Agent; response lỗi có `Cache-Control: no-store`.
+Key phải active, chưa hết hạn, thuộc user active và có scope `mcp:invoke` hoặc
+scope đánh giá tương ứng. `mcp:invoke` được giữ làm quyền bao trùm để tương
+thích client cũ. Chia sẻ mẫu file ra provider luôn cần thêm
+`mcp:file:share_external`; quyền bao trùm không thay thế được quyền nhạy cảm
+này. Key bị rotate/revoke bị từ chối ngay. Anonymous bị tắt mặc định và bị cấm
+khi `APP_ENV=production`.
+
+Input được validate và kiểm tra scope trước khi trừ quota. Polling báo cáo,
+connection test và deterministic summary không tiêu tốn lượt scan. Mỗi tool
+call được audit riêng với tên tool, thời gian, kết quả, verdict, trạng thái
+provider và cờ chia sẻ mẫu; nội dung/file bytes không được ghi vào audit log.
 
 Các tool:
 
@@ -32,6 +42,9 @@ Các tool:
 - `assess_action`: trước mọi tool call có side effect.
 - `assess_page`: sau khi browser đọc DOM/HTML.
 - `assess_file_static`: trước khi mở/chạy file trong sandbox MCP.
+- `quick_scan_exe`: test nhanh EXE đã nằm trong sandbox MCP.
+- `quick_scan_exe_content`: test nhanh bytes EXE dạng base64 từ MCP client từ xa.
+- `get_exe_quick_scan_report`: poll provider mà không trừ thêm quota scan.
 
 > MCP tool là advisory. Muốn bảo vệ chắc chắn, harness phải đặt Prewise trong hook bắt buộc trước tool executor; không chỉ nhắc LLM tự gọi.
 
@@ -62,6 +75,7 @@ assess:prompt
 assess:file
 assess:action
 mcp:invoke
+mcp:file:share_external
 logs:read
 ```
 
@@ -71,6 +85,8 @@ Response thống nhất có:
 
 ```json
 {
+  "schema_version": "1.0",
+  "ok": true,
   "decision": "ALLOW | WARN | ASK_USER_CONFIRMATION | BLOCK",
   "risk_score": 0.91,
   "risk_level": "critical",

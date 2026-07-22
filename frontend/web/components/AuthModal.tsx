@@ -230,7 +230,7 @@ export default function AuthModal({
                         🛡️
                     </div>
                     <div className="text-xs font-medium tracking-wide text-slate-400">
-                        AI Security Armor
+                        Prewise
                     </div>
                     <h2
                         id={titleId}

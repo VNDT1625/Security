@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -34,7 +35,10 @@ class AdapterDefinition(BaseModel):
 
     adapter_id: str = Field(min_length=1, max_length=160)
     task: AdapterTask
-    runtime: str = Field(default="openai_lora", pattern="^(openai_lora|http_json)$")
+    runtime: str = Field(
+        default="openai_lora",
+        pattern="^(openai_lora|openai_compatible|http_json)$",
+    )
     path: str = ""
     served_model_name: str = ""
     endpoint: str = ""
@@ -48,6 +52,8 @@ class AdapterDefinition(BaseModel):
             raise ValueError("openai_lora adapter requires served_model_name")
         if self.runtime == "openai_lora" and not self.path:
             raise ValueError("openai_lora adapter requires path")
+        if self.runtime == "openai_compatible" and not self.served_model_name:
+            raise ValueError("openai_compatible adapter requires served_model_name")
         if self.runtime == "http_json" and not self.endpoint:
             raise ValueError("http_json adapter requires endpoint")
         return self
@@ -124,6 +130,7 @@ class AdapterRegistry:
         *,
         base_url: str = "",
         api_key: str = "",
+        model_name: str = "",
         default_timeout_seconds: float = 15,
         enabled: bool = True,
         transport: httpx.BaseTransport | None = None,
@@ -131,6 +138,7 @@ class AdapterRegistry:
         self.manifest_path = Path(manifest_path)
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        self.model_name = model_name.strip()
         self.default_timeout_seconds = default_timeout_seconds
         self.enabled = enabled
         self.transport = transport
@@ -178,11 +186,15 @@ class AdapterRegistry:
     def cache_token(self) -> str:
         """Change assessment cache namespaces when routing configuration changes."""
         self.reload()
+        route_fingerprint = hashlib.sha256(
+            f"{self.base_url}\n{self.model_name}".encode()
+        ).hexdigest()[:12]
         return ":".join(
             (
                 "enabled" if self.enabled else "disabled",
                 str(self._manifest_mtime_ns or "missing"),
                 "loaded" if self._manifest is not None else "unavailable",
+                route_fingerprint,
             )
         )
 
@@ -204,12 +216,14 @@ class AdapterRegistry:
             not self.enabled
             or definition is None
             or not definition.enabled
-            or definition.runtime != "openai_lora"
+            or definition.runtime not in {"openai_lora", "openai_compatible"}
             or not self.base_url
         ):
             return False
-        artifact_status, _ = self._artifact_status(definition)
-        return artifact_status is None
+        if definition.runtime == "openai_lora":
+            artifact_status, _ = self._artifact_status(definition)
+            return artifact_status is None
+        return bool(self.model_name or definition.served_model_name)
 
     def invoke(self, task: AdapterTask, payload: BaseModel) -> AdapterOutcome:
         started = time.perf_counter()
@@ -244,6 +258,12 @@ class AdapterRegistry:
                 return self._finish(
                     task, definition, AdapterRunStatus.NOT_CONFIGURED, started,
                     "adapter base URL is not configured",
+                )
+        elif definition.runtime == "openai_compatible":
+            if not self.base_url:
+                return self._finish(
+                    task, definition, AdapterRunStatus.NOT_CONFIGURED, started,
+                    "OpenAI-compatible base URL is not configured",
                 )
         elif not self._resolved_endpoint(definition):
             return self._finish(
@@ -397,6 +417,9 @@ class AdapterRegistry:
                 return artifact_status, artifact_error
             if not self.base_url:
                 return AdapterRunStatus.NOT_CONFIGURED, "adapter base URL is not configured"
+        elif definition.runtime == "openai_compatible":
+            if not self.base_url:
+                return AdapterRunStatus.NOT_CONFIGURED, "OpenAI-compatible base URL is not configured"
         elif not self._resolved_endpoint(definition):
             return AdapterRunStatus.NOT_CONFIGURED, "provider endpoint is not configured"
         if last:
@@ -428,13 +451,20 @@ class AdapterRegistry:
                 return data
             base = self.base_url if self.base_url.endswith("/v1") else self.base_url + "/v1"
             output_model = _OUTPUT_MODELS[task]
+            output_schema = output_model.model_json_schema()
+            system_prompt = (
+                _SYSTEM_PROMPTS[task]
+                + " Return one raw JSON object only: no Markdown, prose, or code fences. "
+                + "The object must validate against this JSON Schema:\n"
+                + json.dumps(output_schema, ensure_ascii=False, separators=(",", ":"))
+            )
             response = client.post(
                 f"{base}/chat/completions",
                 headers=headers,
                 json={
-                    "model": definition.served_model_name,
+                    "model": self.model_name or definition.served_model_name,
                     "messages": [
-                        {"role": "system", "content": _SYSTEM_PROMPTS[task]},
+                        {"role": "system", "content": system_prompt},
                         {
                             "role": "user",
                             "content": (
@@ -446,11 +476,12 @@ class AdapterRegistry:
                     ],
                     "temperature": 0,
                     "max_tokens": 1000,
+                    "stream": False,
                     "response_format": {
                         "type": "json_schema",
                         "json_schema": {
                             "name": task.value.replace("-", "_"),
-                            "schema": output_model.model_json_schema(),
+                            "schema": output_schema,
                         },
                     },
                 },

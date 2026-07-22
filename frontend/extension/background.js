@@ -1,12 +1,41 @@
-import { assessUrl, assessText, assessAction, verifyExtensionKey } from "./shared/api.js";
+import { assessUrl, assessText, assessAction, assessExecutable, verifyExtensionKey } from "./shared/api.js";
 import { getRiskLevel, toDisplayScore } from "./shared/risk.js";
 
 const tabResults = new Map();
 const urlCache = new Map();
 const inFlight = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
-const CACHE_STORAGE_KEY = "urlAssessmentCacheV1";
+// V3 invalidates scores saved before the extension started using the
+// authoritative Risk Core final score from the balanced Web App pipeline.
+const CACHE_STORAGE_KEY = "urlAssessmentCacheV3";
 const MAX_CACHED_URLS = 100;
+const DEFAULT_WARNING_THRESHOLD = 60;
+const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+// Product policy: these well-known services are returned immediately without
+// calling the assessment API. Matching is label-aware, so "youtube.com.evil.tld"
+// can never inherit the trusted verdict for youtube.com.
+const TRUSTED_POPULAR_DOMAINS = Object.freeze([
+  "google.com", "youtube.com", "facebook.com", "instagram.com", "x.com",
+  "twitter.com", "wikipedia.org", "reddit.com", "amazon.com", "yahoo.com",
+  "bing.com", "microsoft.com", "apple.com", "linkedin.com", "netflix.com",
+  "office.com", "live.com", "github.com", "stackoverflow.com", "tiktok.com",
+  "whatsapp.com", "telegram.org", "discord.com", "twitch.tv", "spotify.com",
+  "pinterest.com", "imdb.com", "ebay.com", "paypal.com", "adobe.com",
+  "dropbox.com", "zoom.us", "slack.com", "notion.so", "canva.com",
+  "cloudflare.com", "openai.com", "chatgpt.com", "claude.ai", "gemini.google.com",
+  "drive.google.com", "docs.google.com", "mail.google.com", "maps.google.com", "news.google.com",
+  "meet.google.com", "calendar.google.com", "translate.google.com", "play.google.com", "photos.google.com",
+  "outlook.com", "onedrive.com", "teams.microsoft.com", "azure.com", "microsoftonline.com",
+  "bbc.com", "cnn.com", "nytimes.com", "theguardian.com", "reuters.com",
+  "forbes.com", "bloomberg.com", "medium.com", "quora.com", "tumblr.com",
+  "wordpress.com", "blogger.com", "w3.org", "mozilla.org", "npmjs.com",
+  "docker.com", "gitlab.com", "bitbucket.org", "atlassian.com", "figma.com",
+  "salesforce.com", "shopify.com", "walmart.com", "target.com", "booking.com",
+  "airbnb.com", "tripadvisor.com", "expedia.com", "uber.com", "grab.com",
+  "baidu.com", "qq.com", "weibo.com", "yandex.com", "naver.com",
+  "samsung.com", "intel.com", "nvidia.com", "amd.com", "dell.com",
+  "hp.com", "lenovo.com", "tiktokshop.com", "shopee.vn", "lazada.vn",
+]);
 let requestSequence = 0;
 let rateLimitedUntil = 0;
 let rateLimitTimer = null;
@@ -32,7 +61,12 @@ async function persistUrlCache() {
 }
 
 async function settings() {
-  return chrome.storage.local.get({ protectionEnabled: false, linkProtection: true, gmailProtection: true });
+  return chrome.storage.local.get({
+    protectionEnabled: false,
+    websiteProtection: true,
+    gmailProtection: true,
+    warningThreshold: DEFAULT_WARNING_THRESHOLD,
+  });
 }
 function errorInfo(error) {
   return { type: error?.type || "unknown", message: error?.message || "Đã xảy ra lỗi không xác định.", status: error?.status ?? null, retryAfter: error?.retryAfter || 0 };
@@ -42,25 +76,55 @@ function clearBadge(tabId) {
   chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
   chrome.action.setTitle({ tabId, title: "AI Security Armor" }).catch(() => {});
 }
-function setBadge(tabId, entry) {
+function setBadge(tabId, entry, threshold = DEFAULT_WARNING_THRESHOLD) {
   if (tabId == null) return;
-  if (entry?.status === "loading") {
-    chrome.action.setBadgeText({ tabId, text: "…" });
-    chrome.action.setBadgeBackgroundColor({ tabId, color: "#2563eb" });
-    chrome.action.setTitle({ tabId, title: "AI Security Armor — Đang kiểm tra" });
-    return;
-  }
-  if (entry?.error) { clearBadge(tabId); return; }
+  if (entry?.status === "loading" || entry?.error || Number(entry?.score || 0) <= threshold) { clearBadge(tabId); return; }
   const level = getRiskLevel(entry?.score || 0);
-  chrome.action.setBadgeText({ tabId, text: { safe: "OK", warn: "!", danger: "X" }[level.key] });
+  chrome.action.setBadgeText({ tabId, text: level.key === "danger" ? "X" : "!" });
   chrome.action.setBadgeBackgroundColor({ tabId, color: level.color });
   chrome.action.setTitle({ tabId, title: `AI Security Armor — ${level.label} (${entry.score}/100)` });
+}
+function notifyTab(tabId, entry, current) {
+  if (tabId == null) return;
+  chrome.tabs.sendMessage(tabId, {
+    type: "TAB_ASSESSMENT_UPDATED",
+    entry,
+    warningThreshold: current.warningThreshold,
+    websiteProtection: current.websiteProtection,
+  }).catch(() => null);
+}
+function decodeBase64(value) {
+  const binary = atob(value);
+  if (binary.length > MAX_ATTACHMENT_BYTES) throw new Error("Tệp EXE vượt quá giới hạn quét nhanh 12 MB.");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 function cached(url) {
   const hit = urlCache.get(url);
   if (hit && Date.now() - hit.completedAt < CACHE_TTL) return hit;
   if (hit) urlCache.delete(url);
   return null;
+}
+function trustedPopularDomain(url) {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+    return TRUSTED_POPULAR_DOMAINS.find((domain) => hostname === domain || hostname.endsWith(`.${domain}`)) || "";
+  } catch { return ""; }
+}
+function trustedEntry(url, domain) {
+  const now = Date.now();
+  return {
+    status: "complete", url, score: 0, level: "safe", trusted: true,
+    trustedDomain: domain, requestId: ++requestSequence, startedAt: now,
+    completedAt: now, latencyMs: 0,
+    result: {
+      risk_score: 0,
+      verdict: "safe",
+      reasons: [`${domain} nằm trong danh sách 100 dịch vụ phổ biến được tin cậy sẵn.`],
+      evidence: [],
+    },
+  };
 }
 function beginCooldown(retryAfter) {
   rateLimitedUntil = Date.now() + Math.max(1, retryAfter || 60) * 1000;
@@ -72,8 +136,19 @@ function beginCooldown(retryAfter) {
   }, Math.max(1, rateLimitedUntil - Date.now()));
 }
 async function handleAssessUrl(url, tabId, force = false) {
-  if (!(await settings()).protectionEnabled) return { disabled: true };
+  const current = await settings();
+  if (!current.protectionEnabled || !current.websiteProtection) return { disabled: true };
   if (!/^https?:\/\//i.test(url || "")) return { unsupported: true };
+  const trustedDomain = trustedPopularDomain(url);
+  if (trustedDomain) {
+    const entry = trustedEntry(url, trustedDomain);
+    if (tabId != null) {
+      tabResults.set(tabId, entry);
+      clearBadge(tabId);
+      notifyTab(tabId, entry, current);
+    }
+    return entry;
+  }
   await cacheReady;
   if (Date.now() < rateLimitedUntil) {
     clearBadge(tabId);
@@ -81,13 +156,21 @@ async function handleAssessUrl(url, tabId, force = false) {
   }
   if (!force) {
     const hit = cached(url);
-    if (hit) { if (tabId != null) { tabResults.set(tabId, hit); setBadge(tabId, hit); } return hit; }
-    if (inFlight.has(url)) return inFlight.get(url);
+    if (hit) { if (tabId != null) { tabResults.set(tabId, hit); setBadge(tabId, hit, current.warningThreshold); notifyTab(tabId, hit, current); } return hit; }
+    if (inFlight.has(url)) {
+      const shared = await inFlight.get(url);
+      if (tabId != null && shared?.status === "complete") {
+        tabResults.set(tabId, shared);
+        setBadge(tabId, shared, current.warningThreshold);
+        notifyTab(tabId, shared, current);
+      }
+      return shared;
+    }
   }
   const requestId = ++requestSequence;
   const startedAt = Date.now();
   const loading = { status: "loading", url, requestId, startedAt };
-  if (tabId != null) { tabResults.set(tabId, loading); setBadge(tabId, loading); }
+  if (tabId != null) { tabResults.set(tabId, loading); setBadge(tabId, loading, current.warningThreshold); }
   const promise = (async () => {
     try {
       const result = await assessUrl(url);
@@ -95,23 +178,37 @@ async function handleAssessUrl(url, tabId, force = false) {
       const entry = { status: "complete", url, score: toDisplayScore(result.risk_score), level: level.key, result, requestId, startedAt, completedAt: Date.now(), latencyMs: Date.now() - startedAt };
       urlCache.set(url, entry);
       await persistUrlCache();
-      if (tabId != null && tabResults.get(tabId)?.requestId === requestId) { tabResults.set(tabId, entry); setBadge(tabId, entry); }
+      if (tabId != null && tabResults.get(tabId)?.requestId === requestId) {
+        tabResults.set(tabId, entry);
+        setBadge(tabId, entry, current.warningThreshold);
+        notifyTab(tabId, entry, current);
+      }
       return entry;
     } catch (error) {
       const info = errorInfo(error);
       const entry = { status: "error", url, error: info, requestId, startedAt, completedAt: Date.now(), latencyMs: Date.now() - startedAt };
       if (info.status === 429) beginCooldown(info.retryAfter);
-      if (tabId != null && tabResults.get(tabId)?.requestId === requestId) { tabResults.delete(tabId); clearBadge(tabId); }
+      if (tabId != null && tabResults.get(tabId)?.requestId === requestId) {
+        tabResults.set(tabId, entry);
+        clearBadge(tabId);
+        notifyTab(tabId, entry, current);
+      }
       return entry;
-    } finally { inFlight.delete(url); }
+    } finally { if (inFlight.get(url) === promise) inFlight.delete(url); }
   })();
   inFlight.set(url, promise);
   return promise;
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const stored = await chrome.storage.local.get(["protectionEnabled", "linkProtection", "gmailProtection"]);
-  await chrome.storage.local.set({ protectionEnabled: typeof stored.protectionEnabled === "boolean" ? stored.protectionEnabled : false, linkProtection: typeof stored.linkProtection === "boolean" ? stored.linkProtection : true, gmailProtection: typeof stored.gmailProtection === "boolean" ? stored.gmailProtection : true });
+  const stored = await chrome.storage.local.get(["protectionEnabled", "websiteProtection", "linkProtection", "gmailProtection", "warningThreshold"]);
+  await chrome.storage.local.set({
+    protectionEnabled: typeof stored.protectionEnabled === "boolean" ? stored.protectionEnabled : false,
+    websiteProtection: typeof stored.websiteProtection === "boolean" ? stored.websiteProtection : stored.linkProtection !== false,
+    gmailProtection: typeof stored.gmailProtection === "boolean" ? stored.gmailProtection : true,
+    warningThreshold: Number.isFinite(stored.warningThreshold) ? Math.max(40, Math.min(90, stored.warningThreshold)) : DEFAULT_WARNING_THRESHOLD,
+  });
+  await chrome.storage.local.remove("linkProtection");
   const tabs = await chrome.tabs.query({}); tabs.forEach((tab) => clearBadge(tab.id));
 });
 chrome.runtime.onStartup.addListener(async () => { const tabs = await chrome.tabs.query({}); tabs.forEach((tab) => clearBadge(tab.id)); });
@@ -121,7 +218,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
       switch (message.type) {
         case "ASSESS_URL": return sendResponse(await handleAssessUrl(message.url, tabId, message.force));
-        case "GET_PROTECTION_STATE": { const current = await settings(); return sendResponse({ enabled: current.protectionEnabled === true, linkProtection: current.linkProtection, gmailProtection: current.gmailProtection }); }
+        case "GET_PROTECTION_STATE": { const current = await settings(); return sendResponse({ enabled: current.protectionEnabled === true, websiteProtection: current.websiteProtection, gmailProtection: current.gmailProtection, warningThreshold: current.warningThreshold }); }
         case "SET_PROTECTION_STATE": {
           if (message.enabled === true) {
             try {
@@ -134,7 +231,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
           await chrome.storage.local.set({ protectionEnabled: message.enabled === true });
           const current = await settings(); const tabs = await chrome.tabs.query({});
-          await Promise.all(tabs.filter((tab) => tab.id != null).map((tab) => chrome.tabs.sendMessage(tab.id, { type: "PROTECTION_STATE_CHANGED", enabled: current.protectionEnabled, linkProtection: current.linkProtection }).catch(() => null)));
+          await Promise.all(tabs.filter((tab) => tab.id != null).map((tab) => chrome.tabs.sendMessage(tab.id, { type: "PROTECTION_STATE_CHANGED", enabled: current.protectionEnabled, websiteProtection: current.websiteProtection, gmailProtection: current.gmailProtection, warningThreshold: current.warningThreshold }).catch(() => null)));
           if (!message.enabled) { tabResults.clear(); urlCache.clear(); await chrome.storage.local.remove(CACHE_STORAGE_KEY); rateLimitedUntil = 0; clearTimeout(rateLimitTimer); tabs.forEach((tab) => clearBadge(tab.id)); }
           else {
             const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -145,6 +242,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "ASSESS_TEXT": {
           const current = await settings(); if (!current.protectionEnabled || !current.gmailProtection) return sendResponse({ disabled: true });
           try { return sendResponse({ result: await assessText(message.text, message.modality || "email", message.metadata), offline: false }); } catch (error) { return sendResponse({ error: errorInfo(error) }); }
+        }
+        case "ASSESS_EXE_ATTACHMENT": {
+          const current = await settings();
+          if (!current.protectionEnabled || !current.gmailProtection) return sendResponse({ disabled: true });
+          if (!/\.exe$/i.test(message.filename || "")) return sendResponse({ error: { type: "invalid_file", message: "Chỉ hỗ trợ quét nhanh tệp .exe." } });
+          try {
+            const bytes = decodeBase64(message.dataBase64 || "");
+            return sendResponse({ result: await assessExecutable(message.filename, bytes, message.mimeType), offline: false });
+          } catch (error) { return sendResponse({ error: errorInfo(error) }); }
         }
         case "ASSESS_ACTION": try { return sendResponse({ result: await assessAction(message.actionType, message.targetUrl, message.dataTypes) }); } catch (error) { return sendResponse({ error: errorInfo(error) }); }
         case "GET_TAB_RESULT": { const entry = tabResults.get(message.tabId); return sendResponse(entry?.url === message.url ? entry : null); }
@@ -161,3 +267,13 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status === "complete" && /^https?:/.test(tab.url || "") && Date.now() >= rateLimitedUntil) settings().then((current) => current.protectionEnabled && handleAssessUrl(tab.url, tabId));
 });
 chrome.tabs.onRemoved.addListener((tabId) => tabResults.delete(tabId));
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || (!changes.protectionEnabled && !changes.websiteProtection && !changes.warningThreshold)) return;
+  settings().then((current) => {
+    for (const [tabId, entry] of tabResults) {
+      if (!current.protectionEnabled || !current.websiteProtection) clearBadge(tabId);
+      else setBadge(tabId, entry, current.warningThreshold);
+      notifyTab(tabId, entry, current);
+    }
+  }).catch(() => {});
+});

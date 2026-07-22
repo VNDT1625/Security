@@ -60,17 +60,18 @@ def test_ai_quota_tracks_evaluation_and_explanation_separately(
         assert usage.ai_explanation_count == 2
 
 
-def test_free_deep_quota_is_enforced_server_side(
+def test_deep_quota_allows_100_scans_per_day(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "anonymous_daily_deep_scan_limit", 1)
+    monkeypatch.setattr(settings, "anonymous_daily_deep_scan_limit", 100)
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     actor = ActorContext(anonymous_id="deep-test")
     request = _request()
 
     with Session(engine) as db:
-        reserve_deep_scan_quota(db, actor, request)
+        for _ in range(100):
+            reserve_deep_scan_quota(db, actor, request)
         with pytest.raises(HTTPException) as exhausted:
             reserve_deep_scan_quota(db, actor, request)
 

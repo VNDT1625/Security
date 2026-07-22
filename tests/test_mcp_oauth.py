@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
 
 from backend.db import Base
-from backend.models import ApiKey, User
+from backend.models import ApiKey, Plan, Subscription, User
 from backend.security_utils import (
     create_api_key_value,
     create_password_salt,
@@ -38,6 +38,7 @@ def _app(monkeypatch):
     salt = create_password_salt()
     raw_key = create_api_key_value()
     with factory() as db:
+        db.add(Plan(tier="team", label="TEAM", features={}))
         user = User(
                 email="oauth@test.local",
                 display_name="OAuth User",
@@ -46,6 +47,7 @@ def _app(monkeypatch):
             )
         db.add(user)
         db.flush()
+        db.add(Subscription(user_id=user.id, plan_tier="team", status="active"))
         db.add(ApiKey(user_id=user.id, key_prefix=raw_key[:16], key_tail=raw_key[-4:], key_hash=hash_api_key(raw_key), scopes=["mcp:invoke"]))
         db.commit()
     return MCPApiKeyMiddleware(build_server().streamable_http_app()), raw_key

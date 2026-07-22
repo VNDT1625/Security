@@ -2,7 +2,7 @@
  * Module quản lý quota quét — QuotaGuard.
  *
  * Quản lý "còn lại hôm nay: X/Y scan" theo gói dịch vụ (Plan_Tier):
- *   - free       : 50 lượt/ngày → còn lại = max(0, 50 - usedToday)
+ *   - free       : 1000 lượt/ngày → còn lại = max(0, 1000 - usedToday)
  *   - pro / team : vô hạn (Number.POSITIVE_INFINITY)
  *
  * Nguyên tắc:
@@ -24,7 +24,7 @@ import type { PlanTier } from "./types";
 // ---------------------------------------------------------------------------
 
 /** Giới hạn quét hằng ngày của gói `free`. */
-export const FREE_DAILY_SCAN_LIMIT = 50;
+export const FREE_DAILY_SCAN_LIMIT = 1000;
 
 /** Khóa lưu trạng thái quota trong localStorage. */
 export const QUOTA_STORAGE_KEY = "aisec:quota";
@@ -36,7 +36,7 @@ export const QUOTA_STORAGE_KEY = "aisec:quota";
 /**
  * Trả về giới hạn quét hằng ngày cho một gói.
  *
- * **Postconditions**: `free` → 50; `pro`/`team` → `Number.POSITIVE_INFINITY`;
+ * **Postconditions**: `free` → 1000; `pro`/`team` → `Number.POSITIVE_INFINITY`;
  * kết quả luôn ≥ 0. Hàm thuần, tất định.
  *
  * @param plan Gói dịch vụ (`free` | `pro` | `team`).
@@ -54,7 +54,7 @@ export function getLimitForPlan(plan: PlanTier): number {
  *
  * **Preconditions**: `usedToday ≥ 0`.
  * **Postconditions**:
- *   - `free`       → `max(0, 50 - usedToday)`;
+ *   - `free`       → `max(0, 1000 - usedToday)`;
  *   - `pro`/`team` → `Number.POSITIVE_INFINITY`;
  *   - kết quả luôn KHÔNG âm.
  *
@@ -160,7 +160,7 @@ function writeStoredState(state: QuotaState): void {
  *
  * @example
  * const guard = new QuotaGuard("free");
- * guard.getRemaining(); // 50
+ * guard.getRemaining(); // 1000
  * guard.consume();
  * guard.getRemaining(); // 49
  */
@@ -207,7 +207,7 @@ export class QuotaGuard {
     /**
      * Giới hạn quét hằng ngày của gói hiện tại.
      * @param plan Gói cần tra (mặc định: gói hiện tại).
-     * @returns Free=50, Pro/Team=∞.
+     * @returns Free=1000, Pro/Team=∞.
      */
     getLimitForPlan(plan: PlanTier = this.plan): number {
         return getLimitForPlan(plan);
@@ -216,7 +216,7 @@ export class QuotaGuard {
     /**
      * Số lượt còn lại hôm nay. Tự reset khi sang ngày mới trước khi tính.
      *
-     * **Postconditions**: kết quả không âm; free → `max(0, 50 - used)`;
+     * **Postconditions**: kết quả không âm; free → `max(0, 1000 - used)`;
      * pro/team → `Number.POSITIVE_INFINITY`.
      */
     getRemaining(): number {

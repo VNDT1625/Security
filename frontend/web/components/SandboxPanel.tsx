@@ -70,9 +70,9 @@ export default function SandboxPanel({
     if (!loading && result === null) return null;
 
     return (
-        <div className="border border-neutral-200 bg-white p-5">
+        <div className="min-w-0 max-w-full overflow-hidden border border-neutral-200 bg-white p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                     <h3 className="text-base font-semibold text-neutral-900">
                         Sandbox trực tiếp
                     </h3>
@@ -93,26 +93,26 @@ export default function SandboxPanel({
 
             {!loading && result && (
                 <>
-                    <dl className="mt-4 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                        <div>
+                    <dl className="mt-4 grid min-w-0 gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">HTTP</dt>
                             <dd className="mt-0.5 font-medium text-neutral-900">
                                 {result.status_code ?? "Không có phản hồi"} {result.http_reason}
                             </dd>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">IP đã kết nối</dt>
                             <dd className="mt-0.5 break-all font-medium text-neutral-900">
                                 {result.resolved_ip || "-"}
                             </dd>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">Dữ liệu đọc</dt>
                             <dd className="mt-0.5 font-medium text-neutral-900">
                                 {result.bytes_read.toLocaleString("vi-VN")} byte
                             </dd>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                             <dt className="text-xs text-neutral-500">Thời gian</dt>
                             <dd className="mt-0.5 font-medium text-neutral-900">
                                 {Math.round(result.elapsed_ms)} ms
@@ -143,7 +143,7 @@ export default function SandboxPanel({
                                 return (
                                     <span
                                         key={key}
-                                        className="border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs text-neutral-700"
+                                        className="max-w-full break-all border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs text-neutral-700"
                                     >
                                         {key}: {displayed}
                                     </span>
@@ -163,9 +163,9 @@ export default function SandboxPanel({
                                     key={`${issue.code}-${index}`}
                                     className={`border p-3 text-sm ${SEVERITY_STYLES[issue.severity]}`}
                                 >
-                                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                                        <p className="font-medium">{issue.message}</p>
-                                        <code className="text-xs">{issue.code}</code>
+                                    <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-2">
+                                        <p className="min-w-0 break-words font-medium">{issue.message}</p>
+                                        <code className="break-all text-xs">{issue.code}</code>
                                     </div>
                                     {issue.detail && (
                                         <p className="mt-1 break-all text-xs opacity-80">{issue.detail}</p>

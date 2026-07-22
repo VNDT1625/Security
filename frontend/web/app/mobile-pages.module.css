@@ -1,0 +1,545 @@
+.analyze,
+.history,
+.settings,
+.accountShell,
+.auth,
+.report,
+.investigation {
+  min-width: 0;
+}
+
+.report :global(pre),
+.report :global(code),
+.investigation :global(pre),
+.investigation :global(code),
+.accountShell :global(pre),
+.accountShell :global(code) {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .analyze:global(.workspace) {
+    padding-bottom: calc(58px + env(safe-area-inset-bottom));
+  }
+
+  .analyze :global(.pane-head) {
+    min-height: 112px;
+    height: auto;
+    gap: 12px;
+  }
+
+  .analyze :global(.saved) {
+    max-width: 42%;
+    text-align: right;
+    line-height: 1.45;
+  }
+
+  .analyze :global(.editor-area) {
+    min-height: 430px;
+  }
+
+  .analyze :global(.inspector) {
+    overflow: visible;
+  }
+
+  .analyze :global(.message-meta),
+  .analyze :global(.gmail-picker),
+  .analyze :global(.gmail-preview-note),
+  .analyze :global(.llm-context) {
+    margin-inline: 14px;
+  }
+
+  .analyze :global(.message-meta) {
+    padding-inline: 0;
+  }
+
+  .analyze :global(.message-meta button),
+  .analyze :global(.message-meta input),
+  .analyze :global(.eml-picker),
+  .analyze :global(.gmail-picker button),
+  .analyze :global(.gmail-picker input),
+  .analyze :global(.segments button),
+  .analyze :global(.analyze-action button) {
+    min-height: 44px;
+  }
+
+  .analyze :global(.gmail-preview-note),
+  .analyze :global(.gmail-picker > header) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .analyze :global(.gmail-picker-actions) {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr 44px;
+  }
+
+  .analyze :global(.gmail-picker-actions button) {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+
+  .analyze :global(.gmail-picker > form) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .analyze :global(.gmail-picker > form button) {
+    width: 100%;
+  }
+
+  .analyze :global(.config-group),
+  .analyze :global(.inspector-head),
+  .analyze :global(.analyze-action) {
+    padding-inline: 16px;
+  }
+
+  .analyze :global(.analyze-action) {
+    position: sticky;
+    z-index: 5;
+    bottom: calc(60px + env(safe-area-inset-bottom));
+    margin-top: 0;
+    padding-block: 12px 18px;
+    background: #080c12;
+    box-shadow: 0 -12px 24px rgba(0, 0, 0, 0.38);
+  }
+
+  .analyze :global(.privacy-note) {
+    margin-inline: 16px;
+  }
+
+  .history:global(.inner-page),
+  :global(.settings-page):has(.settings) {
+    padding-inline: 14px;
+  }
+
+  .history :global(.filter-row) {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .history :global(.search) {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+  }
+
+  .history :global(.filter-row button) {
+    min-height: 44px;
+    min-width: 0;
+    padding-inline: 6px;
+  }
+
+  .history :global(.history-list > a) {
+    min-width: 0;
+    gap: 10px;
+    padding-inline: 8px;
+  }
+
+  .history :global(.history-list strong) {
+    font-size: 20px;
+  }
+
+  :global(.settings-page):has(.settings) :global(.settings-grid) {
+    padding-top: 20px;
+  }
+
+  :global(.settings-page):has(.settings) :global(.settings-grid > nav) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 20px;
+  }
+
+  :global(.settings-page):has(.settings) :global(.settings-grid > nav button),
+  :global(.settings-page):has(.settings) :global(.option-cards button),
+  :global(.settings-page):has(.settings) :global(.segments button),
+  :global(.settings-page):has(.settings) :global(.danger-zone button),
+  :global(.settings-page):has(.settings) :global(.settings-primary-action) {
+    min-height: 44px;
+  }
+
+  :global(.settings-page):has(.settings) :global(.setting-block),
+  :global(.settings-page):has(.settings) :global(.danger-zone) {
+    padding-block: 22px;
+  }
+
+  :global(.settings-page):has(.settings) :global(.danger-zone),
+  :global(.settings-page):has(.settings) :global(.confirm-actions) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  :global(.settings-page):has(.settings) :global(.confirm-actions) {
+    width: 100%;
+  }
+
+  :global(.settings-page):has(.settings) :global(.settings-notice) {
+    top: 74px;
+    right: 12px;
+    left: 12px;
+  }
+
+  .accountShell:global(.account-shell) {
+    padding-inline: 14px;
+    padding-bottom: calc(82px + env(safe-area-inset-bottom));
+  }
+
+  .accountShell :global(.account-content),
+  .accountShell :global(.account-page),
+  .accountShell :global(.pricing-page) {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .accountShell :global(.identity-card),
+  .accountShell :global(.mcp-endpoint-card),
+  .accountShell :global(.mcp-toolbar),
+  .accountShell :global(.checkout-card > header) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .accountShell :global(.identity-card > i) {
+    align-self: flex-start;
+  }
+
+  .accountShell :global(.account-actions),
+  .accountShell :global(.mcp-modal-actions) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .accountShell :global(button),
+  .accountShell :global(a.mcp-quick-link),
+  .accountShell :global(.mcp-toolbar a),
+  .accountShell :global(.checkout-card a) {
+    min-height: 44px;
+  }
+
+  .accountShell :global(.account-actions button),
+  .accountShell :global(.mcp-endpoint-card button),
+  .accountShell :global(.mcp-toolbar a),
+  .accountShell :global(.mcp-modal-actions > *),
+  .accountShell :global(.checkout-card button) {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .accountShell :global(.key-panel code),
+  .accountShell :global(.integration-note code),
+  .accountShell :global(.mcp-endpoint-card code) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .accountShell :global(.mcp-toolbar label) {
+    width: 100%;
+  }
+
+  .accountShell :global(.mcp-modal-backdrop) {
+    align-items: end;
+    padding: 0;
+  }
+
+  .accountShell :global(.mcp-modal) {
+    width: 100%;
+    max-height: min(92dvh, 760px);
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+  }
+
+  .accountShell :global(.mcp-modal > header),
+  .accountShell :global(.mcp-steps) {
+    padding-inline: 16px;
+  }
+
+  .accountShell :global(.mcp-steps pre) {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    white-space: pre;
+  }
+
+  .accountShell :global(.checkout-page) {
+    padding-inline: 0;
+  }
+
+  .accountShell :global(.checkout-card) {
+    width: 100%;
+  }
+
+  :global(body):has(.auth) :global(.auth-page) {
+    min-height: 100dvh;
+    padding: 58px 12px 20px;
+  }
+
+  :global(body):has(.auth) :global(.auth-back) {
+    top: 12px;
+    left: 12px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  :global(body):has(.auth) :global(.auth-stage) {
+    width: 100%;
+    min-height: 0;
+  }
+
+  :global(body):has(.auth) :global(.auth-story) {
+    display: none;
+  }
+
+  :global(body):has(.auth) :global(.auth-card) {
+    min-width: 0;
+    padding: 28px 18px;
+  }
+
+  :global(body):has(.auth) :global(.auth-card input),
+  :global(body):has(.auth) :global(.auth-card form button),
+  :global(body):has(.auth) :global(.auth-text-action),
+  :global(body):has(.auth) :global(.auth-card footer button) {
+    min-height: 44px;
+  }
+
+  :global(body):has(.auth) :global(.auth-text-action),
+  :global(body):has(.auth) :global(.auth-card footer button) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-block: -8px;
+    padding-inline: 10px;
+  }
+
+  .report:global(.report) {
+    padding-inline: 14px;
+  }
+
+  .report :global(.report-actions) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .report :global(.report-actions > *) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .report :global(.report-actions a),
+  .report :global(.report-actions button),
+  .report :global(.ai-deep-button),
+  .report :global(.action-plan button) {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .report :global(.scan-proof),
+  .report :global(.ai-deep-cta) {
+    padding: 18px 14px;
+  }
+
+  .report :global(.section-label),
+  .report :global(.scan-proof > .section-label) {
+    height: auto;
+    min-height: 56px;
+    align-items: flex-start;
+    gap: 8px;
+    padding-block: 12px;
+    flex-direction: column;
+  }
+
+  .report :global(.scan-meta),
+  .report :global(.message-identity),
+  .report :global(.message-coverage-matrix > div:last-child),
+  .report :global(.message-evidence-groups),
+  .report :global(.url-basic-grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .report :global(.scan-meta > div) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .report :global(.scan-meta > div:last-child) {
+    border-bottom: 0;
+  }
+
+  .report :global(.criteria-table-wrap) {
+    max-width: 100%;
+    overflow: visible;
+    border: 0;
+  }
+
+  .report :global(.criteria-table) {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    background: transparent;
+  }
+
+  .report :global(.criteria-table thead) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .report :global(.criteria-table tbody) {
+    display: grid;
+    gap: 12px;
+  }
+
+  .report :global(.criteria-table tr) {
+    display: block;
+    border: 1px solid #29443f;
+    background: #070d12;
+  }
+
+  .report :global(.criteria-table td) {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    border-right: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .report :global(.criteria-table td:not(:last-child)) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .report :global(.criteria-table td:last-child) {
+    border-bottom: 0;
+  }
+
+  .report :global(.criteria-table td::before) {
+    display: block;
+    margin-bottom: 8px;
+    color: #79d9cc;
+    font: 10px ui-monospace, monospace;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .report :global(.layer-criteria-table td:nth-child(1)::before) {
+    content: "Lớp";
+  }
+
+  .report :global(.layer-criteria-table td:nth-child(2)::before) {
+    content: "Phạm vi thực tế";
+  }
+
+  .report :global(.layer-criteria-table td:nth-child(3)::before) {
+    content: "Các bước / tiêu chí xét";
+  }
+
+  .report :global(.layer-criteria-table td:nth-child(4)::before) {
+    content: "Kết quả lần quét này";
+  }
+
+  .report :global(.risk-criteria-table td:nth-child(1)::before) {
+    content: "Tiêu chí";
+  }
+
+  .report :global(.risk-criteria-table td:nth-child(2)::before) {
+    content: "Trạng thái";
+  }
+
+  .report :global(.risk-criteria-table td:nth-child(3)::before) {
+    content: "Điểm";
+  }
+
+  .report :global(.risk-criteria-table td:nth-child(4)::before) {
+    content: "Lý do";
+  }
+
+  .report :global(.criteria-table td:first-child span) {
+    white-space: normal;
+  }
+
+  .report :global(.findings article) {
+    gap: 10px;
+  }
+
+  .report :global(.findings article > div) {
+    min-width: 0;
+  }
+
+  .investigation:global(.ai-investigation) {
+    padding-inline: 12px;
+  }
+
+  .investigation :global(.ai-investigation-head h1) {
+    font-size: clamp(32px, 11vw, 46px);
+  }
+
+  .investigation :global(.ai-investigation-head > code),
+  .investigation :global(.ai-trace-flow code),
+  .investigation :global(.ai-tech-facts dd),
+  .investigation :global(.ai-identity dd) {
+    word-break: break-word;
+  }
+
+  .investigation :global(.ai-loading > span) {
+    width: 100%;
+  }
+
+  .investigation :global(.ai-error button),
+  .investigation :global(.ai-visual-actions a),
+  .investigation :global(.ai-investigation-foot a) {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .investigation :global(.ai-trace-flow),
+  .investigation :global(.ai-network-hosts),
+  .investigation :global(.ai-evidence > div > article) {
+    padding-inline: 14px;
+  }
+}
+
+@media (max-width: 380px) {
+  .analyze :global(.saved) {
+    display: none;
+  }
+
+  .analyze :global(.gmail-picker-actions) {
+    grid-template-columns: 1fr 44px;
+  }
+
+  .analyze :global(.gmail-picker-actions button:first-child) {
+    display: none;
+  }
+
+  .history :global(.filter-row) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report :global(.risk-dial) {
+    width: 190px;
+    height: 190px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (max-width: 600px) and (hover: none) {
+  .report :global(.report-core),
+  .investigation :global(.spin),
+  .accountShell :global(.spin) {
+    animation: none !important;
+  }
+}

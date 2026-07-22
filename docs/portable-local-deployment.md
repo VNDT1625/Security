@@ -1,6 +1,6 @@
 # Portable Local Deployment
 
-This is the recommended mode when AI Security Armor is shipped to a customer
+This is the recommended mode when Prewise is shipped to a customer
 machine or demo laptop and must run with the least setup.
 
 ## Decision

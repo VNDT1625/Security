@@ -4,7 +4,7 @@
         "description": "Tên tiện ích"
     },
     "appDesc": {
-        "message": "Lá chắn an ninh AI: đánh giá rủi ro URL và email tức thì, luôn kèm bằng chứng.",
+        "message": "Tự động đánh giá website, email đang mở và tệp EXE đính kèm; chỉ cảnh báo khi có rủi ro.",
         "description": "Mô tả tiện ích"
     }
 }

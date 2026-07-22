@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from backend.config import settings
 from backend.db import SessionLocal, get_db
-from backend.dependencies import get_inference_service
+from backend.dependencies import get_inference_service, get_user_inference_service
 from backend.routers.auth import (
     ActorContext,
     CurrentSession,
@@ -167,6 +167,7 @@ async def assess_gmail_message(
     db: DbSession = Depends(get_db),
     svc: InferenceService = Depends(get_inference_service),
 ):
+    svc = get_user_inference_service(db, auth.user.id)
     plan = build_plan_info(db, auth.user.id)
     if payload.analysis_depth == "pro" and plan.tier == "free":
         raise HTTPException(

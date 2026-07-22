@@ -8,12 +8,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.db import Base
-from backend.models import ApiKey, DailyQuotaUsage, User
+from backend.models import ApiKey, AuditLog, DailyQuotaUsage, Plan, Subscription, User
 from backend.security_utils import create_api_key_value, hash_api_key, utcnow
 from mcp_server import auth as mcp_auth
 from mcp_server.auth import (
     MCPApiKeyMiddleware,
     MCPIdentity,
+    audit_mcp_tool_call,
+    authorize_mcp_tool,
     current_mcp_identity,
     reserve_mcp_scan_quota,
 )
@@ -57,12 +59,22 @@ def setup_db(monkeypatch):
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
+    with factory() as db:
+        db.add(Plan(tier="team", label="TEAM", features={}))
+        db.commit()
     monkeypatch.setattr(mcp_auth, "SessionLocal", factory)
     monkeypatch.setattr(mcp_auth, "initialize_database", lambda: None)
     return factory
 
 
-def issue_key(factory, scopes=None, *, revoked=False, expired=False):
+def issue_key(
+    factory,
+    scopes=None,
+    *,
+    revoked=False,
+    expired=False,
+    subscription_expired=False,
+):
     raw = create_api_key_value()
     with factory() as db:
         user = User(
@@ -73,6 +85,12 @@ def issue_key(factory, scopes=None, *, revoked=False, expired=False):
         )
         db.add(user)
         db.flush()
+        db.add(Subscription(
+            user_id=user.id,
+            plan_tier="team",
+            status="active",
+            renews_at=(utcnow() - timedelta(seconds=1)) if subscription_expired else None,
+        ))
         record = ApiKey(
             user_id=user.id,
             key_prefix=raw[:16],
@@ -117,6 +135,20 @@ def test_mcp_http_accepts_scoped_key_and_sets_identity(monkeypatch) -> None:
     assert scope["state"]["prewise_api_key_id"] == key_id
 
 
+def test_mcp_http_rejects_key_after_team_subscription_expires(monkeypatch) -> None:
+    factory = setup_db(monkeypatch)
+    raw, _ = issue_key(factory, subscription_expired=True)
+    downstream = Downstream()
+
+    messages, _ = asyncio.run(
+        invoke(MCPApiKeyMiddleware(downstream), f"Bearer {raw}")
+    )
+
+    assert status(messages) == 403
+    assert body(messages)["detail"] == "plan_entitlement_required:team"
+    assert downstream.called is False
+
+
 def test_mcp_http_rejects_missing_scope(monkeypatch) -> None:
     factory = setup_db(monkeypatch)
     raw, _ = issue_key(factory, ["assess:url"])
@@ -153,3 +185,110 @@ def test_mcp_scan_consumes_authenticated_users_plan_quota(monkeypatch) -> None:
         usage = db.query(DailyQuotaUsage).filter_by(user_id=user_id).one()
         assert usage.api_key_id == key_id
         assert usage.scan_count == 1
+
+
+def test_external_file_sharing_requires_dedicated_scope() -> None:
+    legacy = current_mcp_identity.set(
+        MCPIdentity(None, None, "127.0.0.1", "mcp-test", ("mcp:invoke",))
+    )
+    try:
+        assert authorize_mcp_tool("assess:file") is True
+        assert authorize_mcp_tool("assess:file", external_share=True) is False
+    finally:
+        current_mcp_identity.reset(legacy)
+
+    dedicated = current_mcp_identity.set(
+        MCPIdentity(
+            None,
+            None,
+            "127.0.0.1",
+            "mcp-test",
+            ("mcp:invoke", "mcp:file:share_external"),
+        )
+    )
+    try:
+        assert authorize_mcp_tool("assess:file", external_share=True) is True
+    finally:
+        current_mcp_identity.reset(dedicated)
+
+
+def test_granular_mcp_scope_restricts_other_tool_groups() -> None:
+    token = current_mcp_identity.set(
+        MCPIdentity(
+            None,
+            None,
+            "127.0.0.1",
+            "mcp-test",
+            ("mcp:invoke", "assess:url"),
+        )
+    )
+    try:
+        assert authorize_mcp_tool("assess:url") is True
+        assert authorize_mcp_tool("assess:file") is False
+    finally:
+        current_mcp_identity.reset(token)
+
+
+def test_mcp_tool_audit_records_safe_metadata(monkeypatch) -> None:
+    factory = setup_db(monkeypatch)
+    _, key_id = issue_key(factory)
+    with factory() as db:
+        key = db.get(ApiKey, key_id)
+        assert key is not None
+        user_id = key.user_id
+
+    token = current_mcp_identity.set(
+        MCPIdentity(user_id, key_id, "127.0.0.1", "mcp-test", ("mcp:invoke",))
+    )
+    try:
+        audit_mcp_tool_call(
+            "quick_scan_exe",
+            {
+                "ok": True,
+                "request_id": "request-1",
+                "verdict": "WARN",
+                "risk_score": 42,
+                "provider": {"status": "known", "sample_shared": False},
+            },
+            elapsed_ms=12.345,
+            quota_consumed=True,
+        )
+    finally:
+        current_mcp_identity.reset(token)
+
+    with factory() as db:
+        event = db.query(AuditLog).filter_by(action="mcp.tool.invoke").one()
+        assert event.extra_metadata["tool"] == "quick_scan_exe"
+        assert event.extra_metadata["verdict"] == "WARN"
+        assert event.extra_metadata["sample_shared"] is False
+        assert event.extra_metadata["quota_consumed"] is True
+
+
+def test_mcp_tool_audit_never_copies_free_form_error_owner_or_prompt(monkeypatch) -> None:
+    factory = setup_db(monkeypatch)
+    _, key_id = issue_key(factory)
+    with factory() as db:
+        key = db.get(ApiKey, key_id)
+        assert key is not None
+        user_id = key.user_id
+
+    secret = "owner-alice prompt: build my confidential launch"
+    token = current_mcp_identity.set(
+        MCPIdentity(user_id, key_id, "127.0.0.1", "mcp-test", ("mcp:invoke",))
+    )
+    try:
+        audit_mcp_tool_call(
+            "quick_scan_exe",
+            {"ok": False, "error": secret, "request_id": "request-safe"},
+            elapsed_ms=1,
+            quota_consumed=False,
+        )
+    finally:
+        current_mcp_identity.reset(token)
+
+    with factory() as db:
+        event = db.query(AuditLog).filter_by(action="mcp.tool.invoke").one()
+        encoded = json.dumps(event.extra_metadata)
+        assert event.extra_metadata["error"] == "tool_error"
+        assert secret not in encoded
+        assert user_id not in encoded

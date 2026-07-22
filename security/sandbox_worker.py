@@ -383,13 +383,17 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     site_name = parser.meta.get("og:site_name", "")
     title_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", parser.title.lower())}
     site_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", site_name.lower())}
-    is_commercial = is_commercial or bool(prices)
     has_contact = any(term in page_text or term in link_text for term in contact_terms)
     has_address = any(term in page_text for term in address_terms)
     has_legal_identity = any(term in page_text for term in legal_terms)
     detected_payments = [
         method for method, values in payment_terms.items() if any(value in page_text for value in values)
     ]
+    # A page that publishes a price, payment method, or recipient is asking for
+    # a transaction even when it avoids ordinary shop words such as "buy now".
+    # Treating those pages as non-commercial incorrectly suppressed the legal
+    # identity/contact checks while still detecting the payment recipient.
+    is_commercial = is_commercial or bool(prices or detected_payments or recipient_hints)
 
     if not any(term in page_text or term in link_text for term in contact_terms) and is_commercial:
         issues.append(_issue("missing_contact_information", "medium", "content", "Trang thương mại không có thông tin liên hệ rõ ràng."))

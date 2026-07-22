@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SESSION_STORAGE_KEY } from "@/lib/auth-session";
-import { RealApiClient } from "@/lib/api/real";
+import { RealApiClient, resolveApiBase, resolveWsBase } from "@/lib/api/real";
 
 
 describe("RealApiClient authentication", () => {
@@ -31,6 +31,85 @@ describe("RealApiClient authentication", () => {
                 }),
             }),
         );
+    });
+
+    it("reads the server-authoritative account quota", async () => {
+        window.localStorage.setItem(
+            SESSION_STORAGE_KEY,
+            JSON.stringify({ token: "session-token" }),
+        );
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ remaining: 997, dailyScanLimit: 1000 }),
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const quota = await new RealApiClient().getQuota();
+
+        expect(quota.remaining).toBe(997);
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://localhost:8000/v1/account/quota",
+            expect.objectContaining({
+                method: "GET",
+                headers: expect.objectContaining({ Authorization: "Bearer session-token" }),
+            }),
+        );
+    });
+
+    it("submits structured feedback to the authenticated feedback endpoint", async () => {
+        window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ token: "session-token" }));
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({ id: "feedback-1", status: "received" }),
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        await new RealApiClient().submitFeedback({
+            requestId: "scan-123",
+            feedbackType: "report_site",
+            reason: "suspicious_site",
+            details: "Trang giả mạo",
+            idempotencyKey: "once-123",
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://localhost:8000/v1/feedback",
+            expect.objectContaining({
+                method: "POST",
+                body: JSON.stringify({
+                    requestId: "scan-123",
+                    feedbackType: "report_site",
+                    reason: "suspicious_site",
+                    details: "Trang giả mạo",
+                    idempotencyKey: "once-123",
+                }),
+                headers: expect.objectContaining({ Authorization: "Bearer session-token" }),
+            }),
+        );
+    });
+
+    it("creates, reads, and revokes portable report shares", async () => {
+        window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ token: "session-token" }));
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "share-1", shareToken: "token", expiresAt: "2026-07-23T00:00:00Z" }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "share-1", snapshot: {}, expiresAt: "2026-07-23T00:00:00Z" }) })
+            .mockResolvedValueOnce({ ok: true, status: 204 });
+        vi.stubGlobal("fetch", fetchMock);
+        const api = new RealApiClient();
+
+        await api.createReportShare({ requestId: "scan-123", expiresIn: "7d" });
+        await api.getPublicReportShare("public_token");
+        await api.revokeReportShare("share-1");
+
+        expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:8000/v1/report-shares");
+        expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({
+            method: "POST", body: JSON.stringify({ requestId: "scan-123", expiresIn: "7d" }),
+            headers: expect.objectContaining({ Authorization: "Bearer session-token" }),
+        }));
+        expect(fetchMock.mock.calls[1][0]).toBe("http://localhost:8000/v1/report-shares/public/public_token");
+        expect(fetchMock.mock.calls[1][1].headers).not.toHaveProperty("Authorization");
+        expect(fetchMock.mock.calls[2][0]).toBe("http://localhost:8000/v1/report-shares/share-1");
+        expect(fetchMock.mock.calls[2][1].headers).toEqual(expect.objectContaining({ Authorization: "Bearer session-token" }));
     });
 
     it("keeps login public", async () => {
@@ -69,6 +148,59 @@ describe("RealApiClient authentication", () => {
         expect(form.get("share_with_provider")).toBe("true");
     });
 
+    it("retries Browser Lab anonymously when a stale session causes 401", async () => {
+        window.localStorage.setItem(
+            SESSION_STORAGE_KEY,
+            JSON.stringify({ token: "expired-session" }),
+        );
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 401,
+                statusText: "Unauthorized",
+                text: async () => '{"detail":"expired"}',
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ final_url: "https://example.com", canary: {} }),
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        await new RealApiClient().browserSandboxUrl("https://example.com");
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Authorization"))
+            .toBe("Bearer expired-session");
+        expect(new Headers(fetchMock.mock.calls[1][1].headers).get("Authorization"))
+            .toBeNull();
+        expect(window.localStorage.getItem(SESSION_STORAGE_KEY)).toBeNull();
+    });
+
+    it("keeps the EXE quick-scan form intact on the anonymous stale-session retry", async () => {
+        window.localStorage.setItem(
+            SESSION_STORAGE_KEY,
+            JSON.stringify({ token: "expired-session" }),
+        );
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce({ ok: false, status: 401, text: async () => "expired" })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: true }) });
+        vi.stubGlobal("fetch", fetchMock);
+        const file = new File([new Uint8Array([0x4d, 0x5a])], "sample.exe");
+
+        await new RealApiClient().sandboxExecutable(file, false);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const first = fetchMock.mock.calls[0][1] as RequestInit;
+        const second = fetchMock.mock.calls[1][1] as RequestInit;
+        expect(first.body).toBe(second.body);
+        expect((second.body as FormData).get("file")).toBe(file);
+        expect((second.body as FormData).get("share_with_provider")).toBe("false");
+        expect(new Headers(second.headers).get("Authorization")).toBeNull();
+    });
+
     it("polls the provider report through the encoded data id endpoint", async () => {
         const fetchMock = vi.fn().mockResolvedValue({
             ok: true,
@@ -82,5 +214,20 @@ describe("RealApiClient authentication", () => {
             "http://localhost:8000/v1/assess/file/exe-quick-scan/provider/job%3D1",
             expect.objectContaining({ method: "GET" }),
         );
+    });
+});
+
+describe("production API base resolution", () => {
+    it("never falls back to localhost on the public Prewise domains", () => {
+        expect(resolveApiBase(undefined, "www.prewise.site")).toBe("https://api.prewise.site");
+        expect(resolveApiBase("", "prewise.site")).toBe("https://api.prewise.site");
+        expect(resolveWsBase(undefined, "www.prewise.site")).toBe("wss://api.prewise.site");
+    });
+
+    it("keeps localhost defaults for local development and honors explicit overrides", () => {
+        expect(resolveApiBase(undefined, "localhost")).toBe("http://localhost:8000");
+        expect(resolveWsBase(undefined, "127.0.0.1")).toBe("ws://localhost:8000");
+        expect(resolveApiBase("https://gateway.example/v1/", "www.prewise.site"))
+            .toBe("https://gateway.example/v1");
     });
 });

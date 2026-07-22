@@ -1,0 +1,180 @@
+.page {
+  box-sizing: border-box;
+  max-width: 980px;
+  margin: auto;
+  padding: 64px clamp(20px, 6vw, 70px) 90px;
+  overflow: hidden;
+}
+
+.page > header {
+  padding-bottom: 34px;
+  border-bottom: 1px solid #26383f;
+}
+
+.page > header > span,
+.evidence > div span,
+.overview span {
+  color: #68d7c8;
+  font: 10px ui-monospace, monospace;
+  letter-spacing: .14em;
+}
+
+.page h1 {
+  margin: 13px 0;
+  font-size: clamp(36px, 6vw, 64px);
+  letter-spacing: -.05em;
+}
+
+.page > header p {
+  max-width: 720px;
+  color: #91a4aa;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.state {
+  margin-top: 35px;
+  padding: 50px;
+  border: 1px solid #2c4448;
+  background: #091218;
+  text-align: center;
+}
+
+.state p { color: #91a4aa; }
+
+.overview {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  align-items: center;
+  min-height: 250px;
+  border-bottom: 1px solid #26383f;
+}
+
+.overview > div:first-child {
+  display: grid;
+  gap: 10px;
+}
+
+.overview strong {
+  color: #ff7e8e;
+  font-size: 64px;
+}
+
+.overview strong small {
+  color: #73858a;
+  font-size: 14px;
+}
+
+.overview > div:last-child {
+  min-width: 0;
+  padding: 35px;
+  border-left: 1px solid #26383f;
+}
+
+.overview h2 {
+  margin: 12px 0;
+  font-size: 30px;
+}
+
+.overview p { color: #91a4aa; }
+
+.evidence > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 22px 0;
+  border-bottom: 1px solid #26383f;
+}
+
+.evidence > div b {
+  color: #6e8289;
+  font-size: 10px;
+}
+
+.evidence article {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 16px;
+  padding: 22px 0;
+  border-bottom: 1px solid #26383f;
+}
+
+.evidence article > i {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #4f7d78;
+  color: #78d9cc;
+  font: normal 10px monospace;
+}
+
+.evidence h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.evidence p {
+  color: #91a4aa;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.evidence small {
+  color: #657a80;
+  font: 10px monospace;
+}
+
+.page > footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding-top: 30px;
+  color: #75898e;
+  font-size: 11px;
+}
+
+@media (max-width: 650px) {
+  .page {
+    padding: 36px 14px calc(76px + env(safe-area-inset-bottom));
+  }
+
+  .page h1 {
+    font-size: clamp(34px, 11vw, 48px);
+    overflow-wrap: anywhere;
+  }
+
+  .state { padding: 32px 16px; }
+
+  .overview {
+    grid-template-columns: 1fr;
+    padding: 30px 0;
+  }
+
+  .overview strong { font-size: 54px; }
+
+  .overview > div:last-child {
+    padding: 25px 0;
+    border-left: 0;
+  }
+
+  .overview h2,
+  .overview p,
+  .evidence h3,
+  .evidence p,
+  .evidence small {
+    overflow-wrap: anywhere;
+  }
+
+  .evidence > div {
+    align-items: flex-start;
+    gap: 10px;
+    flex-direction: column;
+  }
+
+  .evidence article {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .page > footer { flex-direction: column; }
+}

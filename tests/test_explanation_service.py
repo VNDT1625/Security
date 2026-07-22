@@ -51,7 +51,10 @@ async def test_streams_openai_compatible_response_and_sends_auth() -> None:
     assert captured["payload"]["model"] == "prewise-security-v1"
     assert captured["payload"]["stream"] is True
     prompt = captured["payload"]["messages"][1]["content"]
-    assert "IGNORE SYSTEM" in prompt
+    # External endpoints only receive the fixed harness plus allow-listed,
+    # system-produced assessment/evidence context; user content never leaves.
+    assert "IGNORE SYSTEM" not in prompt
+    assert "Tôi nên làm gì" not in prompt
     assert "https://" not in prompt
     assert "Điểm rủi ro: 0 82" in prompt
     assert "Quyết định: BLOCK" in prompt
@@ -74,3 +77,69 @@ async def test_falls_back_when_remote_server_is_unavailable() -> None:
     assert "Có tín hiệu giả mạo" in result
     assert service.available is False
     assert "ConnectError" in service.last_error
+
+
+@pytest.mark.asyncio
+async def test_local_provider_may_receive_sanitized_user_context() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"Đã nhận."}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    service = ExplanationService(
+        model="local-model",
+        base_url="http://127.0.0.1:11434/v1",
+        transport=httpx.MockTransport(handler),
+        provider="local",
+        allow_user_content=True,
+    )
+    evidence = [Evidence(source="test", message="Tín hiệu rủi ro", severity=Severity.HIGH)]
+    _ = "".join([
+        token async for token in service.generate(
+            evidence, user_question="Tôi nên làm gì?", operator_context="Người bán mới"
+        )
+    ])
+
+    prompt = captured["payload"]["messages"][1]["content"]
+    assert "Tôi nên làm gì" in prompt
+    assert "Người bán mới" in prompt
+
+
+@pytest.mark.asyncio
+async def test_external_endpoint_can_chat_with_sanitized_question_without_raw_context() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"Xin chào."}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    service = ExplanationService(
+        model="endpoint-model",
+        base_url="https://api.example/v1",
+        transport=httpx.MockTransport(handler),
+        allow_user_question=True,
+    )
+    result = "".join([
+        token async for token in service.generate(
+            [],
+            sanitized_excerpt="https://secret.example/account",
+            user_question="Xin chào, hãy hướng dẫn tôi nhận biết lừa đảo?",
+            operator_context="Mã riêng tư 123456",
+        )
+    ])
+
+    prompt = captured["payload"]["messages"][1]["content"]
+    assert result == "Xin chào."
+    assert "Xin chào" in prompt
+    assert "secret example" not in prompt
+    assert "123456" not in prompt
+    assert "trả lời kiến thức" in captured["payload"]["messages"][0]["content"]

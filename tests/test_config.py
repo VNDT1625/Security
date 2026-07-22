@@ -46,6 +46,19 @@ def _safe_production_settings(**overrides):
         "telemetry_sensor_pepper": "a-production-telemetry-pepper-that-is-long-enough",
         "seed_demo_user": False,
         "database_auto_create": False,
+        # Keep provider validation tests deterministic even when a developer's
+        # local .env contains real optional integration credentials.
+        "sepay_webhook_api_key": "",
+        "sepay_webhook_secret": "",
+        "sepay_bank_account": "",
+        "sepay_bank_name": "",
+        "sepay_account_name": "",
+        "aws_sandbox_ami_id": "",
+        "aws_sandbox_subnet_id": "",
+        "aws_sandbox_security_group_id": "",
+        "misp_enabled": False,
+        "misp_base_url": "",
+        "misp_api_key": "",
     }
     values.update(overrides)
     return Settings(**values)
@@ -103,5 +116,49 @@ def test_production_rejects_unsafe_gmail_configuration(overrides, message) -> No
 def test_production_rejects_partial_optional_provider_configuration(
     overrides, message
 ) -> None:
+    with pytest.raises(ValidationError, match=message):
+        _safe_production_settings(**overrides)
+
+
+@pytest.mark.parametrize(
+    "callback_url",
+    [
+        "http://api.example.com",
+        "http://127.0.0.1:8000",
+        "https://",
+    ],
+)
+def test_production_rejects_unsafe_sandbox_agent_callback(callback_url) -> None:
+    with pytest.raises(ValidationError, match="SANDBOX_PUBLIC_BASE_URL=https://"):
+        _safe_production_settings(sandbox_public_base_url=callback_url)
+
+
+def test_production_accepts_https_sandbox_agent_callback() -> None:
+    settings = _safe_production_settings(
+        sandbox_public_base_url="https://api.example.com",
+    )
+
+    assert settings.sandbox_public_base_url == "https://api.example.com"
+
+
+def test_production_accepts_complete_release_email_configuration() -> None:
+    configured = _safe_production_settings(
+        cloudflare_account_id="account-id",
+        cloudflare_api_token="token-kept-server-side",
+        prewise_email_from="release@prewise.example",
+        release_unsubscribe_base_url="https://api.prewise.example/v1/waitlist/unsubscribe",
+    )
+    assert configured.cloudflare_account_id == "account-id"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"cloudflare_account_id": "account-id"}, "all CLOUDFLARE_ACCOUNT_ID"),
+        ({"release_unsubscribe_base_url": "http://api.example/unsubscribe"}, "RELEASE_UNSUBSCRIBE_BASE_URL"),
+        ({"release_email_max_attempts": 10}, "RELEASE_EMAIL_MAX_ATTEMPTS"),
+    ],
+)
+def test_production_rejects_unsafe_release_email_configuration(overrides, message) -> None:
     with pytest.raises(ValidationError, match=message):
         _safe_production_settings(**overrides)

@@ -6,10 +6,24 @@ from fastapi.testclient import TestClient
 
 from backend.db import SessionLocal
 from backend.main import app
-from backend.models import SystemSetting, User
+from backend.models import ScanEvent, SystemSetting, User
 from backend.routers import admin
 
 client = TestClient(app)
+
+
+def test_cors_preflight_allows_admin_setting_updates() -> None:
+    response = client.options(
+        "/admin/settings/ai-context-weight",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "PUT",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "PUT" in response.headers["access-control-allow-methods"]
 
 
 def test_spec_id_rejects_path_traversal() -> None:
@@ -40,8 +54,46 @@ def test_admin_dependency_rejects_non_admin() -> None:
     assert exc.value.status_code == 403
 
 
+def test_admin_overview_counts_current_high_risk_levels_and_scales_scores() -> None:
+    event_ids = ["admin-overview-low", "admin-overview-high", "admin-overview-critical"]
+    with SessionLocal() as db:
+        db.query(ScanEvent).filter(ScanEvent.id.in_(event_ids)).delete(synchronize_session=False)
+        before = admin.get_overview(db)
+        for event_id, risk_level, score in (
+            (event_ids[0], "low", 0.12),
+            (event_ids[1], "high", 0.73),
+            (event_ids[2], "critical", 0.99),
+        ):
+            db.add(ScanEvent(
+                id=event_id,
+                request_id=f"request-{event_id}",
+                channel="test",
+                modality="url",
+                normalized_url=f"https://{event_id}.test",
+                risk_score=score,
+                risk_level=risk_level,
+                decision="BLOCK" if risk_level != "low" else "ALLOW",
+                confidence=0.9,
+                model_version="test",
+                latency_ms=10,
+            ))
+        db.commit()
+
+        try:
+            overview = admin.get_overview(db)
+            assert overview["metrics"]["dangerousScans"] == before["metrics"]["dangerousScans"] + 2
+            scores = {item["id"]: item["score"] for item in overview["recentScans"]}
+            assert scores[event_ids[1]] == 73
+            assert scores[event_ids[2]] == 99
+        finally:
+            db.query(ScanEvent).filter(ScanEvent.id.in_(event_ids)).delete(synchronize_session=False)
+            db.commit()
+
+
 def test_admin_api_requires_admin_session() -> None:
     assert client.get("/admin/specs").status_code == 401
+    assert client.get("/admin/users").status_code == 401
+    assert client.get("/admin/finance").status_code == 401
 
     # The public demo account intentionally remains a normal user.  Promote
     # it only inside this isolated authorization test.
@@ -77,6 +129,14 @@ def test_admin_api_requires_admin_session() -> None:
 
         response = client.get("/admin/specs", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
+
+        users = client.get("/admin/users", headers={"Authorization": f"Bearer {token}"})
+        assert users.status_code == 200
+        assert any(item["email"] == "demo@aisec.local" for item in users.json()["users"])
+
+        finance = client.get("/admin/finance", headers={"Authorization": f"Bearer {token}"})
+        assert finance.status_code == 200
+        assert "totalRevenueVnd" in finance.json()["summary"]
 
         current = client.get(
             "/admin/settings/ai-context-weight",
@@ -157,8 +217,9 @@ def test_admin_api_requires_admin_session() -> None:
 
 def test_ai_context_weight_is_bounded_and_not_public() -> None:
     assert client.get("/admin/settings/ai-context-weight").status_code == 401
+    assert client.get("/admin/settings/llm-provider").status_code == 401
     with pytest.raises(ValueError):
-        admin.AIContextWeightRequest(percent=41)
+        admin.AIContextWeightRequest(percent=101)
 
 
 def test_purge_url_cache_only_targets_url_entries() -> None:

@@ -34,11 +34,11 @@ export default function Footer({ links = DEFAULT_LINKS }: FooterProps) {
 
     return (
         <footer className="mt-auto w-full border-t border-neutral-200 bg-neutral-50">
-            <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 px-4 py-8 sm:px-6 lg:flex-row lg:px-8">
+            <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 px-4 py-7 text-center sm:px-6 sm:py-8 lg:flex-row lg:px-8 lg:text-left">
                 {/* Logo nhỏ */}
                 <Link
                     href="/"
-                    className="flex items-center gap-2 text-sm font-semibold text-neutral-800"
+                    className="flex min-h-11 items-center gap-2 text-sm font-semibold text-neutral-800"
                 >
                     <span
                         aria-hidden="true"
@@ -46,17 +46,17 @@ export default function Footer({ links = DEFAULT_LINKS }: FooterProps) {
                     >
                         🛡
                     </span>
-                    <span>AI Security Armor</span>
+                    <span>Prewise</span>
                 </Link>
 
                 {/* Liên kết chân trang */}
-                <nav aria-label="Liên kết chân trang">
-                    <ul className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+                <nav className="w-full lg:w-auto" aria-label="Liên kết chân trang">
+                    <ul className="grid grid-cols-2 items-center justify-center gap-x-3 gap-y-1 sm:flex sm:flex-wrap sm:gap-x-5 sm:gap-y-2">
                         {links.map((link) => (
                             <li key={link.href}>
                                 <Link
                                     href={link.href}
-                                    className="text-sm text-neutral-600 transition-colors hover:text-neutral-900"
+                                    className="flex min-h-11 items-center justify-center px-1 text-sm text-neutral-600 transition-colors hover:text-neutral-900"
                                 >
                                     {link.label}
                                 </Link>
@@ -66,7 +66,7 @@ export default function Footer({ links = DEFAULT_LINKS }: FooterProps) {
                 </nav>
 
                 <p className="text-xs text-neutral-500">
-                    © {year} AI Security Armor
+                    © {year} Prewise
                 </p>
             </div>
         </footer>

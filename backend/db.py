@@ -90,7 +90,12 @@ def _ensure_sqlite_development_columns() -> None:
             column["name"] for column in inspect(engine).get_columns("cloud_sandbox_sessions")
         }
         sandbox_additions = {
+            "mode": "VARCHAR(16) NOT NULL DEFAULT 'auto'",
+            "lease_minutes": "INTEGER NOT NULL DEFAULT 10",
             "agent_token_hash": "VARCHAR(64)",
+            "remote_access_token_hash": "VARCHAR(64)",
+            "remote_access_token_expires_at": "DATETIME",
+            "remote_access_token_used_at": "DATETIME",
             "sample_filename": "VARCHAR(260)",
             "sample_storage_path": "TEXT",
             "sample_sha256": "VARCHAR(64)",
@@ -99,11 +104,46 @@ def _ensure_sqlite_development_columns() -> None:
             "sample_report": "JSON NOT NULL DEFAULT '{}'",
             "sample_uploaded_at": "DATETIME",
             "sample_completed_at": "DATETIME",
+            "ready_at": "DATETIME",
+            "lease_expires_at": "DATETIME",
+            "termination_reason": "VARCHAR(32)",
+            "termination_requested_at": "DATETIME",
+            "cleanup_completed_at": "DATETIME",
         }
         for name, definition in sandbox_additions.items():
             if name not in sandbox_columns:
                 connection.execute(
                     text(f"ALTER TABLE cloud_sandbox_sessions ADD COLUMN {name} {definition}")
+                )
+        feedback_columns = {
+            column["name"] for column in inspect(engine).get_columns("user_feedback")
+        }
+        feedback_additions = {
+            "reason": "VARCHAR(40) NOT NULL DEFAULT 'other'",
+            "comment_sha256": "VARCHAR(64)",
+            "idempotency_key": "VARCHAR(64)",
+            "status": "VARCHAR(24) NOT NULL DEFAULT 'received'",
+            "updated_at": "DATETIME",
+        }
+        for name, definition in feedback_additions.items():
+            if name not in feedback_columns:
+                connection.execute(
+                    text(f"ALTER TABLE user_feedback ADD COLUMN {name} {definition}")
+                )
+        connection.execute(
+            text("UPDATE user_feedback SET updated_at = created_at WHERE updated_at IS NULL")
+        )
+        llm_columns = {
+            column["name"] for column in inspect(engine).get_columns("llm_provider_settings")
+        }
+        llm_additions = {
+            "allowed_user_providers": "JSON NOT NULL DEFAULT '[\"auto\",\"adapter\",\"local\",\"endpoint\"]'",
+            "allowed_user_models": "JSON NOT NULL DEFAULT '[]'",
+        }
+        for name, definition in llm_additions.items():
+            if name not in llm_columns:
+                connection.execute(
+                    text(f"ALTER TABLE llm_provider_settings ADD COLUMN {name} {definition}")
                 )
 
 
@@ -151,8 +191,8 @@ def initialize_database() -> None:
 
         with SessionLocal() as db:
             plans = {
-                "free": ("FREE", 50, 0, 0, {"api_key": False, "history_days": 7, "ai_credit_daily_limit": 5, "deep_scan_daily_limit": 1, "chat_followup_limit": 3, "auto_message_context": False, "auto_web_context": False}),
-                "pro": ("PRO", None, 99000, 990000, {"api_key": True, "history_days": 90, "ai_credit_daily_limit": 50, "deep_scan_daily_limit": 10, "chat_followup_limit": 20, "auto_message_context": True, "auto_web_context": True}),
+                "free": ("FREE", 1000, 0, 0, {"api_key": False, "history_days": 7, "ai_credit_daily_limit": 5, "deep_scan_daily_limit": 100, "chat_followup_limit": 3, "auto_message_context": False, "auto_web_context": False}),
+                "pro": ("PRO", None, 99000, 990000, {"api_key": True, "history_days": 90, "ai_credit_daily_limit": 50, "deep_scan_daily_limit": 100, "chat_followup_limit": 20, "auto_message_context": True, "auto_web_context": True}),
                 "team": (
                     "TEAM",
                     None,
@@ -182,8 +222,14 @@ def initialize_database() -> None:
                         )
                     )
                 else:
+                    if tier == "free":
+                        current_plan.daily_scan_limit = limit
                     merged_features = dict(features)
                     merged_features.update(current_plan.features or {})
+                    # Upgrade legacy Free/Pro deep-analysis quotas in existing
+                    # databases while preserving any other administrator edits.
+                    if merged_features.get("deep_scan_daily_limit") in {1, 10}:
+                        merged_features["deep_scan_daily_limit"] = 100
                     current_plan.features = merged_features
 
             # Upgrade legacy development keys to the explicit Agent Shield scopes.
@@ -218,8 +264,23 @@ def initialize_database() -> None:
             # The demo account is an end-user account.  It must never grant
             # access to system administration merely because it is convenient
             # for local development.
-            if settings.seed_demo_user and demo is not None and demo.role != "user":
-                demo.role = "user"
+            if settings.seed_demo_user and demo is not None:
+                if demo.role != "user":
+                    demo.role = "user"
+                demo_subscription = db.execute(
+                    select(Subscription)
+                    .where(
+                        Subscription.user_id == demo.id,
+                        Subscription.status.in_(("trialing", "active")),
+                    )
+                    .order_by(Subscription.created_at.desc())
+                ).scalars().first()
+                if demo_subscription is None:
+                    db.add(Subscription(user_id=demo.id, plan_tier="free", status="active"))
+                elif demo_subscription.plan_tier != "free":
+                    demo_subscription.plan_tier = "free"
+                    demo_subscription.trial_ends_at = None
+                    demo_subscription.renews_at = None
             if settings.seed_demo_user and demo is None:
                 salt = create_password_salt()
                 demo = User(
@@ -231,7 +292,7 @@ def initialize_database() -> None:
                 )
                 db.add(demo)
                 db.flush()
-                db.add(Subscription(user_id=demo.id, plan_tier="pro", status="active"))
+                db.add(Subscription(user_id=demo.id, plan_tier="free", status="active"))
                 key = create_api_key_value()
                 db.add(
                     ApiKey(

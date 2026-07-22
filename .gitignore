@@ -40,6 +40,7 @@ server/llm-models/current/*
 data/*.csv
 data/**/*.csv
 data/raw/
+data/legal_rag/
 robustness_report.json
 
 # Large external datasets / archives
@@ -48,18 +49,28 @@ robustness_report.json
 # Node / Next.js
 node_modules/
 frontend/web/.next/
+frontend/web/.next*/
 frontend/web/out/
 frontend/web/.env.local
 frontend/desktop/release/
 artifacts/
 
 # Extension generated icons (produced by make_icons.py)
+
+# Extension generated icons (produced by make_icons.py)
 frontend/extension/icons/*.png
 
 # Env / secrets
 .env
+.env.codespaces
+.codespaces-secrets/
 *.local
 
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Dev / logs / temp
+*.log
+**/frontend/web/.next-dev-*/
+.aisec-backups/

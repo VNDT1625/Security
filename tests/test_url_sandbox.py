@@ -67,6 +67,32 @@ def test_worker_reports_business_policy_and_content_findings(monkeypatch) -> Non
             "missing_terms_refund", "scam_template_content", "urgency_language"} <= codes
 
 
+def test_payment_recipient_makes_page_commercial_without_shop_words(monkeypatch) -> None:
+    html = b"""
+      <html><head><title>Summer tournament registration</title></head><body>
+      <p>Registration fee</p>
+      <p>STK: 123456789012</p>
+      <form><input name="phone"><input name="team"></form>
+      </body></html>
+    """
+    monkeypatch.setattr(sandbox_worker, "_request_once", lambda *args: {
+        "status": 200, "reason": "OK", "headers": {"content-type": "text/html"},
+        "body": html, "truncated": False, "resolved_ip": "93.184.216.34", "tls": {},
+    })
+
+    result = sandbox_worker.run({"url": "https://event.example.test"})
+    codes = {issue["code"] for issue in result["issues"]}
+
+    assert result["page_signals"]["is_commercial"] is True
+    assert {
+        "unverified_payment_recipient",
+        "missing_contact_information",
+        "missing_business_address",
+        "missing_legal_identity",
+        "missing_terms_refund",
+    } <= codes
+
+
 def test_worker_follows_and_records_redirect(monkeypatch) -> None:
     responses = iter(
         [

@@ -41,6 +41,31 @@ METADEFENDER_TIMEOUT_SECONDS=20
 
 ## API
 
+### MCP cho AI agent
+
+AI agent có thể gọi `quick_scan_exe` với đường dẫn tương đối tới tệp `.exe`
+trong `MCP_SANDBOX_DIR`. Tool luôn phân tích tĩnh và không chạy tệp. Tham số
+`share_with_provider` mặc định là `false`; chỉ đặt thành `true` sau khi người
+dùng đồng ý rõ ràng cho việc tải mẫu lên provider bên ngoài.
+
+Client MCP từ xa không truy cập được filesystem server có thể gọi
+`quick_scan_exe_content` với `filename` và `content_base64`. Bytes chỉ tồn tại
+trong request/phân tích, không được ghi vào audit log và vẫn chịu giới hạn
+`MAX_UPLOAD_BYTES`.
+
+Qua Streamable HTTP, `share_with_provider=true` luôn yêu cầu scope
+`mcp:file:share_external` ngoài quyền gọi MCP thông thường. Scope này không
+được cấp mặc định. Kết quả MCP chuẩn hóa verdict cho agent thành
+`ALLOW|WARN|BLOCK`, đồng thời giữ kết quả gốc trong `scan_verdict`.
+`risk_score` MCP luôn nằm trong khoảng `0..1`; điểm Quick Scan gốc `0..100`
+được giữ ở `scan_risk_score` hoặc `provider_risk_score`.
+
+Nếu kết quả có `provider.status=queued`, agent dùng
+`get_exe_quick_scan_report` với `data_id` được trả về để lấy trạng thái mới.
+MCP áp dụng cùng `MAX_UPLOAD_BYTES` như API upload và từ chối path traversal,
+tệp ngoài sandbox hoặc tệp không có phần mở rộng `.exe`.
+Polling report không trừ thêm quota scan.
+
 ### Phân tích nhanh
 
 ```http

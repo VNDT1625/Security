@@ -1,6 +1,6 @@
-# 🛡️ AI Security Armor
+# 🛡️ Prewise
 
-**Lá chắn an ninh AI đa nền tảng** - Bảo vệ con người và AI agents khỏi các mối đe dọa: URL độc hại, Email lừa đảo, Prompt injection, File nguy hiểm.
+**Lớp kiểm soát rủi ro trước hành động** - Bảo vệ con người và AI agents khỏi các mối đe dọa: URL độc hại, Email lừa đảo, Prompt injection và file nguy hiểm.
 
 > 💡 **Triết lý:** Web = Test nhanh, Extension/MCP = Dùng thật
 
@@ -16,31 +16,33 @@
 - **File Analysis** - Quét tĩnh file đính kèm theo magic bytes, entropy và chuỗi API đáng ngờ
 
 ### 🧠 AI Models
-- **URL Detection**: LightGBM (84.3% test F1) - ~1.1MB ONNX
-- **Text Phishing**: TF-IDF Logistic Regression (92.0% validation F1) - ~260KB ONNX
-- **Prompt Injection**: Character TF-IDF Logistic Regression (99.2% validation F1) - ~168KB ONNX
+- **URL Detection**: LightGBM - ~1.1MB ONNX
+- **Text Phishing**: TF-IDF Logistic Regression - ~260KB ONNX
+- **Prompt Injection**: Character TF-IDF Logistic Regression - ~168KB ONNX
 - **AI-generated Image Screening**: Quantized ViT - ~56.8MB ONNX
 - **Total packaged model size**: ~59MB
 
+> Số liệu được phép dùng trong báo cáo/slide được khóa tại [`FINAL_BENCHMARK_2026.md`](FINAL_BENCHMARK_2026.md). Không dùng số liệu lịch sử ở các tài liệu khác làm kết quả chính thức.
+
 ### 🎨 3 Giao diện
-1. **Web App** (Next.js 14) - Dashboard chính
+1. **Web App** (Next.js 15) - Dashboard chính
 2. **Chrome Extension** (MV3) - Bảo vệ khi duyệt web
 3. **MCP Server** - Tích hợp cho AI agents (Claude Desktop, v.v.)
 
 ### 📊 Tính năng nâng cao
 - ✅ **Explainable AI** - Luôn giải thích "Tại sao nguy hiểm?"
-- ✅ **Real-time Analysis** - Phân tích < 100ms
+- ✅ **Fast decision path** - Độ trễ được công bố theo cache hit/cache miss trong benchmark
 - ✅ **Policy Engine** - Tùy chỉnh hành động (ALLOW/WARN/BLOCK)
 - ✅ **Admin Panel** - Quản lý và retrain models
 - ✅ **WebSocket** - Cập nhật real-time
 - ✅ **Multi-language** - Hỗ trợ tiếng Việt
 
-### Demo cho ban giám khảo
+### Trình diễn Prewise
 
-- Mở `/demo` để chạy so sánh A/B cho hai đề tài: **Deepfake & Phishing Detection** và **AI Security & Robustness**.
-- Luồng demo dùng detector thật cho phishing, prompt injection và training-data poisoning; canary/tool call chỉ chạy trong sandbox.
-- Deepfake dùng model ViT ONNX cục bộ để sàng lọc ảnh tĩnh/ảnh AI-generated. Video MP4/WebM/MOV/AVI được hỗ trợ ở mức beta bằng cách lấy mẫu tối đa 12 frame (50 MB, 120 giây, timeout 45 giây) rồi chạy model ảnh; hệ thống không phân tích chuyển động hoặc tính nhất quán theo thời gian. Audio báo `unavailable` vì chưa có detector audio được đóng gói và kiểm định. Mọi xác suất chỉ là tín hiệu sàng lọc, không phải bằng chứng pháp y tuyệt đối.
-- Kịch bản thuyết trình chi tiết: [`docs/judge-demo.md`](docs/judge-demo.md).
+- Mở `/analyze` để chạy luồng sản phẩm thật: phân tích URL, Email hoặc SMS và xem bằng chứng, policy cùng phạm vi kiểm tra.
+- Luồng trình diễn chính thức dùng một URL nguy hiểm, một URL an toàn và một tình huống bảo vệ AI agent/MCP; không có route `/demo` riêng.
+- Sàng lọc ảnh AI-generated dùng ViT ONNX cục bộ. Kết quả chỉ là tín hiệu sàng lọc, không phải bằng chứng pháp y; video được xử lý bằng lấy mẫu frame, không phân tích chuyển động hoặc audio.
+- Kịch bản thuyết trình: [`docs/judge-demo.md`](docs/judge-demo.md).
 
 ---
 
@@ -65,7 +67,7 @@ copy-to-another-machine workflow.
 ```bash
 # Clone project
 git clone <repository-url>
-cd AI-SECURITY
+cd prewise
 
 # Khởi động toàn bộ stack (Backend + Frontend + Ollama)
 docker-compose up -d
@@ -76,7 +78,7 @@ docker exec -it armor-ollama ollama pull qwen2.5:7b-instruct-q4_K_M
 # Truy cập:
 # - Web App: http://localhost:3000
 # - Backend API: http://localhost:8000/docs
-# - Armor Console: http://localhost:3000/armor-console (yêu cầu tài khoản admin)
+# - Prewise Admin Console: http://localhost:3000/armor-console (yêu cầu tài khoản admin)
 ```
 
 **Dừng dự án:**
@@ -247,9 +249,10 @@ python -m mcp_server.server --transport streamable-http --host 127.0.0.1 --port 
 
 Chỉ expose qua tunnel HTTPS có access policy; không bind `0.0.0.0` trực tiếp trên Internet.
 
-**7 MCP Tools:**
+**MCP security tools:**
 - `assess_url`, `assess_text`, `scan_prompt_injection`, `assess_action` — tool bắt buộc
 - `assess_page`, `assess_file_static` — phân tích trang/file trong sandbox
+- `quick_scan_exe`, `quick_scan_exe_content`, `get_exe_quick_scan_report` — test nhanh PE/EXE không thực thi cho local/remote và lấy báo cáo reputation
 - `summarize_risk_safely` — tóm tắt từ evidence đã sanitize
 
 ### 5️⃣ API Usage - Tích hợp vào app của bạn

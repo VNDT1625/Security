@@ -1,8 +1,8 @@
 {
-  "name": "ai-security-armor-web",
+  "name": "prewise-web",
   "version": "0.1.0",
   "private": true,
-  "description": "Web App UI — AI Security Armor for Agentic Workflows (Next.js 15 App Router)",
+  "description": "Prewise web application (Next.js 15 App Router)",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -16,7 +16,8 @@
     "lucide-react": "^1.23.0",
     "next": "15.5.18",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@rolldown/plugin-babel": "^0.2.2",
@@ -39,6 +40,7 @@
     "vitest": "^4.1.10"
   },
   "overrides": {
-    "postcss": "$postcss"
+    "postcss": "$postcss",
+    "sharp": "$sharp"
   }
 }

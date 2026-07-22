@@ -65,14 +65,25 @@ def test_standard_url_cache_hit_skips_scan_quota(monkeypatch) -> None:
     cached.cache_status = "miss"
     service = SimpleNamespace(adapter_cache_token="test-adapter")
 
-    monkeypatch.setattr(assess_router, "resolve_actor", lambda *_: object())
+    monkeypatch.setattr(
+        assess_router,
+        "resolve_actor",
+        lambda *_: SimpleNamespace(user=None),
+    )
+    monkeypatch.setattr(
+        assess_router,
+        "get_user_inference_service",
+        lambda *_: service,
+    )
     monkeypatch.setattr(assess_router, "require_api_key_scope", lambda *_: None)
     monkeypatch.setattr(
         assess_router,
         "build_actor_plan_info",
-        lambda *_: SimpleNamespace(autoWebContext=False),
+        lambda *_: SimpleNamespace(autoWebContext=False, tier="free"),
     )
-    monkeypatch.setattr(assess_router, "get_ai_context_weight_percent", lambda *_: 0)
+    monkeypatch.setattr(
+        assess_router, "get_effective_ai_context_weight_percent", lambda *_, **__: 0
+    )
     monkeypatch.setattr(assess_router, "get_url_assessment_cache_enabled", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(assess_router, "_cached_url_result", lambda *_args, **_kwargs: cached)
     monkeypatch.setattr(assess_router, "log_assessment", lambda *_args, **_kwargs: None)
@@ -92,6 +103,7 @@ def test_standard_url_cache_hit_skips_scan_quota(monkeypatch) -> None:
 
 
 def test_demo_url_cache_hit_skips_scan_quota(monkeypatch) -> None:
+    service = SimpleNamespace(adapter_cache_token="test-adapter")
     cached = URLAnalysisResponse(
         url="https://cache-hit.example.test",
         risk_score=2,
@@ -102,14 +114,25 @@ def test_demo_url_cache_hit_skips_scan_quota(monkeypatch) -> None:
         cache_hit=True,
         cache_status="hit",
     )
-    monkeypatch.setattr(demo_routes, "resolve_actor", lambda *_: object())
+    monkeypatch.setattr(
+        demo_routes,
+        "resolve_actor",
+        lambda *_: SimpleNamespace(user=None),
+    )
+    monkeypatch.setattr(
+        demo_routes,
+        "get_user_inference_service",
+        lambda *_: service,
+    )
     monkeypatch.setattr(
         demo_routes,
         "build_actor_plan_info",
-        lambda *_: SimpleNamespace(autoWebContext=False),
+        lambda *_: SimpleNamespace(autoWebContext=False, tier="free"),
     )
     monkeypatch.setattr(demo_routes, "_validate_url", lambda *_: None)
-    monkeypatch.setattr(demo_routes, "get_ai_context_weight_percent", lambda *_: 0)
+    monkeypatch.setattr(
+        demo_routes, "get_effective_ai_context_weight_percent", lambda *_, **__: 0
+    )
     monkeypatch.setattr(demo_routes, "get_url_assessment_cache_enabled", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(demo_routes, "_load_demo_url_cache", lambda *_: cached)
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from backend.config import settings
 from backend.db import get_db
-from backend.dependencies import get_inference_service
+from backend.dependencies import get_inference_service, get_user_inference_service
 from backend.middleware import sanitize_text
 from backend.routers.auth import (
     ActorContext,
@@ -129,7 +129,8 @@ def check_url(
     payload: dict[str, str], request: Request, credentials: BearerCredentials,
     db: DbSession = Depends(get_db), svc: InferenceService = Depends(get_inference_service),
 ):
-    _actor("url", credentials, db, request)
+    actor = _actor("url", credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     url = sanitize_text(payload.get("url", ""))
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=422, detail="URL phải dùng http hoặc https")
@@ -142,6 +143,7 @@ def check_content(
     db: DbSession = Depends(get_db), svc: InferenceService = Depends(get_inference_service),
 ):
     actor = _actor("content", credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     modality = payload.content_type if payload.content_type in {"email", "sms", "text"} else "text"
     content = sanitize_text(payload.content)
     metadata = {"source_url": payload.source_url, "source": payload.content_type}
@@ -195,7 +197,8 @@ def check_prompt(
     payload: PromptCheck, request: Request, credentials: BearerCredentials,
     db: DbSession = Depends(get_db), svc: InferenceService = Depends(get_inference_service),
 ):
-    _actor("prompt", credentials, db, request)
+    actor = _actor("prompt", credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     return _agent_response(svc.assess_prompt(sanitize_text(payload.content)))
 
 
@@ -204,7 +207,8 @@ def check_file(
     payload: FileCheck, request: Request, credentials: BearerCredentials,
     db: DbSession = Depends(get_db), svc: InferenceService = Depends(get_inference_service),
 ):
-    _actor("file", credentials, db, request)
+    actor = _actor("file", credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     try:
         data = base64.b64decode(payload.content_base64, validate=True)
     except (ValueError, binascii.Error) as exc:
@@ -224,7 +228,8 @@ def check_action(
     payload: ActionCheck, request: Request, credentials: BearerCredentials,
     db: DbSession = Depends(get_db), svc: InferenceService = Depends(get_inference_service),
 ):
-    _actor("action", credentials, db, request)
+    actor = _actor("action", credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     target_url = payload.target if payload.target.startswith(("http://", "https://")) else None
     context = payload.agent_context.model_copy(update={"data_types_involved": payload.data_types})
     return _agent_response(svc.assess_action(payload.action_type, target_url, payload.data_types, context))

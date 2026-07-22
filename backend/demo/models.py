@@ -4,6 +4,7 @@ These models define request/response schemas for the demo system,
 including URL analysis, chatbot protection, attack simulation, and metrics.
 """
 
+import uuid
 from datetime import datetime
 from typing import Literal
 
@@ -148,6 +149,7 @@ class URLAccessAnalysis(BaseModel):
 class URLAnalysisResponse(BaseModel):
     """Response containing URL analysis results."""
 
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), min_length=8, max_length=64)
     url: str = Field(..., description="The analyzed URL")
     score_scale: Literal["0..100"] = "0..100"
     risk_score: float = Field(

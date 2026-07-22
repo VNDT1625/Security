@@ -23,7 +23,10 @@
  */
 
 import type { ApiClient } from "@/lib/api/client";
-import { readStoredAccessToken } from "@/lib/auth-session";
+import {
+    fetchWithAnonymousSessionFallback,
+    readStoredAccessToken,
+} from "@/lib/auth-session";
 import { getRiskLevel } from "@/lib/risk";
 import type {
     ApiKeyInfo,
@@ -33,13 +36,19 @@ import type {
     ExeSandboxResult,
 
     ExeProviderResult,
+    FeedbackInput,
+    FeedbackReceipt,
     ChatChunk,
     ChatFinal,
     ChatRequest,
+    CreateReportShareInput,
+    CreatedReportShare,
     ContextualAnalysis,
     Credentials,
     Evidence,
     PlanInfo,
+    QuotaInfo,
+    PublicReportShare,
     PhoneAssessResult,
     GmailMessagePreview,
     GmailMessageSummary,
@@ -49,10 +58,14 @@ import type {
     RegisterInput,
     SandboxResult,
     ScanRecord,
+    ScanRecordDetail,
     Session,
     Severity,
     UserProfile,
+    UserAISettings,
+    UserAISettingsInput,
 } from "@/lib/types";
+import { trustedPopularResult } from "@/lib/trusted-popular-domains";
 
 // ---------------------------------------------------------------------------
 // Cấu hình base URL
@@ -60,22 +73,39 @@ import type {
 
 const DEFAULT_API_BASE = "http://localhost:8000";
 const DEFAULT_WS_BASE = "ws://localhost:8000";
+const PRODUCTION_API_BASE = "https://api.prewise.site";
+const PRODUCTION_WS_BASE = "wss://api.prewise.site";
+const PRODUCTION_WEB_HOSTS = new Set(["prewise.site", "www.prewise.site"]);
 
 /** Bỏ dấu `/` thừa ở cuối để nối path an toàn. */
 function trimTrailingSlash(url: string): string {
     return url.replace(/\/+$/, "");
 }
 
+export function resolveApiBase(configured: string | undefined, hostname: string): string {
+    const fallback = PRODUCTION_WEB_HOSTS.has(hostname.toLowerCase())
+        ? PRODUCTION_API_BASE
+        : DEFAULT_API_BASE;
+    return trimTrailingSlash(configured?.trim() || fallback);
+}
+
+export function resolveWsBase(configured: string | undefined, hostname: string): string {
+    const fallback = PRODUCTION_WEB_HOSTS.has(hostname.toLowerCase())
+        ? PRODUCTION_WS_BASE
+        : DEFAULT_WS_BASE;
+    return trimTrailingSlash(configured?.trim() || fallback);
+}
+
+function browserHostname(): string {
+    return typeof window === "undefined" ? "" : window.location.hostname;
+}
+
 function getApiBase(): string {
-    return trimTrailingSlash(
-        process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE,
-    );
+    return resolveApiBase(process.env.NEXT_PUBLIC_API_BASE_URL, browserHostname());
 }
 
 function getWsBase(): string {
-    return trimTrailingSlash(
-        process.env.NEXT_PUBLIC_WS_BASE_URL ?? DEFAULT_WS_BASE,
-    );
+    return resolveWsBase(process.env.NEXT_PUBLIC_WS_BASE_URL, browserHostname());
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +145,7 @@ interface BackendAssessResponse {
     message_metadata?: Record<string, unknown>;
     embedded_url_assessments?: Array<Record<string, unknown>>;
     contextual_analysis?: ContextualAnalysis;
+    risk_core?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +258,7 @@ function mapAssessResponse(
     if (raw.message_metadata) result.messageMetadata = raw.message_metadata;
     if (raw.embedded_url_assessments) result.embeddedUrlAssessments = raw.embedded_url_assessments;
     if (raw.contextual_analysis) result.contextualAnalysis = raw.contextual_analysis;
+    if (raw.risk_core) result.riskCore = raw.risk_core;
 
     return result;
 }
@@ -278,6 +310,26 @@ async function requestJson<TResponse>(
     return (await response.json()) as TResponse;
 }
 
+async function requestAnonymousAssessmentJson<TResponse>(
+    path: string,
+    init: RequestInit,
+): Promise<TResponse> {
+    const response = await fetchWithAnonymousSessionFallback(`${getApiBase()}${path}`, {
+        ...init,
+        headers: {
+            "Content-Type": "application/json",
+            ...(init.headers ?? {}),
+        },
+    });
+    if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(
+            `Yêu cầu ${path} thất bại: ${response.status} ${response.statusText}${detail ? ` — ${detail}` : ""}`,
+        );
+    }
+    return response.json() as Promise<TResponse>;
+}
+
 function withAuthentication(init: RequestInit): RequestInit {
     const token = readStoredAccessToken();
     if (!token) return init;
@@ -304,7 +356,8 @@ interface WsChatMessage {
     delta?: string;
     message_id?: string;
     assessment?: BackendAssessResponse;
-    modality?: "url" | "email" | "sms" | "text";
+    legal_answer?: import("@/lib/types").LegalAnswerResult;
+    modality?: "url" | "email" | "sms" | "text" | "legal";
     error?: string;
 }
 
@@ -316,6 +369,8 @@ export class RealApiClient implements ApiClient {
     /** Đánh giá rủi ro cho một URL qua REST `POST /v1/assess/url`.
      *  Khớp contract gateway: body `{ url, context }`. */
     async assessUrl(url: string): Promise<AssessResult> {
+        const trusted = trustedPopularResult(url);
+        if (trusted) return trusted;
         const raw = await requestJson<BackendAssessResponse>("/v1/assess/url", {
             ...withAuthentication({ method: "POST" }),
             body: JSON.stringify({ url, context: "" }),
@@ -336,12 +391,12 @@ export class RealApiClient implements ApiClient {
     /** Đánh giá rủi ro cho văn bản/email qua REST `POST /v1/assess/text`.
      *  Khớp contract gateway: body `{ text, modality, metadata }`. */
     async browserSandboxUrl(url: string): Promise<BrowserSandboxResult> {
-        return requestJson<BrowserSandboxResult>(
+        return requestAnonymousAssessmentJson<BrowserSandboxResult>(
             "/v1/assess/url/browser-sandbox",
-            withAuthentication({
+            {
                 method: "POST",
                 body: JSON.stringify({ url, canary_mode: "dry_run" }),
-            }),
+            },
         );
     }
 
@@ -349,15 +404,17 @@ export class RealApiClient implements ApiClient {
         const form = new FormData();
         form.append("file", file);
         form.append("share_with_provider", shareWithProvider ? "true" : "false");
-        const response = await fetch(`${getApiBase()}/v1/assess/file/exe-quick-scan`,
-            withAuthentication({ method: "POST", body: form }));
+        const response = await fetchWithAnonymousSessionFallback(
+            `${getApiBase()}/v1/assess/file/exe-quick-scan`,
+            { method: "POST", body: form },
+        );
         if (!response.ok) throw new Error(`Kiểm thử EXE thất bại: ${response.status} — ${await response.text()}`);
         return response.json() as Promise<ExeSandboxResult>;
     }
     async getExecutableProviderReport(dataId: string): Promise<ExeProviderResult> {
-        return requestJson<ExeProviderResult>(
+        return requestAnonymousAssessmentJson<ExeProviderResult>(
             `/v1/assess/file/exe-quick-scan/provider/${encodeURIComponent(dataId)}`,
-            withAuthentication({ method: "GET" }),
+            { method: "GET" },
         );
     }
 
@@ -544,10 +601,11 @@ export class RealApiClient implements ApiClient {
                             ? {
                                 assessment: mapAssessResponse(
                                     msg.assessment,
-                                    msg.modality ?? "text",
+                                    msg.modality === "legal" ? "text" : (msg.modality ?? "text"),
                                 ),
                             }
                             : {}),
+                        ...(msg.legal_answer ? { legalAnswer: msg.legal_answer } : {}),
                     };
                 } else if (msg.type === "error") {
                     streamError = new Error(
@@ -691,6 +749,86 @@ export class RealApiClient implements ApiClient {
         await requestJson<unknown>(
             "/v1/account/password",
             withAuthentication({ method: "POST", body: JSON.stringify(input) }),
+        );
+    }
+
+    async getQuota(): Promise<QuotaInfo> {
+        return requestJson<QuotaInfo>(
+            "/v1/account/quota",
+            withAuthentication({ method: "GET" }),
+        );
+    }
+
+    async getScanHistoryDetail(requestId: string): Promise<ScanRecordDetail> {
+        return requestJson<ScanRecordDetail>(
+            `/v1/account/history/${encodeURIComponent(requestId)}`,
+            withAuthentication({ method: "GET" }),
+        );
+    }
+
+    async deleteScanHistory(requestId: string): Promise<{deleted: number}> {
+        return requestJson<{deleted: number}>(
+            `/v1/account/history/${encodeURIComponent(requestId)}`,
+            withAuthentication({ method: "DELETE" }),
+        );
+    }
+
+    async clearScanHistory(): Promise<{deleted: number}> {
+        return requestJson<{deleted: number}>(
+            "/v1/account/history",
+            withAuthentication({ method: "DELETE" }),
+        );
+    }
+
+    async submitFeedback(input: FeedbackInput): Promise<FeedbackReceipt> {
+        return requestJson<FeedbackReceipt>(
+            "/v1/feedback",
+            withAuthentication({ method: "POST", body: JSON.stringify(input) }),
+        );
+    }
+
+    async createReportShare(input: CreateReportShareInput): Promise<CreatedReportShare> {
+        return requestJson<CreatedReportShare>(
+            "/v1/report-shares",
+            withAuthentication({ method: "POST", body: JSON.stringify(input) }),
+        );
+    }
+
+    async getPublicReportShare(token: string): Promise<PublicReportShare> {
+        return requestJson<PublicReportShare>(
+            `/v1/report-shares/public/${encodeURIComponent(token)}`,
+            { method: "GET" },
+        );
+    }
+
+    async revokeReportShare(shareId: string): Promise<void> {
+        const path = `/v1/report-shares/${encodeURIComponent(shareId)}`;
+        const init = withAuthentication({ method: "DELETE" });
+        const response = await fetch(`${getApiBase()}${path}`, {
+            ...init,
+            headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+        });
+        if (!response.ok) throw new Error(`Yêu cầu ${path} thất bại: ${response.status} ${response.statusText}`);
+    }
+
+    async getAISettings(): Promise<UserAISettings> {
+        return requestJson<UserAISettings>(
+            "/v1/account/ai-settings",
+            withAuthentication({ method: "GET" }),
+        );
+    }
+
+    async updateAISettings(input: UserAISettingsInput): Promise<UserAISettings> {
+        return requestJson<UserAISettings>(
+            "/v1/account/ai-settings",
+            withAuthentication({ method: "PUT", body: JSON.stringify(input) }),
+        );
+    }
+
+    async testAISettings(): Promise<{ok: boolean; modelAvailable: boolean; modelsCount: number}> {
+        return requestJson<{ok: boolean; modelAvailable: boolean; modelsCount: number}>(
+            "/v1/account/ai-settings/test",
+            withAuthentication({ method: "POST" }),
         );
     }
 }

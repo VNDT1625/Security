@@ -1,1 +1,41 @@
-<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cài đặt — AI Security Armor</title><link rel="stylesheet" href="options.css"></head><body><main><header><img src="../icons/icon128.png" alt=""><div><h1>Cài đặt bảo vệ</h1><p>Kích hoạt extension và kiểm soát các lớp bảo vệ.</p></div></header><section><h2>Kích hoạt tài khoản</h2><label for="api-key">API key từ Web App</label><div class="row"><input id="api-key" type="password" autocomplete="off" placeholder="Dán API key tại trang tài khoản"><button id="verify-key">Xác minh</button></div><p id="key-result" class="hint">Lấy key tại Web App → Tài khoản → API & MCP key. Extension chỉ hoạt động sau khi key được xác minh.</p><div id="account-info" class="privacy" hidden></div></section><section><h2>Gateway</h2><label for="gateway">Địa chỉ Gateway</label><div class="row"><input id="gateway" type="url" placeholder="http://localhost:8000"><button id="test">Kiểm tra</button></div><p id="test-result" class="hint">URL và nội dung được gửi đến địa chỉ này.</p></section><section><h2>Tính năng</h2><label class="choice"><input id="link-protection" type="checkbox"><span><strong>Bảo vệ liên kết</strong><small>Kiểm tra liên kết trước khi mở.</small></span></label><label class="choice"><input id="gmail-protection" type="checkbox"><span><strong>Bảo vệ Gmail</strong><small>Chỉ phân tích email đang mở, tối đa một lần cho mỗi thư.</small></span></label></section><section><h2>Quyền riêng tư</h2><p class="privacy">API key được lưu trong vùng lưu trữ riêng của extension và gửi qua Authorization header. Mỗi lượt quét được tính vào tài khoản tương ứng.</p></section><div class="actions"><button id="reset" class="secondary">Khôi phục mặc định</button><button id="save">Lưu cài đặt</button></div><p id="saved" role="status"></p></main><script type="module" src="options.js"></script></body></html>
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cài đặt — AI Security Armor</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <header><img src="../icons/icon128.png" alt=""><div><h1>Cài đặt bảo vệ</h1><p>Bảo vệ nền, chỉ hiện cảnh báo khi thật sự cần chú ý.</p></div></header>
+    <section>
+      <h2>Kích hoạt tài khoản</h2>
+      <label for="api-key">API key từ Web App</label>
+      <div class="row"><input id="api-key" type="password" autocomplete="off" placeholder="Dán API key tại trang tài khoản"><button id="verify-key">Xác minh</button></div>
+      <p id="key-result" class="hint">Lấy key tại Web App → Tài khoản → API & MCP key. Key cần quyền đánh giá URL, nội dung và file.</p>
+      <div id="account-info" class="privacy" hidden></div>
+    </section>
+    <section>
+      <h2>Gateway</h2>
+      <label for="gateway">Địa chỉ Gateway</label>
+      <div class="row"><input id="gateway" type="url" placeholder="http://localhost:8000"><button id="test">Kiểm tra</button></div>
+      <p id="test-result" class="hint">URL, email đang mở và tệp EXE cần kiểm tra được gửi tới Gateway này.</p>
+    </section>
+    <section>
+      <h2>Bảo vệ chủ động</h2>
+      <label class="choice"><input id="website-protection" type="checkbox"><span><strong>Cảnh báo website</strong><small>Tự quét URL khi trang mở; chỉ chèn thanh cảnh báo trên trang khi vượt ngưỡng.</small></span></label>
+      <label class="choice"><input id="gmail-protection" type="checkbox"><span><strong>Bảo vệ Gmail</strong><small>Chỉ quét email đang được mở và quét nhanh tệp EXE thuộc email đó.</small></span></label>
+      <label class="threshold" for="warning-threshold"><span><strong>Ngưỡng hiện cảnh báo</strong><small>Kết quả bằng hoặc thấp hơn ngưỡng sẽ không tạo giao diện trên trang.</small></span><output id="threshold-value">60/100</output></label>
+      <input id="warning-threshold" type="range" min="40" max="90" step="1" value="60">
+    </section>
+    <section>
+      <h2>Quyền riêng tư</h2>
+      <p class="privacy">API key được lưu trong vùng riêng của extension. EXE chỉ được phân tích tĩnh và tra cứu hash; extension không yêu cầu Gateway chia sẻ mẫu với nhà cung cấp ngoài.</p>
+    </section>
+    <div class="actions"><button id="reset" class="secondary">Khôi phục mặc định</button><button id="save">Lưu cài đặt</button></div>
+    <p id="saved" role="status"></p>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

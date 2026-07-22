@@ -16,12 +16,8 @@ export async function POST(request: NextRequest) {
             body: JSON.stringify(body),
         });
 
-        if (!response.ok) {
-            throw new Error('Failed to start training');
-        }
-
         const data = await response.json();
-        return NextResponse.json(data);
+        return NextResponse.json(data, { status: response.status });
     } catch (error) {
         console.error('Error starting training:', error);
         return NextResponse.json(

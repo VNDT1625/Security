@@ -24,8 +24,11 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PrewiseShell } from "@/components/PrewiseUI";
+import { useAuth } from "@/context/AuthContext";
+import { canUseProAI } from "@/lib/entitlements";
 import { loadResultRecord, persistResultRecord } from "@/lib/result-storage";
 import { readStoredAccessToken } from "@/lib/auth-session";
+import mobileStyles from "../../../mobile-pages.module.css";
 
 type SourceStatus = { source?: string; status?: string; detail?: string };
 type URLIntelligence = {
@@ -119,6 +122,7 @@ function screenshotFilename(domain?: string, url?: string): string {
 function AiAnalysisContent(): JSX.Element {
   const params = useParams<{ id: string }>();
   const id = params.id;
+  const { isHydrated, plan } = useAuth();
   const started = useRef(false);
   const [record, setRecord] = useState<StoredRecord | null>(null);
   const [result, setResult] = useState<DeepResult | null>(null);
@@ -127,6 +131,11 @@ function AiAnalysisContent(): JSX.Element {
   const [error, setError] = useState("");
 
   const runDeepAnalysis = useCallback(async (source: StoredRecord) => {
+    if (!canUseProAI(plan?.tier)) {
+      setError("Chế độ Pro AI yêu cầu gói Pro hoặc cao hơn.");
+      setLoading(false);
+      return;
+    }
     const url = source.content?.trim();
     if (!url) {
       setError("Không tìm thấy URL của lần phân tích trước trong trình duyệt này.");
@@ -144,7 +153,7 @@ function AiAnalysisContent(): JSX.Element {
           "Content-Type": "application/json",
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
-        body: JSON.stringify({ url, deep_analysis: true, advanced_analysis: true, scan_all: true, ai_context: "auto" }),
+        body: JSON.stringify({ url, deep_analysis: true, advanced_analysis: true, scan_all: true, ai_context: "on" }),
       });
       const payload = await response.json() as DeepResult & { detail?: string };
       if (!response.ok) throw new Error(payload.detail || "Không thể hoàn tất phân tích AI chuyên sâu.");
@@ -152,6 +161,7 @@ function AiAnalysisContent(): JSX.Element {
         ...source,
         score: Math.round(payload.risk_score || 0),
         result: payload,
+        analysisDepth: "pro",
         aiDeepAnalyzedAt: new Date().toISOString(),
       };
       setRecord(updated);
@@ -163,10 +173,15 @@ function AiAnalysisContent(): JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, plan?.tier]);
 
   useEffect(() => {
-    if (!id || started.current) return;
+    if (!isHydrated || !id || started.current) return;
+    if (!canUseProAI(plan?.tier)) {
+      setError("Chế độ Pro AI yêu cầu gói Pro hoặc cao hơn.");
+      setLoading(false);
+      return;
+    }
     started.current = true;
     try {
       const source = loadResultRecord<StoredRecord>(id);
@@ -181,7 +196,7 @@ function AiAnalysisContent(): JSX.Element {
       setError("Dữ liệu phân tích gốc không hợp lệ hoặc đã bị xóa.");
       setLoading(false);
     }
-  }, [id, runDeepAnalysis]);
+  }, [id, isHydrated, plan?.tier, runDeepAnalysis]);
 
   useEffect(() => {
     if (!loading) return;
@@ -200,7 +215,7 @@ function AiAnalysisContent(): JSX.Element {
   }), [identity.emails, identity.phones, intel?.registrant_phone]);
   const networkHosts = useMemo(() => Array.from(new Set((sandbox?.network_calls || []).map(hostname).filter(Boolean))).slice(0, 12), [sandbox?.network_calls]);
 
-  return <PrewiseShell><main id="main-content" className="ai-investigation">
+  return <PrewiseShell><main id="main-content" className={`ai-investigation ${mobileStyles.investigation}`}>
     <header className="ai-investigation-head">
       <div><Link href={`/result/${id}`}><ArrowLeft size={16} /> Kết quả phân tích nội dung</Link><span>AI INVESTIGATION / {loading ? "ĐANG CHẠY" : error ? "CHƯA HOÀN TẤT" : "HOÀN TẤT"}</span><h1>Phân tích thêm bằng AI</h1><p>Điều tra website trong môi trường cô lập, kết hợp dấu vết truy cập và dữ liệu nhận diện công khai.</p></div>
       {record?.content && <code title={record.content}>{record.content}</code>}
@@ -211,7 +226,7 @@ function AiAnalysisContent(): JSX.Element {
     </section>
 
     {loading && <section className="ai-loading" aria-live="polite"><Bot size={32} /><div><b>{PHASES[phase]}</b><p>Sandbox chỉ dùng dữ liệu canary tổng hợp và chặn gửi biểu mẫu, tải xuống, mạng riêng.</p></div><span>{Math.round(((phase + 1) / PHASES.length) * 100)}%</span></section>}
-    {error && <section className="ai-error" role="alert"><ShieldAlert size={24} /><div><b>Chưa thể hoàn tất phân tích chuyên sâu</b><p>{error}</p></div>{record?.content && <button type="button" onClick={() => void runDeepAnalysis(record)}><RefreshCw size={16} /> Thử lại</button>}</section>}
+    {error && <section className="ai-error" role="alert"><ShieldAlert size={24} /><div><b>Chưa thể hoàn tất phân tích chuyên sâu</b><p>{error}</p></div>{!canUseProAI(plan?.tier) ? <Link href="/account/billing">Xem gói Pro</Link> : record?.content && <button type="button" onClick={() => void runDeepAnalysis(record)}><RefreshCw size={16} /> Thử lại</button>}</section>}
 
     {result && <>
       <section className="ai-summary-band"><div className={`ai-risk ${risk >= 70 ? "danger" : risk >= 40 ? "warn" : "safe"}`}><span>Rủi ro tổng hợp</span><strong>{risk}<small>/100</small></strong><b>{result.threat_level || "chưa xác định"}</b></div><div><Fingerprint /><span>AI Evaluate</span><strong>{result.contextual_analysis?.adapter_id || result.ai_detection?.model_version || "Chưa cấu hình"}</strong><small>{result.contextual_analysis?.status === "completed" ? `${result.contextual_analysis.scoring_mode === "shadow" ? "Shadow · không đổi điểm" : "Đã đánh giá"}` : `Trạng thái: ${result.contextual_analysis?.status || "không chạy"}`}</small></div><div><Activity /><span>Dấu vết browser</span><strong>{(sandbox?.behaviors?.length || 0) + redirects.length}</strong><small>{sandbox?.network_calls?.length || 0} network request</small></div><div><Clock3 /><span>Thời gian phân tích</span><strong>{result.analysis_time_ms || sandbox?.analysis_time_ms || 0} ms</strong><small>Backend + sandbox cô lập</small></div></section>

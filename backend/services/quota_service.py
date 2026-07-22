@@ -70,6 +70,9 @@ def _usage_query(
 def reserve_scan_quota(db: Session, actor: ActorContext, request: Request) -> None:
     """Atomically consume one scan unit, including under concurrent PostgreSQL traffic."""
 
+    if settings.app_env == "development" and settings.local_testing_unlimited:
+        return
+
     user_id, api_key_id, anonymous_id = _identity(actor, request)
     limit = _daily_limit(db, actor)
     today = date.today()
@@ -172,6 +175,8 @@ def _reserve_feature_quota(
     amount: int,
     ai_kind: str | None = None,
 ) -> None:
+    if settings.app_env == "development" and settings.local_testing_unlimited:
+        return
     if amount <= 0:
         return
 

@@ -3,10 +3,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 
+import pytest
+
 from backend.routers.sandbox_cloud import (
     PRO_MONTHLY_PRICE_VND,
     PRO_YEARLY_PRICE_VND,
+    TEAM_MONTHLY_PRICE_VND,
+    TEAM_YEARLY_PRICE_VND,
     is_incoming_sepay_transaction,
+    make_sepay_qr_url,
+    sepay_transfer_content,
+    subscription_amount_vnd,
     verify_sepay_webhook_hmac,
 )
 
@@ -48,6 +55,28 @@ def test_only_incoming_transactions_can_settle_a_payment() -> None:
     assert not is_incoming_sepay_transaction("")
 
 
+def test_vietinbank_payment_content_starts_with_sevqr() -> None:
+    reference = "PPABCDEF123456"
+    assert sepay_transfer_content(reference) == "SEVQR PPABCDEF123456"
+    assert "des=SEVQR%20PPABCDEF123456" in make_sepay_qr_url(5_000, reference)
+
+
 def test_pro_prices_match_the_public_monthly_and_yearly_offer() -> None:
-    assert PRO_MONTHLY_PRICE_VND == 99_000
-    assert PRO_YEARLY_PRICE_VND == 948_000
+    assert PRO_MONTHLY_PRICE_VND == 5_000
+    assert PRO_YEARLY_PRICE_VND == 50_000
+    assert subscription_amount_vnd("pro", "monthly") == 5_000
+    assert subscription_amount_vnd("pro", "yearly") == 50_000
+
+
+def test_team_payment_unlocks_the_max_sandbox_package() -> None:
+    assert TEAM_MONTHLY_PRICE_VND == 29_000
+    assert TEAM_YEARLY_PRICE_VND == 290_000
+    assert subscription_amount_vnd("team", "monthly") == 29_000
+    assert subscription_amount_vnd("team", "yearly") == 290_000
+
+
+def test_subscription_price_rejects_unknown_plan_or_period() -> None:
+    with pytest.raises(ValueError):
+        subscription_amount_vnd("max", "monthly")
+    with pytest.raises(ValueError):
+        subscription_amount_vnd("pro", "weekly")

@@ -45,8 +45,40 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      database-backup:
+        condition: service_completed_successfully
     networks: [armor-private]
     restart: "no"
+    security_opt: ["no-new-privileges:true"]
+
+  # Fail closed before schema changes: a restorable custom-format snapshot must
+  # exist before Alembic runs. Operators should copy/expire these off-host.
+  database-backup:
+    image: postgres:16-alpine
+    # The host bind directory can be created as root by Docker. This one-shot
+    # process drops every capability and only writes the mode-0600 dump.
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        umask 077;
+        pg_dump --format=custom --no-owner --no-acl
+        --host=postgres --username=$${POSTGRES_USER} --dbname=$${POSTGRES_DB}
+        --file=/backups/prewise-$$(date -u +%Y%m%dT%H%M%SZ).dump
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-armor}
+      POSTGRES_USER: ${POSTGRES_USER:-armor}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - ./.aisec-backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [armor-private]
+    restart: "no"
+    read_only: true
+    cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
 
   backend:
@@ -54,8 +86,6 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-armor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-armor}?sslmode=disable
@@ -69,6 +99,7 @@ services:
       API_KEY: ${API_KEY:?Set API_KEY}
       TELEMETRY_SENSOR_PEPPER: ${TELEMETRY_SENSOR_PEPPER:?Set TELEMETRY_SENSOR_PEPPER}
       MCP_ALLOW_ANONYMOUS: "false"
+      ANONYMOUS_DAILY_SCAN_LIMIT: ${ANONYMOUS_DAILY_SCAN_LIMIT:-1000}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-["https://prewise.site","https://www.prewise.site"]}
       ADAPTER_REGISTRY_ENABLED: ${ADAPTER_REGISTRY_ENABLED:-true}
       ADAPTER_MANIFEST_PATH: /app/server/adapters/manifest.json
@@ -76,6 +107,12 @@ services:
       ADAPTER_API_KEY: ${ADAPTER_API_KEY:-}
       ADAPTER_TIMEOUT_SECONDS: ${ADAPTER_TIMEOUT_SECONDS:-15}
       ADAPTER_MAX_RISK_CONTRIBUTION: ${ADAPTER_MAX_RISK_CONTRIBUTION:-0.25}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-90}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-500}
       PHONE_INTELLIGENCE_URL: ${PHONE_INTELLIGENCE_URL:-}
       IPQS_PHONE_API_URL: ${IPQS_PHONE_API_URL:-https://www.ipqualityscore.com/api/json/phone}
       IPQS_PHONE_API_KEY: ${IPQS_PHONE_API_KEY:-}
@@ -97,6 +134,53 @@ services:
       GMAIL_TOKEN_ENCRYPTION_KEYS: ${GMAIL_TOKEN_ENCRYPTION_KEYS:-}
       GMAIL_WEB_RETURN_URL: ${GMAIL_WEB_RETURN_URL:-https://prewise.site/analyze?gmail=connected}
       GMAIL_API_TIMEOUT_SECONDS: ${GMAIL_API_TIMEOUT_SECONDS:-12}
+      # Transactional release notifications. The backend remains explicitly
+      # unconfigured when these are blank; secrets are injected at deploy time.
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      PREWISE_EMAIL_FROM: ${PREWISE_EMAIL_FROM:-}
+      RELEASE_EMAIL_TIMEOUT_SECONDS: ${RELEASE_EMAIL_TIMEOUT_SECONDS:-10}
+      RELEASE_EMAIL_MAX_ATTEMPTS: ${RELEASE_EMAIL_MAX_ATTEMPTS:-3}
+      RELEASE_UNSUBSCRIBE_BASE_URL: ${RELEASE_UNSUBSCRIBE_BASE_URL:-https://api.prewise.site/v1/waitlist/unsubscribe}
+      # SePay checkout and authenticated payment webhook.
+      SEPAY_WEBHOOK_SECRET: ${SEPAY_WEBHOOK_SECRET:-}
+      SEPAY_WEBHOOK_API_KEY: ${SEPAY_WEBHOOK_API_KEY:-}
+      SEPAY_BANK_ACCOUNT: ${SEPAY_BANK_ACCOUNT:-}
+      SEPAY_BANK_NAME: ${SEPAY_BANK_NAME:-}
+      SEPAY_ACCOUNT_NAME: ${SEPAY_ACCOUNT_NAME:-}
+      SEPAY_QR_BASE_URL: ${SEPAY_QR_BASE_URL:-https://vietqr.app/img}
+      SEPAY_PAYMENT_EXPIRY_MINUTES: ${SEPAY_PAYMENT_EXPIRY_MINUTES:-30}
+      SANDBOX_CREDIT_PRICE_VND: ${SANDBOX_CREDIT_PRICE_VND:-5000}
+      # Disposable external AWS servers for Sandbox PRO/MAX. In production,
+      # prefer an instance/task IAM role; static credentials remain optional.
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_SANDBOX_AMI_ID: ${AWS_SANDBOX_AMI_ID:-}
+      AWS_SANDBOX_INSTANCE_TYPE: ${AWS_SANDBOX_INSTANCE_TYPE:-m7i-flex.large}
+      AWS_SANDBOX_MAX_AMI_ID: ${AWS_SANDBOX_MAX_AMI_ID:-}
+      AWS_SANDBOX_MAX_INSTANCE_TYPE: ${AWS_SANDBOX_MAX_INSTANCE_TYPE:-g4dn.xlarge}
+      AWS_SANDBOX_SUBNET_ID: ${AWS_SANDBOX_SUBNET_ID:-}
+      AWS_SANDBOX_SECURITY_GROUP_ID: ${AWS_SANDBOX_SECURITY_GROUP_ID:-}
+      AWS_SANDBOX_KEY_NAME: ${AWS_SANDBOX_KEY_NAME:-}
+      AWS_SANDBOX_REMOTE_PORT: ${AWS_SANDBOX_REMOTE_PORT:-8443}
+      AWS_SANDBOX_INTERACTIVE_AMI_ID: ${AWS_SANDBOX_INTERACTIVE_AMI_ID:-}
+      AWS_SANDBOX_INTERACTIVE_MAX_AMI_ID: ${AWS_SANDBOX_INTERACTIVE_MAX_AMI_ID:-}
+      AWS_SANDBOX_INTERACTIVE_INSTANCE_TYPE: ${AWS_SANDBOX_INTERACTIVE_INSTANCE_TYPE:-m7i-flex.large}
+      AWS_SANDBOX_INTERACTIVE_MAX_INSTANCE_TYPE: ${AWS_SANDBOX_INTERACTIVE_MAX_INSTANCE_TYPE:-g4dn.xlarge}
+      AWS_SANDBOX_INTERACTIVE_SECURITY_GROUP_ID: ${AWS_SANDBOX_INTERACTIVE_SECURITY_GROUP_ID:-}
+      SANDBOX_REMOTE_BROKER_URL_TEMPLATE: ${SANDBOX_REMOTE_BROKER_URL_TEMPLATE:-}
+      AWS_SANDBOX_REMOTE_URL_TAG: ${AWS_SANDBOX_REMOTE_URL_TAG:-}
+      SANDBOX_REMOTE_BROKER_SECRET: ${SANDBOX_REMOTE_BROKER_SECRET:-}
+      SANDBOX_REMOTE_BROKER_HEALTH_URL: ${SANDBOX_REMOTE_BROKER_HEALTH_URL:-}
+      SANDBOX_REMOTE_ACCESS_TOKEN_TTL_SECONDS: ${SANDBOX_REMOTE_ACCESS_TOKEN_TTL_SECONDS:-60}
+      SANDBOX_AGENT_REPORT_GRACE_SECONDS: ${SANDBOX_AGENT_REPORT_GRACE_SECONDS:-15}
+      SANDBOX_CLOUD_PROVISION_TIMEOUT_MINUTES: ${SANDBOX_CLOUD_PROVISION_TIMEOUT_MINUTES:-10}
+      SANDBOX_PUBLIC_BASE_URL: ${SANDBOX_PUBLIC_BASE_URL:-https://api.prewise.site}
+      SANDBOX_SAMPLE_STORAGE_PATH: /app/.aisec-data/cloud-sandbox-samples
+      PRO_SANDBOX_SESSION_MINUTES: ${PRO_SANDBOX_SESSION_MINUTES:-15}
+      MAX_SANDBOX_SESSION_MINUTES: ${MAX_SANDBOX_SESSION_MINUTES:-30}
     volumes:
       - ./server/adapters:/app/server/adapters:ro
     depends_on:
@@ -108,7 +192,125 @@ services:
         condition: service_healthy
     networks: [armor-private, armor-egress]
     read_only: true
-    tmpfs: [/tmp]
+    tmpfs:
+      - /tmp
+      # Samples are short-lived, non-executable, and disappear on container stop.
+      - /app/.aisec-data/cloud-sandbox-samples:rw,noexec,nosuid,nodev,size=256m,uid=1000,gid=1000,mode=0700
+    security_opt: ["no-new-privileges:true"]
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.prewise.site}
+        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-wss://api.prewise.site}
+        NEXT_PUBLIC_API_MODE: real
+        NEXT_PUBLIC_BACKEND_URL: http://backend:8000
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      BACKEND_INTERNAL_URL: http://backend:8000
+      NEXT_PUBLIC_BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    # A container attached only to an internal Docker network cannot publish a
+    # host port on current Docker Engine/Desktop releases. Keep backend access
+    # private and use a dedicated edge network for the loopback-bound port.
+    networks: [armor-private, armor-web-edge]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:rw,noexec,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=0700
+    security_opt: ["no-new-privileges:true"]
+
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["python", "-m", "mcp_server.server", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "3001"]
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-armor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-armor}?sslmode=disable
+      DATABASE_REQUIRE_TLS: "false"
+      DATABASE_AUTO_CREATE: "false"
+      SEED_DEMO_USER: "false"
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?Set API_KEY_PEPPER}
+      API_KEY: ${API_KEY:?Set API_KEY}
+      TELEMETRY_SENSOR_PEPPER: ${TELEMETRY_SENSOR_PEPPER:?Set TELEMETRY_SENSOR_PEPPER}
+      MCP_ALLOW_ANONYMOUS: "false"
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-https://api.prewise.site}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-api.prewise.site,api.prewise.site:*}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-["https://prewise.site","https://www.prewise.site"]}
+      MCP_SANDBOX_DIR: /app/.mcp-sandbox
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      ADAPTER_REGISTRY_ENABLED: ${ADAPTER_REGISTRY_ENABLED:-true}
+      ADAPTER_MANIFEST_PATH: /app/server/adapters/manifest.json
+      ADAPTER_BASE_URL: ${ADAPTER_BASE_URL:-}
+      ADAPTER_API_KEY: ${ADAPTER_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    volumes:
+      - ./data:/app/.mcp-sandbox:ro
+      - ./server/adapters:/app/server/adapters:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+    networks: [armor-private, armor-egress]
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt: ["no-new-privileges:true"]
+
+  api-gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./deploy/api-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      mcp:
+        condition: service_started
+    networks: [armor-private, armor-api-edge]
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    security_opt: ["no-new-privileges:true"]
+
+  data-migrate:
+    profiles: ["data-migration"]
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: ["python", "/workspace/scripts/migrate_sqlite_to_postgres.py", "--source", "/workspace/.aisec-data/armor.db"]
+    working_dir: /workspace
+    environment:
+      POSTGRES_MIGRATION_URL: postgresql+psycopg://${POSTGRES_USER:-armor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-armor}?sslmode=disable
+      RUN_ALEMBIC_UPGRADE: "false"
+    volumes:
+      - ./:/workspace:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [armor-private]
+    restart: "no"
     security_opt: ["no-new-privileges:true"]
 
 networks:
@@ -117,6 +319,10 @@ networks:
   # Backend needs bounded egress for configured reputation APIs; ClamAV needs it
   # for FreshClam. No service port is published on this network.
   armor-egress:
+  # Only the web service joins this non-internal network, allowing Docker to
+  # install the 127.0.0.1 port mapping without exposing backend dependencies.
+  armor-web-edge:
+  armor-api-edge:
 
 volumes:
   postgres-data:

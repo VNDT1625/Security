@@ -19,6 +19,7 @@ from shared.adapter_schemas import (
     MessageContextOutput,
     PhoneIntelligenceInput,
     PhoneIntelligenceOutput,
+    WebContextInput,
     WebContextOutput,
 )
 from shared.schemas import Decision, Evidence, Severity
@@ -111,6 +112,73 @@ def test_registry_routes_to_enabled_highest_priority_adapter(tmp_path: Path) -> 
     assert outcome.trace.adapter_id == "active"
     assert outcome.trace.status == AdapterRunStatus.COMPLETED
     assert isinstance(outcome.output, MessageContextOutput)
+
+
+def test_generic_openai_compatible_runtime_uses_admin_model_without_lora_artifact(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(
+        tmp_path,
+        [
+            {
+                "adapter_id": "generic-web",
+                "task": "web-context-adapter",
+                "runtime": "openai_compatible",
+                "served_model_name": "manifest-placeholder",
+            }
+        ],
+    )
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        content = {
+            "risk_signal": 0.7,
+            "confidence": 0.8,
+            "inferred_purpose": "payment collection",
+            "purpose_mismatch": True,
+            "findings": [
+                {
+                    "evidence_id": "ctx-payee",
+                    "category": "payment_recipient",
+                    "summary": "Recipient identity is not established",
+                    "severity": "high",
+                    "risk_signal": 0.7,
+                }
+            ],
+            "observations": {},
+        }
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": json.dumps(content)}}]}
+        )
+
+    registry = AdapterRegistry(
+        str(manifest),
+        base_url="http://127.0.0.1:20128/v1",
+        api_key="secret",
+        model_name="admin-selected-model",
+        transport=httpx.MockTransport(handler),
+    )
+    outcome = registry.invoke(
+        AdapterTask.WEB_CONTEXT,
+        WebContextInput.model_validate(
+            {
+                "url": "https://example.test",
+                "content": "Pay an unnamed recipient",
+                "layer1": {
+                "risk_score": 0.3,
+                "confidence": 0.8,
+                "evidence": [],
+                "model_version": "test",
+                },
+            },
+        ),
+    )
+
+    assert registry.is_llm_ready(AdapterTask.WEB_CONTEXT) is True
+    assert captured["model"] == "admin-selected-model"
+    assert captured["stream"] is False
+    assert outcome.trace.status == AdapterRunStatus.COMPLETED
 
 
 def test_wrong_schema_is_rejected_and_cannot_return_policy_decision(

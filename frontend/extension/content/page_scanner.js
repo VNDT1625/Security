@@ -1,49 +1,223 @@
 (() => {
   "use strict";
-  const cache = new Map();
-  const TTL = 5 * 60e3;
-  // Temporarily disabled while the interaction policy is being redesigned.
-  const LINK_PROTECTION_TEMPORARILY_DISABLED = true;
-  let active = null, lastFocus = null, contextAlive = true;
-  let protectionEnabled = false, linkProtection = false;
 
-  const host = document.createElement("div");
-  host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none";
-  const root = host.attachShadow({ mode: "closed" });
-  document.documentElement.appendChild(host);
-  const css = document.createElement("style");
-  css.textContent = `.overlay{position:fixed;inset:0;display:grid;place-items:center;padding:20px;background:rgba(2,6,23,.62);backdrop-filter:blur(3px);pointer-events:auto;font:13px Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#dbe4f0}.panel{width:min(440px,100%);overflow:hidden;border:1px solid #344157;border-radius:12px;background:#111827;box-shadow:0 24px 60px rgba(0,0,0,.48)}.bar{height:3px;background:#d69e2e}.bar.danger{background:#dc5a5a}.content{padding:22px}.eyebrow{margin-bottom:8px;color:#93a4ba;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}h2{margin:0;color:#f8fafc;font-size:18px;font-weight:650;letter-spacing:-.01em}p{margin:7px 0 0;color:#aebdce;line-height:1.55}.target{margin:18px 0 12px;padding:11px 12px;border:1px solid #2b374b;border-radius:7px;background:#0b1220}.target span{display:block;color:#718198;font-size:9px;text-transform:uppercase;letter-spacing:.08em}.target strong{display:block;margin-top:4px;color:#e5edf7;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.finding{padding:12px;border-left:2px solid #d69e2e;background:#182131;color:#cbd5e1;line-height:1.5}.finding.danger{border-color:#dc5a5a}.actions{display:flex;justify-content:flex-end;gap:8px;padding:14px 22px;border-top:1px solid #263247;background:#0d1422}button{min-width:108px;padding:9px 13px;border:1px solid #3b485c;border-radius:7px;background:#1d293b;color:#e7edf5;font:600 12px inherit;cursor:pointer}button:hover{background:#263449}button:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}.primary{border-color:#c24141;background:#b93c3c;color:#fff}.primary:hover{background:#ca4747}`;
-  root.append(css);
+  const DEFAULT_THRESHOLD = 60;
+  let contextAlive = true;
+  let protectionEnabled = false;
+  let websiteProtection = true;
+  let warningThreshold = DEFAULT_THRESHOLD;
+  let currentUrl = location.href;
+  let scanToken = 0;
+  let warningHost = null;
+  const dismissedUrls = new Set();
 
-  function close() { active?.remove(); active = null; lastFocus?.focus?.(); }
-  function disableStaleContext() { contextAlive = false; close(); document.removeEventListener("click", handleClick, true); host.remove(); }
-  function hasRuntime() { try { return contextAlive && typeof chrome !== "undefined" && Boolean(chrome.runtime?.id) && typeof chrome.runtime.sendMessage === "function"; } catch { return false; } }
-  function send(message, timeoutMs = 5000) { return new Promise((resolve, reject) => { if (!hasRuntime()) { disableStaleContext(); return reject(new Error("context_invalid")); } let done = false; const timer = setTimeout(() => { if (!done) { done = true; reject(new Error("timeout")); } }, timeoutMs); try { chrome.runtime.sendMessage(message, (response) => { if (done) return; done = true; clearTimeout(timer); const error = chrome.runtime?.lastError; if (error) { if (/context invalidated|receiving end/i.test(error.message || "")) disableStaleContext(); reject(new Error(error.message)); } else resolve(response); }); } catch (error) { clearTimeout(timer); disableStaleContext(); reject(error); } }); }
-  function syncSettings() { send({ type: "GET_SETTINGS" }, 2000).then((settings) => { protectionEnabled = settings?.protectionEnabled === true; linkProtection = !LINK_PROTECTION_TEMPORARILY_DISABLED && settings?.linkProtection === true; if (!protectionEnabled || !linkProtection) close(); }).catch(() => {}); }
-
-  function dialog(level, url, reason, onContinue) {
-    if (!protectionEnabled || !linkProtection || document.visibilityState !== "visible") return;
-    close(); lastFocus = document.activeElement; const danger = level === "danger";
-    const wrap = document.createElement("div"); wrap.className = "overlay"; wrap.setAttribute("role", "dialog"); wrap.setAttribute("aria-modal", "true"); wrap.setAttribute("aria-labelledby", "armor-title");
-    wrap.innerHTML = `<div class="panel"><div class="bar ${danger ? "danger" : ""}"></div><div class="content"><div class="eyebrow">AI Security Armor · Link Protection</div><h2 id="armor-title">${danger ? "Điều hướng đã được chặn" : "Xác nhận trước khi tiếp tục"}</h2><p>${danger ? "Liên kết này có tín hiệu rủi ro cao." : "Liên kết này cần được xác minh trước khi mở."}</p><div class="target"><span>Đích đến</span><strong></strong></div><div class="finding ${danger ? "danger" : ""}"></div></div><div class="actions"><button class="back">Hủy điều hướng</button><button class="primary">Mở liên kết</button></div></div>`;
-    wrap.querySelector(".target strong").textContent = new URL(url).hostname; wrap.querySelector(".finding").textContent = reason || "Phát hiện tín hiệu bất thường trong địa chỉ đích.";
-    wrap.querySelector(".back").onclick = close; wrap.querySelector(".primary").onclick = () => { close(); onContinue(); }; wrap.onclick = (event) => { if (event.target === wrap) close(); }; wrap.onkeydown = (event) => { if (event.key === "Escape") close(); };
-    root.append(wrap); active = wrap; wrap.querySelector(".back").focus();
+  function isGmail() {
+    return location.hostname === "mail.google.com";
   }
-  function navigate(anchor, event) { if (event.ctrlKey || event.metaKey || anchor.target === "_blank") window.open(anchor.href, "_blank", "noopener"); else window.location.assign(anchor.href); }
-  async function handleClick(event) {
-    if (!hasRuntime()) return disableStaleContext();
-    if (!protectionEnabled || !linkProtection || event.defaultPrevented || event.button !== 0 || event.altKey || event.shiftKey) return;
-    const anchor = event.target.closest?.("a[href]"); if (!anchor || !/^https?:/.test(anchor.href) || anchor.hasAttribute("download")) return;
-    const hit = cache.get(anchor.href); if (hit && Date.now() - hit.time < TTL && hit.level === "safe") return;
-    event.preventDefault(); event.stopImmediatePropagation();
-    let response; try { response = await send({ type: "ASSESS_URL", url: anchor.href }, 17000); } catch { return navigate(anchor, event); }
-    if (!protectionEnabled || !linkProtection) return navigate(anchor, event);
-    if (response?.disabled || response?.error) return navigate(anchor, event);
-    cache.set(anchor.href, { level: response.level, time: Date.now() });
-    if (response.level === "safe") navigate(anchor, event); else dialog(response.level, anchor.href, response.result?.reasons?.[0], () => navigate(anchor, event));
+
+  function runtimeAvailable() {
+    try {
+      return contextAlive && Boolean(chrome.runtime?.id) && typeof chrome.runtime.sendMessage === "function";
+    } catch {
+      return false;
+    }
   }
-  if (hasRuntime() && chrome.storage?.onChanged) chrome.storage.onChanged.addListener((changes) => { if (changes.protectionEnabled) protectionEnabled = changes.protectionEnabled.newValue === true; if (changes.linkProtection) linkProtection = !LINK_PROTECTION_TEMPORARILY_DISABLED && changes.linkProtection.newValue === true; if (!protectionEnabled || !linkProtection) close(); });
-  if (hasRuntime()) chrome.runtime.onMessage.addListener((message) => { if (message?.type === "PROTECTION_STATE_CHANGED") { protectionEnabled = message.enabled === true; linkProtection = !LINK_PROTECTION_TEMPORARILY_DISABLED && message.linkProtection === true; if (!protectionEnabled || !linkProtection) close(); } });
-  syncSettings(); document.addEventListener("click", handleClick, true);
+
+  function disableStaleContext() {
+    contextAlive = false;
+    clearWarning();
+  }
+
+  function send(message, timeoutMs = 65000) {
+    return new Promise((resolve, reject) => {
+      if (!runtimeAvailable()) {
+        disableStaleContext();
+        reject(new Error("context_invalid"));
+        return;
+      }
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          reject(new Error("timeout"));
+        }
+      }, timeoutMs);
+      try {
+        chrome.runtime.sendMessage(message, (response) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          const error = chrome.runtime.lastError;
+          if (error) {
+            if (/context invalidated|receiving end/i.test(error.message || "")) disableStaleContext();
+            reject(new Error(error.message));
+          } else resolve(response);
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        disableStaleContext();
+        reject(error);
+      }
+    });
+  }
+
+  function clearWarning() {
+    warningHost?.remove();
+    warningHost = null;
+  }
+
+  function riskCopy(score) {
+    if (score >= 70) return {
+      label: "RỦI RO CAO",
+      title: "Trang này có dấu hiệu nguy hiểm",
+      accent: "#dc2626",
+      background: "#3b0d12",
+    };
+    return {
+      label: "CẦN THẬN TRỌNG",
+      title: "Trang này có nhiều dấu hiệu đáng ngờ",
+      accent: "#f59e0b",
+      background: "#36230a",
+    };
+  }
+
+  function showWarning(entry) {
+    const score = Number(entry?.score || 0);
+    if (
+      !protectionEnabled
+      || !websiteProtection
+      || entry?.status !== "complete"
+      || entry.url !== location.href
+      || score <= warningThreshold
+      || dismissedUrls.has(entry.url)
+    ) {
+      clearWarning();
+      return;
+    }
+
+    clearWarning();
+    const copy = riskCopy(score);
+    const host = document.createElement("div");
+    host.dataset.aiArmorPageWarning = "1";
+    host.style.cssText = "position:fixed;top:12px;left:50%;z-index:2147483647;width:min(860px,calc(100vw - 24px));transform:translateX(-50%);pointer-events:none";
+    const root = host.attachShadow({ mode: "closed" });
+    const style = document.createElement("style");
+    style.textContent = `
+      *{box-sizing:border-box}.bar{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:start;padding:13px 14px;border:1px solid color-mix(in srgb,var(--accent) 55%,#334155);border-radius:10px;background:var(--background);box-shadow:0 12px 32px rgba(2,6,23,.34);color:#f8fafc;pointer-events:auto;font:13px/1.45 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}.score{display:grid;place-items:center;min-width:50px;height:50px;border:1px solid var(--accent);border-radius:8px;background:rgba(2,6,23,.35);color:#fff;font-size:19px;font-weight:750}.score small{display:block;margin-top:-8px;color:#cbd5e1;font-size:9px;font-weight:600}.copy{min-width:0}.label{color:var(--accent);font-size:10px;font-weight:800;letter-spacing:.1em}.title{margin:2px 0 0;font-size:14px;font-weight:700}.host{margin-top:2px;color:#cbd5e1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.reasons{display:flex;flex-wrap:wrap;gap:5px 12px;margin:7px 0 0;padding:0;list-style:none;color:#e2e8f0;font-size:11px}.reasons li::before{content:"•";margin-right:5px;color:var(--accent)}button{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:6px;background:transparent;color:#cbd5e1;font:20px/1 system-ui;cursor:pointer}button:hover{background:rgba(255,255,255,.1);color:#fff}button:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}@media(max-width:560px){.bar{grid-template-columns:auto 1fr}.close{position:absolute;right:6px;top:6px}.score{min-width:44px;height:44px}.reasons{display:none}.title{padding-right:24px}}
+    `;
+    const bar = document.createElement("section");
+    bar.className = "bar";
+    bar.style.setProperty("--accent", copy.accent);
+    bar.style.setProperty("--background", copy.background);
+    bar.setAttribute("role", "alert");
+    bar.setAttribute("aria-label", `AI Security Armor cảnh báo ${score} trên 100`);
+
+    const scoreBox = document.createElement("div");
+    scoreBox.className = "score";
+    scoreBox.append(document.createTextNode(String(score)));
+    const unit = document.createElement("small");
+    unit.textContent = "/100";
+    scoreBox.append(unit);
+
+    const content = document.createElement("div");
+    content.className = "copy";
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = `AI SECURITY ARMOR · ${copy.label}`;
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = copy.title;
+    const pageHost = document.createElement("div");
+    pageHost.className = "host";
+    pageHost.textContent = location.hostname;
+    const reasons = document.createElement("ul");
+    reasons.className = "reasons";
+    (entry.result?.reasons || []).slice(0, 3).forEach((reason) => {
+      const item = document.createElement("li");
+      item.textContent = reason;
+      reasons.append(item);
+    });
+    content.append(label, title, pageHost);
+    if (reasons.children.length) content.append(reasons);
+
+    const close = document.createElement("button");
+    close.className = "close";
+    close.type = "button";
+    close.setAttribute("aria-label", "Ẩn cảnh báo cho trang này");
+    close.textContent = "×";
+    close.addEventListener("click", () => {
+      dismissedUrls.add(entry.url);
+      clearWarning();
+    });
+
+    bar.append(scoreBox, content, close);
+    root.append(style, bar);
+    (document.documentElement || document.body).append(host);
+    warningHost = host;
+  }
+
+  async function scan(url = location.href, force = false) {
+    // Gmail has its own message-level scanner. Never assess the inbox/thread
+    // shell as a website and never place a page warning over Gmail.
+    if (isGmail() || !protectionEnabled || !websiteProtection || !/^https?:\/\//i.test(url) || !runtimeAvailable()) {
+      clearWarning();
+      return;
+    }
+    const token = ++scanToken;
+    try {
+      const entry = await send({ type: "ASSESS_URL", url, force });
+      if (token === scanToken && url === location.href) showWarning(entry);
+    } catch {
+      // Background/offline failures stay silent on the page. The toolbar popup exposes diagnostics.
+    }
+  }
+
+  async function initialize() {
+    try {
+      const settings = await send({ type: "GET_SETTINGS" }, 2500);
+      protectionEnabled = settings?.protectionEnabled === true;
+      websiteProtection = settings?.websiteProtection !== false;
+      warningThreshold = Number.isFinite(settings?.warningThreshold) ? settings.warningThreshold : DEFAULT_THRESHOLD;
+      if (!isGmail()) await scan();
+    } catch {
+      // A stale extension context is cleaned up by send().
+    }
+  }
+
+  function detectNavigation() {
+    if (location.href === currentUrl) return;
+    currentUrl = location.href;
+    scanToken += 1;
+    clearWarning();
+    void scan(currentUrl);
+  }
+
+  if (runtimeAvailable()) {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.type === "TAB_ASSESSMENT_UPDATED") {
+        if (Number.isFinite(message.warningThreshold)) warningThreshold = message.warningThreshold;
+        if (typeof message.websiteProtection === "boolean") websiteProtection = message.websiteProtection;
+        showWarning(message.entry);
+      }
+      if (message?.type === "PROTECTION_STATE_CHANGED") {
+        protectionEnabled = message.enabled === true;
+        websiteProtection = message.websiteProtection !== false;
+        if (Number.isFinite(message.warningThreshold)) warningThreshold = message.warningThreshold;
+        if (!protectionEnabled || !websiteProtection) clearWarning();
+        else void scan(location.href, true);
+      }
+    });
+    chrome.storage.onChanged.addListener((changes) => {
+      if (changes.protectionEnabled) protectionEnabled = changes.protectionEnabled.newValue === true;
+      if (changes.websiteProtection) websiteProtection = changes.websiteProtection.newValue !== false;
+      if (changes.warningThreshold && Number.isFinite(changes.warningThreshold.newValue)) warningThreshold = changes.warningThreshold.newValue;
+      if (!protectionEnabled || !websiteProtection) clearWarning();
+      else if (changes.warningThreshold || changes.websiteProtection || changes.protectionEnabled) void scan(location.href);
+    });
+  }
+
+  addEventListener("popstate", detectNavigation);
+  addEventListener("hashchange", detectNavigation);
+  setInterval(detectNavigation, 1000);
+  void initialize();
 })();

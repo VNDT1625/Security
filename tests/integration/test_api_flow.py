@@ -166,7 +166,7 @@ def test_pro_message_analysis_requires_paid_plan():
     assert r.status_code == 403
 
 
-def test_demo_pro_account_can_request_pro_message_analysis():
+def test_demo_free_account_cannot_request_pro_message_analysis():
     login = client.post(
         "/v1/auth/login",
         json={"email": "demo@aisec.local", "password": "Demo@123456"},
@@ -182,7 +182,22 @@ def test_demo_pro_account_can_request_pro_message_analysis():
             "metadata": {"analysis_depth": "pro"},
         },
     )
-    assert r.status_code == 200
+    assert r.status_code == 403
+
+
+def test_demo_free_account_cannot_request_pro_url_analysis():
+    login = client.post(
+        "/v1/auth/login",
+        json={"email": "demo@aisec.local", "password": "Demo@123456"},
+    )
+    assert login.status_code == 200
+    token = login.json()["token"]
+    r = client.post(
+        "/v1/demo/url/analyze",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"url": "https://example.com", "ai_context": "on"},
+    )
+    assert r.status_code == 403
 
 
 def test_gmail_status_is_safe_when_oauth_is_not_configured():

@@ -11,6 +11,7 @@ files:
   - package.json
 win:
   executableName: PrewiseArmor
+  icon: ../web/public/prewise-icon-512.png
   requestedExecutionLevel: asInvoker
   signtoolOptions:
     signingHashAlgorithms:

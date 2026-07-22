@@ -293,4 +293,4 @@ For issues or questions:
 
 ## License
 
-Part of AI Security Armor project. See main README for license information.
+Part of the Prewise project. See main README for license information.

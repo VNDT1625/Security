@@ -25,7 +25,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { getApiClient } from "@/lib/api";
-import type { ChatMessageModel, ChatRequest } from "@/lib/types";
+import type { ChatMessageModel, ChatRequest, LegalContext } from "@/lib/types";
 
 /** Ngữ cảnh nội dung đang xét kèm theo câu hỏi (tùy chọn). */
 export type ChatContext = ChatRequest["context"];
@@ -38,7 +38,7 @@ export interface UseChatSessionResult {
     /** Toàn bộ tin nhắn theo thứ tự thời gian (user + assistant). */
     messages: ChatMessageModel[];
     /** Gửi một câu hỏi kèm ngữ cảnh tùy chọn; bỏ qua nếu rỗng sau trim. */
-    sendMessage: (text: string, context?: ChatContext) => Promise<void>;
+    sendMessage: (text: string, context?: ChatContext, legalContext?: LegalContext) => Promise<void>;
     /** True trong khi đang nhận luồng phản hồi. */
     isStreaming: boolean;
     /** Thông báo lỗi tiếng Việt, hoặc null khi không có lỗi. */
@@ -72,6 +72,7 @@ export function useChatSession(): UseChatSessionResult {
     const lastRequestRef = useRef<{
         question: string;
         context?: ChatContext;
+        legalContext?: LegalContext;
     } | null>(null);
 
     /**
@@ -82,7 +83,7 @@ export function useChatSession(): UseChatSessionResult {
      * `messages` hiện tại thông qua functional update để tránh stale closure.
      */
     const runStream = useCallback(
-        async (question: string, context?: ChatContext): Promise<void> => {
+        async (question: string, context?: ChatContext, legalContext?: LegalContext): Promise<void> => {
             const assistantId = createMessageId("assistant");
 
             // Tạo placeholder assistant; đồng thời chụp history hiện có.
@@ -106,6 +107,7 @@ export function useChatSession(): UseChatSessionResult {
                 const stream = api.openChatStream({
                     question,
                     context,
+                    legal_context: legalContext,
                     history,
                 });
 
@@ -125,12 +127,12 @@ export function useChatSession(): UseChatSessionResult {
 
                 // Giá trị trả về của generator là ChatFinal (kèm assessment).
                 const final = result.value;
-                if (final && final.assessment) {
-                    const assessment = final.assessment;
+                if (final && (final.assessment || final.legalAnswer)) {
                     setMessages((prev) =>
                         prev.map((msg) =>
                             msg.id === assistantId
-                                ? { ...msg, assessment }
+                                ? { ...msg, assessment: final.assessment,
+                                    legalAnswer: final.legalAnswer }
                                 : msg,
                         ),
                     );
@@ -146,7 +148,7 @@ export function useChatSession(): UseChatSessionResult {
     );
 
     const sendMessage = useCallback(
-        async (text: string, context?: ChatContext): Promise<void> => {
+        async (text: string, context?: ChatContext, legalContext?: LegalContext): Promise<void> => {
             const question = text.trim();
             // Bỏ qua câu hỏi rỗng sau trim: không thêm bong bóng user (8.1/8.4).
             if (question.length === 0) {
@@ -161,9 +163,9 @@ export function useChatSession(): UseChatSessionResult {
                 createdAt: Date.now(),
             };
             setMessages((prev) => [...prev, userMessage]);
-            lastRequestRef.current = { question, context };
+            lastRequestRef.current = { question, context, legalContext };
 
-            await runStream(question, context);
+            await runStream(question, context, legalContext);
         },
         [runStream],
     );
@@ -174,7 +176,7 @@ export function useChatSession(): UseChatSessionResult {
             return;
         }
         // Gửi lại câu hỏi gần nhất mà KHÔNG thêm bong bóng user mới.
-        await runStream(last.question, last.context);
+        await runStream(last.question, last.context, last.legalContext);
     }, [runStream]);
 
     return { messages, sendMessage, isStreaming, error, retryLast };

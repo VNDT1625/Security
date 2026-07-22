@@ -13,10 +13,14 @@
   </header>
 
   <main>
-    <p id="privacy-note" class="privacy">Khi bật, URL và email đang mở được gửi tới Gateway đã cấu hình để phân tích.</p>
+    <p id="privacy-note" class="privacy">Extension tự quét nền. Chỉ kết quả vượt ngưỡng cảnh báo mới được hiển thị trên website hoặc email liên quan.</p>
 
     <section id="disabled" class="empty" hidden>
-      <div class="empty-icon">🛡️</div><h2>Bảo vệ đang tắt</h2><p>Bật công tắc phía trên để kiểm tra trang và cảnh báo liên kết nguy hiểm.</p>
+      <div class="empty-icon">🛡️</div><h2>Bảo vệ đang tắt</h2><p>Bật công tắc phía trên để tự kiểm tra website và email đang mở.</p>
+    </section>
+
+    <section id="monitoring" class="empty" hidden>
+      <div class="empty-icon">✓</div><h2 id="monitor-title">Không phát hiện rủi ro vượt ngưỡng</h2><p><strong id="monitor-hostname"></strong><br><span id="monitor-scan-time"></span><br><span id="monitor-detail">Extension tiếp tục bảo vệ âm thầm trong nền.</span></p>
     </section>
 
     <section id="loading" class="loading-card" aria-live="polite">

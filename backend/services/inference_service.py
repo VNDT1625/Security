@@ -36,6 +36,7 @@ from security.domain_intelligence import domain_intelligence_service
 from security.email_message_parser import parse_email_bytes
 from security.exe_sandbox import ExeSandboxRunner
 from security.ip_intelligence import ip_intelligence_service
+from security.legal_rag import LocalLegalRAG
 from security.misp_adapter import collect_misp
 from security.policy_engine import PolicyEngine, score_to_level
 from security.risk_core import PolicyEngineV2, default_config
@@ -76,6 +77,7 @@ from shared.schemas import (
     AssessResponse,
     Decision,
     Evidence,
+    LegalEvidenceStatus,
     Modality,
     RiskCoreTrace,
     Severity,
@@ -160,10 +162,12 @@ class InferenceService:
         policy: PolicyEngine | None = None,
         adapter_registry: AdapterRegistry | None = None,
         adapter_max_risk_contribution: float = 0.25,
+        legal_rag: LocalLegalRAG | None = None,
     ):
         self.engine = engine or InferenceEngine()
         self.policy = policy or PolicyEngine()
         self.adapter_registry = adapter_registry
+        self.legal_rag = legal_rag or LocalLegalRAG()
         self.adapter_max_risk_contribution = max(
             0.0, min(0.5, adapter_max_risk_contribution)
         )
@@ -474,12 +478,12 @@ class InferenceService:
     ) -> AssessResponse:
         """Blend a completed, structured AI context result into a URL score.
 
-        The configured value is bounded to 40%.  Low-confidence AI results use
+        The configured value is bounded to 100%. Low-confidence AI results use
         proportionally less than the configured share, and an existing Risk Core
         block threshold can never be diluted below 60/100.
         """
 
-        configured_weight = max(0, min(40, int(weight_percent)))
+        configured_weight = max(0, min(100, int(weight_percent)))
         trace = response.contextual_analysis
         if configured_weight == 0 or trace is None:
             return response
@@ -532,6 +536,13 @@ class InferenceService:
         sandbox_reports: tuple[tuple[object, bool], ...] = (),
         context_ai_mode: Literal["off", "shadow", "active"] = "shadow",
     ) -> AssessResponse:
+        # Direct service consumers (including MCP) receive the same product
+        # policy result without DNS, threat-intelligence, model, or sandbox work.
+        from shared.trusted_popular_domains import trusted_popular_assessment
+
+        trusted_result = trusted_popular_assessment(url)
+        if trusted_result is not None:
+            return trusted_result
         t0 = time.perf_counter()
         metadata = dict(metadata or {})
         cache_material = url if not context else f"{url}\n{context}"
@@ -1392,19 +1403,80 @@ class InferenceService:
         )
         eff = self.policy.effective_action_score(action_type, base, data_types)
         level = score_to_level(eff)
+        confidence = self._confidence(eff, evidence, "policy-action")
+
+        legal_status = "unavailable"
+        legal_evidence_status = LegalEvidenceStatus.INSUFFICIENT_BASIS
+        legal_review_required = True
+        legal_reason = "Không đánh giá được căn cứ pháp lý cục bộ; cần người dùng rà soát."
+        legal_references = []
+        try:
+            legal = self.legal_rag.assess_action(
+                action_type,
+                data_types,
+                available_assets=agent_context.available_assets,
+                user_intent=agent_context.user_intent or "",
+                planned_action=agent_context.planned_action or "",
+            )
+            legal_status = legal.status
+            legal_evidence_status = LegalEvidenceStatus(legal.evidence_status)
+            legal_review_required = legal.requires_review
+            legal_reason = legal.reason
+            legal_references = [item.model_dump() for item in legal.references]
+            for item in legal.references[:4]:
+                page_label = (
+                    f"tr. {item.page_start}"
+                    if item.page_start == item.page_end
+                    else f"tr. {item.page_start}-{item.page_end}"
+                )
+                evidence.append(
+                    Evidence(
+                        source="legal_rag",
+                        evidence_id=item.chunk_id,
+                        category=item.legal_weight,
+                        feature="official_legal_reference",
+                        message=(
+                            f"Căn cứ cần đối chiếu: {item.title} "
+                            f"({item.document_number}), {page_label}; trạng thái {item.status}."
+                        ),
+                        severity=Severity.INFO,
+                        contribution=0.0,
+                    )
+                )
+        except Exception as exc:
+            legal_status = "unavailable"
+            legal_evidence_status = LegalEvidenceStatus.INSUFFICIENT_BASIS
+            legal_review_required = True
+            legal_references = []
+            legal_reason = (
+                "Tầng RAG pháp lý không khả dụng "
+                f"({type(exc).__name__}); không được mặc định hành động là tuân thủ."
+            )
+
+        # Legal retrieval may only make the gate more conservative. It never
+        # lowers a technical decision or directly changes the numerical risk score.
+        if legal_review_required and decision in {Decision.ALLOW, Decision.WARN}:
+            decision = Decision.ASK_USER_CONFIRMATION
+
         rid = str(uuid.uuid4())
         summary = self._safe_summary(decision, action_type, data_types)
+        if legal_reason:
+            summary = f"{summary} {legal_reason}"
         return AgentRiskResponse(
             decision=decision,
             verdict=decision,
             risk_level=level,
             risk_score=round(eff, 4),
-            confidence=self._confidence(eff, evidence, "policy-action"),
+            confidence=confidence,
             safe_summary=summary,
             reasoning=summary,
             evidence=evidence,
             recommended_agent_behavior=self.policy.recommend_behavior(decision, agent_context),
             requires_user_confirmation=decision == Decision.ASK_USER_CONFIRMATION,
+            legal_rag_status=legal_status,
+            legal_evidence_status=legal_evidence_status,
+            legal_review_required=legal_review_required,
+            legal_references=legal_references,
             request_id=rid,
         )
 

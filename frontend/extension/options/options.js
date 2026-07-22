@@ -1,7 +1,129 @@
-const $=id=>document.getElementById(id);const DEFAULT="http://localhost:8000";const normalized=()=>$("gateway").value.trim().replace(/\/$/,"");function showAccount(a){const el=$("account-info");if(!a?.valid){el.hidden=true;return}el.hidden=false;const limit=a.quota.dailyScanLimit>=999999?"Không giới hạn":a.quota.dailyScanLimit;el.textContent=`${a.user.displayName} · ${a.user.email} · Gói ${a.plan.label} · Đã dùng ${a.quota.usedToday}/${limit} lượt hôm nay`;}
-async function send(message){return new Promise((resolve,reject)=>chrome.runtime.sendMessage(message,r=>{const e=chrome.runtime.lastError;e?reject(new Error(e.message)):resolve(r)}))}
-async function load(){const s=await chrome.storage.local.get({apiBaseUrl:DEFAULT,extensionApiKey:"",extensionActivation:null,linkProtection:true,gmailProtection:true});$("gateway").value=s.apiBaseUrl;$("api-key").value=s.extensionApiKey;$('link-protection').checked=s.linkProtection;$('gmail-protection').checked=s.gmailProtection;showAccount(s.extensionActivation)}
-$("verify-key").onclick=async()=>{const key=$("api-key").value.trim(),out=$("key-result");if(!key){out.className="hint bad";out.textContent="Vui lòng nhập API key.";return}if(!/^pw_live_[A-Za-z0-9_-]{30,}$/.test(key)||key.includes("*")||key.includes("•")){out.className="hint bad";out.textContent="Đây không phải secret key đầy đủ. Trên Web App hãy chọn ‘Tạo lại key’, xác nhận, rồi sao chép key mới ngay khi nó xuất hiện.";return}await chrome.storage.local.set({extensionApiKey:key,extensionActivation:null,protectionEnabled:false});out.className="hint";out.textContent="Đang xác minh…";try{const res=await send({type:"VERIFY_API_KEY"});if(res?.error)throw new Error(res.error.status===401?"Key không khớp dữ liệu máy chủ. Hãy tạo lại key trên Web App và sao chép secret mới ngay sau khi tạo.":res.error.message);out.className="hint ok";out.textContent="Xác minh thành công. Extension đã sẵn sàng để bật bảo vệ.";showAccount(res.activation)}catch(e){await chrome.storage.local.set({extensionActivation:null,protectionEnabled:false});out.className="hint bad";out.textContent=e.message;showAccount(null)}};
-$("save").onclick=async()=>{let url;try{url=new URL(normalized());if(!/^https?:$/.test(url.protocol))throw 0}catch{$("saved").textContent="Địa chỉ Gateway không hợp lệ.";return}await chrome.storage.local.set({apiBaseUrl:url.toString().replace(/\/$/,""),linkProtection:$("link-protection").checked,gmailProtection:$("gmail-protection").checked});$("saved").textContent="Đã lưu cài đặt.";setTimeout(()=>$("saved").textContent="",1800)};
-$("reset").onclick=async()=>{$("gateway").value=DEFAULT;$("api-key").value="";$("link-protection").checked=true;$("gmail-protection").checked=true;showAccount(null);await chrome.storage.local.set({extensionApiKey:"",extensionActivation:null,protectionEnabled:false})};
-$("test").onclick=async()=>{const out=$("test-result");out.className="hint";out.textContent="Đang kiểm tra…";const start=performance.now();try{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),4000);const res=await fetch(`${normalized()}/v1/health`,{signal:controller.signal});clearTimeout(timer);if(!res.ok)throw new Error(`HTTP ${res.status}`);out.className="hint ok";out.textContent=`Kết nối thành công (${Math.round(performance.now()-start)} ms).`}catch(e){out.className="hint bad";out.textContent=e.name==="AbortError"?"Gateway không phản hồi trong 4 giây.":`Không thể kết nối: ${e.message}`}};load();
+const $ = (id) => document.getElementById(id);
+const DEFAULT_GATEWAY = "http://localhost:8000";
+const DEFAULT_THRESHOLD = 60;
+const normalizedGateway = () => $("gateway").value.trim().replace(/\/$/, "");
+
+function showAccount(activation) {
+  const element = $("account-info");
+  if (!activation?.valid) { element.hidden = true; return; }
+  element.hidden = false;
+  const limit = activation.quota.dailyScanLimit >= 999999 ? "Không giới hạn" : activation.quota.dailyScanLimit;
+  element.textContent = `${activation.user.displayName} · ${activation.user.email} · Gói ${activation.plan.label} · Đã dùng ${activation.quota.usedToday}/${limit} lượt hôm nay`;
+}
+
+function showThreshold(value) { $("threshold-value").textContent = `${value}/100`; }
+
+async function send(message) {
+  return new Promise((resolve, reject) => chrome.runtime.sendMessage(message, (response) => {
+    const error = chrome.runtime.lastError;
+    error ? reject(new Error(error.message)) : resolve(response);
+  }));
+}
+
+async function load() {
+  const settings = await chrome.storage.local.get({
+    apiBaseUrl: DEFAULT_GATEWAY,
+    extensionApiKey: "",
+    extensionActivation: null,
+    websiteProtection: true,
+    gmailProtection: true,
+    warningThreshold: DEFAULT_THRESHOLD,
+  });
+  $("gateway").value = settings.apiBaseUrl;
+  $("api-key").value = settings.extensionApiKey;
+  $("website-protection").checked = settings.websiteProtection;
+  $("gmail-protection").checked = settings.gmailProtection;
+  $("warning-threshold").value = settings.warningThreshold;
+  showThreshold(settings.warningThreshold);
+  showAccount(settings.extensionActivation);
+}
+
+$("warning-threshold").addEventListener("input", (event) => showThreshold(event.target.value));
+
+$("verify-key").addEventListener("click", async () => {
+  const key = $("api-key").value.trim();
+  const output = $("key-result");
+  if (!key) { output.className = "hint bad"; output.textContent = "Vui lòng nhập API key."; return; }
+  if (!/^pw_live_[A-Za-z0-9_-]{30,}$/.test(key) || key.includes("*") || key.includes("•")) {
+    output.className = "hint bad";
+    output.textContent = "Đây không phải secret key đầy đủ. Trên Web App hãy chọn ‘Tạo lại key’, xác nhận, rồi sao chép key mới ngay khi nó xuất hiện.";
+    return;
+  }
+  await chrome.storage.local.set({ extensionApiKey: key, extensionActivation: null, protectionEnabled: false });
+  output.className = "hint";
+  output.textContent = "Đang xác minh…";
+  try {
+    const response = await send({ type: "VERIFY_API_KEY" });
+    if (response?.error) throw new Error(response.error.status === 401
+      ? "Key không khớp dữ liệu máy chủ. Hãy tạo lại key trên Web App và sao chép secret mới ngay sau khi tạo."
+      : response.error.message);
+    output.className = "hint ok";
+    output.textContent = "Xác minh thành công. Extension đã sẵn sàng để bật bảo vệ.";
+    showAccount(response.activation);
+  } catch (error) {
+    await chrome.storage.local.set({ extensionActivation: null, protectionEnabled: false });
+    output.className = "hint bad";
+    output.textContent = error.message;
+    showAccount(null);
+  }
+});
+
+$("save").addEventListener("click", async () => {
+  let gateway;
+  try {
+    gateway = new URL(normalizedGateway());
+    if (!/^https?:$/.test(gateway.protocol)) throw new Error("invalid_protocol");
+  } catch {
+    $("saved").textContent = "Địa chỉ Gateway không hợp lệ.";
+    return;
+  }
+  await chrome.storage.local.set({
+    apiBaseUrl: gateway.toString().replace(/\/$/, ""),
+    websiteProtection: $("website-protection").checked,
+    gmailProtection: $("gmail-protection").checked,
+    warningThreshold: Number($("warning-threshold").value),
+  });
+  $("saved").textContent = "Đã lưu. Các tab đang mở sẽ dùng cấu hình mới.";
+  setTimeout(() => { $("saved").textContent = ""; }, 2200);
+});
+
+$("reset").addEventListener("click", async () => {
+  $("gateway").value = DEFAULT_GATEWAY;
+  $("api-key").value = "";
+  $("website-protection").checked = true;
+  $("gmail-protection").checked = true;
+  $("warning-threshold").value = DEFAULT_THRESHOLD;
+  showThreshold(DEFAULT_THRESHOLD);
+  showAccount(null);
+  await chrome.storage.local.set({
+    apiBaseUrl: DEFAULT_GATEWAY,
+    extensionApiKey: "",
+    extensionActivation: null,
+    protectionEnabled: false,
+    websiteProtection: true,
+    gmailProtection: true,
+    warningThreshold: DEFAULT_THRESHOLD,
+  });
+  $("saved").textContent = "Đã khôi phục mặc định và tắt bảo vệ.";
+});
+
+$("test").addEventListener("click", async () => {
+  const output = $("test-result");
+  output.className = "hint";
+  output.textContent = "Đang kiểm tra…";
+  const startedAt = performance.now();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    const response = await fetch(`${normalizedGateway()}/v1/health`, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    output.className = "hint ok";
+    output.textContent = `Kết nối thành công (${Math.round(performance.now() - startedAt)} ms).`;
+  } catch (error) {
+    output.className = "hint bad";
+    output.textContent = error.name === "AbortError" ? "Gateway không phản hồi trong 4 giây." : `Không thể kết nối: ${error.message}`;
+  }
+});
+
+void load();

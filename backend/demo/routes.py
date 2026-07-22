@@ -59,7 +59,11 @@ from backend.demo.models import (
 from backend.demo.sandbox import sandbox_runner
 from backend.demo.simulator import attack_simulator
 from backend.demo.websocket import connection_manager
-from backend.dependencies import get_deepfake_service, get_inference_service
+from backend.dependencies import (
+    get_deepfake_service,
+    get_inference_service,
+    get_user_inference_service,
+)
 from backend.models import AssessmentCache
 from backend.routers.auth import (
     BearerCredentials,
@@ -68,7 +72,7 @@ from backend.routers.auth import (
 )
 from backend.security_utils import input_sha256, utcnow
 from backend.services.ai_context_weight_service import (
-    get_ai_context_weight_percent,
+    get_effective_ai_context_weight_percent,
     get_url_assessment_cache_enabled,
 )
 from backend.services.quota_service import (
@@ -77,6 +81,7 @@ from backend.services.quota_service import (
     reserve_deep_scan_quota,
     reserve_scan_quota,
 )
+from backend.services.scan_log_service import log_assessment
 from security.domain_intelligence import domain_intelligence_service
 from security.risk_core import default_config
 from security.url_risk_core import assess_url as assess_url_risk
@@ -90,18 +95,23 @@ inference_service = get_inference_service()
 _DEMO_URL_CACHE_VERSION = default_config().rules_version
 
 
-def _demo_url_cache_key(payload: URLAnalysisRequest, ai_weight_percent: int) -> str:
+def _demo_url_cache_key(
+    payload: URLAnalysisRequest,
+    ai_weight_percent: int,
+    service=None,
+) -> str:
     """Hash all response-shaping inputs without storing operator context in a key."""
 
     material = "\n".join(
         (
             _DEMO_URL_CACHE_VERSION,
+            "request-id-v1",
             payload.url,
             str(bool(payload.deep_analysis)),
             str(bool(payload.advanced_analysis)),
             payload.ai_context,
             str(ai_weight_percent),
-            inference_service.adapter_cache_token,
+            (service or inference_service).adapter_cache_token,
         )
     )
     return f"demo-url:{input_sha256(material)}"
@@ -249,12 +259,25 @@ async def analyze_url(
     """
     start_time = time.time()
     actor = resolve_actor(credentials, db, request)
+    user_inference_service = get_user_inference_service(
+        db, actor.user.id if actor.user else None
+    )
     plan = build_actor_plan_info(db, actor)
+
+    if payload.ai_context == "on" and plan.tier == "free":
+        raise HTTPException(
+            status_code=403,
+            detail="Chế độ Pro AI yêu cầu gói Pro hoặc cao hơn.",
+        )
 
     # Validate URL
     _validate_url(payload.url)
 
-    ai_weight_percent = get_ai_context_weight_percent(db)
+    ai_weight_percent = get_effective_ai_context_weight_percent(
+        db,
+        user_id=actor.user.id if actor.user else None,
+        plan_tier=plan.tier,
+    )
     cache_enabled = get_url_assessment_cache_enabled(
         db,
         default=settings.shared_assessment_cache_enabled,
@@ -264,12 +287,13 @@ async def analyze_url(
     # scans, where the response is derived only from the URL and global policy.
     cache_eligible = (
         cache_enabled
+        and actor.user is None
         and not payload.force_rescan
         and not payload.llm_context
         and not payload.deep_analysis
         and not payload.advanced_analysis
     )
-    cache_key = _demo_url_cache_key(payload, ai_weight_percent)
+    cache_key = _demo_url_cache_key(payload, ai_weight_percent, user_inference_service)
     if cache_eligible:
         cached = _load_demo_url_cache(db, cache_key)
         if cached is not None:
@@ -307,7 +331,7 @@ async def analyze_url(
     # have been collected. This prevents L3 evidence from becoming a separate,
     # incomparable score layered on top of Risk Core.
     production = await asyncio.to_thread(
-        inference_service.assess_url,
+        user_inference_service.assess_url,
         payload.url,
         payload.llm_context or "",
         sandbox_reports=sandbox_sources,
@@ -335,7 +359,7 @@ async def analyze_url(
                 prefer_browser=True,
             )
             production = await asyncio.to_thread(
-                inference_service.assess_url,
+                user_inference_service.assess_url,
                 payload.url,
                 payload.llm_context or "",
                 sandbox_reports=sandbox_sources,
@@ -349,12 +373,12 @@ async def analyze_url(
         and bool(payload.llm_context or sandbox_sources)
     )
     if use_context_ai:
-        reserved_ai = inference_service.context_ai_ready(AdapterTask.WEB_CONTEXT)
+        reserved_ai = user_inference_service.context_ai_ready(AdapterTask.WEB_CONTEXT)
         if reserved_ai:
             reserve_ai_credits(db, actor, request, kind="evaluation")
         try:
             production = await asyncio.to_thread(
-                inference_service.evaluate_url_context,
+                user_inference_service.evaluate_url_context,
                 production,
                 payload.url,
                 payload.llm_context or "",
@@ -369,7 +393,7 @@ async def analyze_url(
             or production.contextual_analysis.status != AdapterRunStatus.COMPLETED
         ):
             refund_ai_credits(db, actor, request, kind="evaluation")
-        production = inference_service.apply_url_ai_context_weight(
+        production = user_inference_service.apply_url_ai_context_weight(
             production,
             ai_weight_percent,
         )
@@ -399,6 +423,7 @@ async def analyze_url(
         final_score,
     )
     response = URLAnalysisResponse(
+        request_id=production.request_id,
         url=payload.url, risk_score=final_score, threat_level=_map_risk_to_threat_level(final_score),
         analysis_time_ms=int((time.time() - start_time) * 1000),
         cache_hit=False,
@@ -453,6 +478,19 @@ async def analyze_url(
         response.analysis_time_ms = int((time.time() - start_time) * 1000)
     if cache_eligible and not run_sandbox:
         _store_demo_url_cache(db, cache_key, response)
+    log_assessment(
+        db,
+        result=production,
+        actor=actor,
+        request=request,
+        raw_input=payload.url,
+        normalized_url=payload.url,
+        metadata={
+            "source": "demo_url_analyze",
+            "analysis_depth": "advanced" if payload.advanced_analysis else "deep" if payload.deep_analysis else "quick",
+        },
+        retain_input_preview=False,
+    )
     return response
 
 

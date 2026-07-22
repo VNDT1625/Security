@@ -1,7 +1,7 @@
 [project]
-name = "ai-security-armor"
+name = "prewise"
 version = "0.1.0"
-description = "AI Security Armor for Agentic Workflows — Robust Risk Core + MCP Security Armor"
+description = "Prewise — risk control for web, messages, files and AI-agent workflows"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110.0",

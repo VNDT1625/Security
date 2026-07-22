@@ -1,7 +1,10 @@
 # AI Security Armor — Chrome Extension (Manifest V3)
 
-Primary client. Assesses the current page URL and Gmail emails via the local
-Security Gateway, shows a risk badge, and blocks risky link clicks.
+Primary browser protection client. It assesses every opened HTTP(S) page in the
+background and injects a compact top-of-page warning only when the score is
+above the configured threshold (60/100 by default). In Gmail it assesses only
+the currently opened message and performs a static quick scan of `.exe`
+attachments belonging to that message. Safe results do not add page UI.
 
 ## Package and validate
 
@@ -25,10 +28,12 @@ release signing guidance.
 
 ## Architecture
 
-- `background.js` — service worker; brokers all gateway calls, caches per-tab results,
-  updates the toolbar badge, degrades gracefully when the gateway is offline.
-- `content/page_scanner.js` — intercepts risky link clicks (Shadow-DOM toast, isolated CSS).
-- `content/gmail_scanner.js` — extracts the open email + sender, injects a risk banner.
+- `background.js` — service worker; brokers URL, email, and EXE quick-scan calls,
+  caches per-tab results, and degrades gracefully when the gateway is offline.
+- `content/page_scanner.js` — automatically assesses the current URL and injects
+  a non-modal Shadow-DOM warning at the top of risky pages.
+- `content/gmail_scanner.js` — extracts only the open email, assesses its text,
+  and scans `.exe` attachments without executing or externally sharing them.
 - `popup/` — shows the current tab's badge, reasons, and evidence.
 - `shared/risk.js` — single source of truth for the 0-100 color scale (mirrors web `lib/risk.ts`).
 - `shared/api.js` — gateway client (base URL configurable via `chrome.storage.local`).
@@ -36,7 +41,9 @@ release signing guidance.
 ## Manual test checklist (test-plan.md §7)
 
 - [ ] Load unpacked — no console errors.
-- [ ] Open a phishing sample page → badge turns red within ~2s.
-- [ ] Open a scam email in Gmail → risk banner appears above the body.
+- [ ] Open a phishing sample page → warning appears at the top without clicking the icon.
+- [ ] Open a safe page → no page UI is injected.
+- [ ] Open one scam email in Gmail → warning appears above that email only.
+- [ ] Open an email with a suspicious EXE → warning appears beside that attachment.
 - [ ] Click the icon → popup shows evidence, layout intact (Shadow DOM).
 - [ ] Stop the gateway → popup shows "offline", no crash.

@@ -48,6 +48,19 @@ URL_OVERRIDE_RULES = (
         "A document-looking filename resolves to an executable payload.",
     ),
     OverrideRule(
+        "url-unverified-payee-without-business-identity-v1",
+        frozenset(
+            {
+                "unverified_payment_recipient",
+                "missing_legal_identity",
+                "metadata_identity_mismatch",
+            }
+        ),
+        60.0,
+        "soft_block",
+        "The page requests payment to an unverified recipient, publishes no legal business identity, and presents inconsistent identity metadata.",
+    ),
+    OverrideRule(
         "url-brand-shared-hosting-lure-v1",
         frozenset(
             {

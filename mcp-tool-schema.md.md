@@ -3,6 +3,27 @@
 > JSON Schema chi tiết cho input/output của từng MCP tool, dùng cho AI agent
 > (ChatGPT/Claude) gọi trước khi thực hiện hành động.
 
+Mọi response hiện dùng envelope tương thích ngược với các trường chung:
+
+```json
+{
+  "schema_version": "1.0",
+  "ok": true,
+  "request_id": "uuid",
+  "verdict": "ALLOW | WARN | ASK_CONFIRM | BLOCK"
+}
+```
+
+Các tool EXE bổ sung:
+
+- `quick_scan_exe(path, share_with_provider=false)`: quét file trong `MCP_SANDBOX_DIR`.
+- `quick_scan_exe_content(filename, content_base64, share_with_provider=false)`: quét bytes từ client từ xa.
+- `get_exe_quick_scan_report(data_id)`: poll reputation provider, không trừ thêm quota scan.
+
+`share_with_provider=true` chỉ hợp lệ sau khi người dùng đồng ý rõ ràng và
+credential HTTP có scope `mcp:file:share_external`. Quick Scan không bao giờ
+thực thi file.
+
 ---
 
 ## Tool 1: `check_url_before_click`

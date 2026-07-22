@@ -346,7 +346,7 @@ export const ENGLISH_TRANSLATIONS: Record<string, string> = {
   "Không thể đổi mật khẩu": "Could not change password",
 
   "Bắt đầu miễn phí": "Start free",
-  "50 lượt phân tích/ngày": "50 analyses/day",
+  "1000 lượt phân tích/ngày": "1000 analyses/day",
   "URL, email và SMS": "URLs, emails, and SMS",
   "Lịch sử cục bộ": "Local history",
   "Lịch sử tài khoản": "Account history",

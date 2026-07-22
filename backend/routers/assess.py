@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from backend.config import settings
 from backend.db import get_db
-from backend.dependencies import get_inference_service
+from backend.dependencies import get_inference_service, get_user_inference_service
 from backend.middleware import sanitize_text
 from backend.models import AssessmentCache
 from backend.routers.auth import (
@@ -22,7 +22,7 @@ from backend.routers.auth import (
 )
 from backend.security_utils import input_sha256, utcnow
 from backend.services.ai_context_weight_service import (
-    get_ai_context_weight_percent,
+    get_effective_ai_context_weight_percent,
     get_url_assessment_cache_enabled,
 )
 from backend.services.exe_quick_scan_service import exe_quick_scan_service
@@ -56,6 +56,7 @@ from shared.schemas import (
     SandboxURLResponse,
     ScanPromptRequest,
 )
+from shared.trusted_popular_domains import trusted_popular_assessment
 
 router = APIRouter(prefix="/v1/assess", tags=["assess"])
 sandbox_runner = URLSandboxRunner()
@@ -168,11 +169,27 @@ def assess_url(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:url")
     url = sanitize_text(req.url)
     context = sanitize_text(req.context or "")
+    trusted_result = trusted_popular_assessment(url)
+    if trusted_result is not None:
+        log_assessment(
+            db,
+            result=trusted_result,
+            actor=actor,
+            request=request,
+            raw_input=url,
+            normalized_url=url,
+        )
+        return trusted_result
     plan = build_actor_plan_info(db, actor)
-    ai_context_weight_percent = get_ai_context_weight_percent(db)
+    ai_context_weight_percent = get_effective_ai_context_weight_percent(
+        db,
+        user_id=actor.user.id if actor.user else None,
+        plan_tier=plan.tier,
+    )
     cache_enabled = get_url_assessment_cache_enabled(
         db,
         default=settings.shared_assessment_cache_enabled,
@@ -185,6 +202,10 @@ def assess_url(
     cache_namespace = (
         f"{svc.adapter_cache_token}:{context_mode}:ai-weight={ai_context_weight_percent}"
     )
+    if actor.user is not None and context_mode != "off":
+        # Contextual responses may depend on a personal provider/key. Never let
+        # one account receive another account's cached AI-derived evidence.
+        cache_namespace += f":account={actor.user.id}"
     result = _cached_url_result(
         db,
         url,
@@ -243,6 +264,7 @@ def assess_phone(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:content")
     plan = build_actor_plan_info(db, actor)
     depth = _message_analysis_depth(req.metadata)
@@ -317,6 +339,7 @@ async def sandbox_url(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:url")
     reserve_scan_quota(db, actor, request)
     reserve_deep_scan_quota(db, actor, request)
@@ -335,6 +358,7 @@ async def browser_sandbox_url(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:url")
     reserve_scan_quota(db, actor, request)
     reserve_deep_scan_quota(db, actor, request)
@@ -353,6 +377,7 @@ def assess_text(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:content")
     plan = build_actor_plan_info(db, actor)
     depth = _message_analysis_depth(req.metadata)
@@ -404,6 +429,7 @@ async def assess_email_file(
     """Parse and assess an RFC822/MIME `.eml` upload with bounded inspection."""
 
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:content")
     filename = file.filename or "message.eml"
     if not filename.lower().endswith((".eml", ".rfc822")):
@@ -490,6 +516,7 @@ def assess_prompt(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:prompt")
     reserve_scan_quota(db, actor, request)
     content = sanitize_text(req.content)
@@ -507,6 +534,7 @@ def assess_action(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:action")
     reserve_scan_quota(db, actor, request)
     target = sanitize_text(req.target_url or req.target or "") or None
@@ -572,6 +600,7 @@ async def assess_file(
     svc: InferenceService = Depends(get_inference_service),
 ):
     actor = resolve_actor(credentials, db, request)
+    svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     require_api_key_scope(actor, "assess:file")
     reserve_scan_quota(db, actor, request)
     content_length = request.headers.get("content-length")

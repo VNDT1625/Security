@@ -13,6 +13,17 @@ _TEST_DATABASE_PATH = (
 ).resolve()
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DATABASE_PATH.as_posix()}"
 
+# Local OAuth credentials must not leak into tests that exercise the
+# unconfigured integration and production-default validation paths.
+for _name in (
+    "GMAIL_OAUTH_CLIENT_ID",
+    "GMAIL_OAUTH_CLIENT_SECRET",
+    "GMAIL_OAUTH_REDIRECT_URI",
+    "GMAIL_TOKEN_ENCRYPTION_KEYS",
+    "GMAIL_WEB_RETURN_URL",
+):
+    os.environ[_name] = ""
+
 from backend.config import settings  # noqa: E402  # env must be set before import
 
 
@@ -23,6 +34,7 @@ def isolate_runtime_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "anonymous_daily_scan_limit", 1_000_000)
     monkeypatch.setattr(settings, "anonymous_daily_ai_credit_limit", 1_000_000)
     monkeypatch.setattr(settings, "anonymous_daily_deep_scan_limit", 1_000_000)
+    monkeypatch.setattr(settings, "local_testing_unlimited", False)
     # Assessments must exercise the current model/policy, not a persistent result
     # left in .aisec-data/armor.db by an earlier local test run.
     monkeypatch.setattr(settings, "shared_assessment_cache_enabled", False)

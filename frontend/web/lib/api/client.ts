@@ -19,11 +19,17 @@ import type {
     ExeSandboxResult,
 
     ExeProviderResult,
+    FeedbackInput,
+    FeedbackReceipt,
     ChatChunk,
     ChatFinal,
     ChatRequest,
+    CreateReportShareInput,
+    CreatedReportShare,
     Credentials,
     PlanInfo,
+    QuotaInfo,
+    PublicReportShare,
     PhoneAssessResult,
     GmailMessagePreview,
     GmailMessageSummary,
@@ -33,8 +39,11 @@ import type {
     RegisterInput,
     SandboxResult,
     ScanRecord,
+    ScanRecordDetail,
     Session,
     UserProfile,
+    UserAISettings,
+    UserAISettingsInput,
 } from "@/lib/types";
 
 /**
@@ -97,8 +106,15 @@ export interface ApiClient {
     /** Đổi mật khẩu sau khi xác minh mật khẩu hiện tại. */
     changePassword(input: PasswordChangeInput): Promise<void>;
 
+    /** Cấu hình model/provider riêng của tài khoản hiện tại. */
+    getAISettings(): Promise<UserAISettings>;
+    updateAISettings(input: UserAISettingsInput): Promise<UserAISettings>;
+    testAISettings(): Promise<{ok: boolean; modelAvailable: boolean; modelsCount: number}>;
+
     /** Lấy thông tin gói hiện tại. */
     getPlan(): Promise<PlanInfo>;
+    /** Lấy quota thực tế do backend cưỡng chế cho tài khoản hiện tại. */
+    getQuota(): Promise<QuotaInfo>;
 
     /** Hủy gói trả phí hiện tại và trả về gói có hiệu lực mới. */
     cancelSubscription(): Promise<PlanInfo>;
@@ -106,11 +122,23 @@ export interface ApiClient {
     /** Lấy lịch sử các lần quét. */
     getScanHistory(): Promise<ScanRecord[]>;
 
+    getScanHistoryDetail(requestId: string): Promise<ScanRecordDetail>;
+
+    deleteScanHistory(requestId: string): Promise<{deleted: number}>;
+
+    clearScanHistory(): Promise<{deleted: number}>;
+
     /** Lấy API/MCP key hiện tại. */
     getApiKey(): Promise<ApiKeyInfo>;
 
     /** Tạo lại (rotate) API/MCP key; trả về key mới. */
     rotateApiKey(): Promise<ApiKeyInfo>;
+
+    /** Gửi phản hồi có cấu trúc cho một kết quả phân tích. */
+    submitFeedback(input: FeedbackInput): Promise<FeedbackReceipt>;
+    createReportShare(input: CreateReportShareInput): Promise<CreatedReportShare>;
+    getPublicReportShare(token: string): Promise<PublicReportShare>;
+    revokeReportShare(shareId: string): Promise<void>;
 }
 
 /** Chế độ API được cấu hình qua `NEXT_PUBLIC_API_MODE`. */

@@ -5,9 +5,18 @@ from __future__ import annotations
 import base64
 import binascii
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _is_https_or_loopback(url: str) -> bool:
+    """Allow plain HTTP only when the endpoint cannot leave this machine."""
+    parsed = urlsplit(url)
+    return bool(parsed.hostname) and (parsed.scheme == "https" or (
+        parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    ))
 
 
 class Settings(BaseSettings):
@@ -16,6 +25,13 @@ class Settings(BaseSettings):
 
     model_dir: str = "ai/models"
     deepfake_model_path: str = "ai/models/deepfake_image_q4.onnx"
+    # Explanation provider selection. ``adapter`` uses the project's trained
+    # LoRA server, ``local`` uses a user-controlled OpenAI-compatible/Ollama
+    # server, and ``endpoint`` uses an external OpenAI-compatible API.
+    # ``auto`` preserves the historic LLM_BASE_URL -> Ollama fallback behavior.
+    llm_provider: Literal["auto", "adapter", "local", "endpoint"] = "auto"
+    # External endpoint settings. They are intentionally separate from local
+    # settings so an API key can never be sent to a local model by accident.
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
@@ -145,10 +161,11 @@ class Settings(BaseSettings):
     api_key_last_used_write_interval_seconds: int = 300
 
     api_key: str = "dev-key-change-in-production"
+    local_testing_unlimited: bool = False
     rate_limit_per_min: int = 60
-    anonymous_daily_scan_limit: int = 50
+    anonymous_daily_scan_limit: int = 1000
     anonymous_daily_ai_credit_limit: int = 5
-    anonymous_daily_deep_scan_limit: int = 1
+    anonymous_daily_deep_scan_limit: int = 100
     max_upload_bytes: int = 10 * 1024 * 1024
 
     # Quick EXE Lab analysis. Local PE inspection is always available. Hash
@@ -176,16 +193,34 @@ class Settings(BaseSettings):
     sepay_account_name: str = ""
     sepay_qr_base_url: str = "https://vietqr.app/img"
     sepay_payment_expiry_minutes: int = 30
-    sandbox_credit_price_vnd: int = 15000
+    sandbox_credit_price_vnd: int = 5000
     sandbox_session_minutes: int = 10
 
-    # Disposable Windows EC2 + browser remote desktop URL supplied by the AMI.
+    # Optional Cloudflare Email Sending REST integration for release notices.
+    cloudflare_account_id: str = ""
+    cloudflare_api_token: str = ""
+    prewise_email_from: str = ""
+    release_email_timeout_seconds: float = 10.0
+    release_email_max_attempts: int = 3
+    release_unsubscribe_base_url: str = "https://api.prewise.site/v1/waitlist/unsubscribe"
+    password_reset_web_url: str = "https://www.prewise.site/auth"
+
+    # Disposable Windows EC2.  The legacy security group is intentionally the
+    # agent-only/no-inbound group used by automatic detonation.  Interactive
+    # sessions require a separate AMI and security group so enabling a browser
+    # desktop never widens the attack surface of automatic workers.
     aws_region: str = "ap-southeast-1"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_session_token: str = ""
     aws_sandbox_ami_id: str = ""
-    aws_sandbox_instance_type: str = "t3.large"
+    aws_sandbox_instance_type: str = "m7i-flex.large"
     aws_sandbox_max_ami_id: str = ""
     aws_sandbox_max_instance_type: str = "g4dn.xlarge"
     aws_sandbox_subnet_id: str = ""
+    # Development/demo escape hatch for subnets without NAT. Production must
+    # keep workers private and provide controlled outbound egress instead.
+    aws_sandbox_associate_public_ip: bool = False
     free_sandbox_remote_url: str = ""
     free_sandbox_daily_minutes: int = 10
     pro_sandbox_session_minutes: int = 15
@@ -193,6 +228,26 @@ class Settings(BaseSettings):
     aws_sandbox_security_group_id: str = ""
     aws_sandbox_key_name: str = ""
     aws_sandbox_remote_port: int = 8443
+    aws_sandbox_interactive_ami_id: str = ""
+    aws_sandbox_interactive_max_ami_id: str = ""
+    aws_sandbox_interactive_instance_type: str = "m7i-flex.large"
+    aws_sandbox_interactive_max_instance_type: str = "g4dn.xlarge"
+    aws_sandbox_interactive_security_group_id: str = ""
+    # A remote target is accepted only from this administrator-controlled HTTPS
+    # broker template or from the explicit EC2 tag below.  It is never inferred
+    # from a public IP/DNS name. Supported template fields: session_id,
+    # instance_id.  The target is stored without credentials; a browser URL is
+    # issued later with an opaque, one-time access token.
+    sandbox_remote_broker_url_template: str = ""
+    aws_sandbox_remote_url_tag: str = ""
+    sandbox_remote_broker_secret: str = ""
+    # Dedicated, credential-free endpoint used by release preflight.  It must
+    # describe the Prewise broker adapter, not the Guacamole/DCV desktop URL.
+    sandbox_remote_broker_health_url: str = ""
+    sandbox_remote_access_token_ttl_seconds: int = 60
+    sandbox_agent_report_grace_seconds: int = 15
+    sandbox_agent_bootstrap_timeout_seconds: int = 120
+    sandbox_cloud_provision_timeout_minutes: int = 10
     sandbox_public_base_url: str = ""
     sandbox_sample_storage_path: str = ".aisec-data/cloud-sandbox-samples"
     sandbox_sample_retention_hours: int = 24
@@ -202,6 +257,8 @@ class Settings(BaseSettings):
     mcp_api_key_rate_limit_per_min: int = 120
     mcp_anonymous_rate_limit_per_min: int = 10
     mcp_public_url: str = "https://api.prewise.site"
+    mcp_allowed_hosts: str = ""
+    mcp_allowed_origins: str = ""
     mcp_oauth_access_token_minutes: int = 30
     mcp_oauth_refresh_token_days: int = 90
 
@@ -224,6 +281,10 @@ class Settings(BaseSettings):
         # the literal Origin header "null" for requests to the Core API.
         "null",
     ]
+    # Chromium Private Network Access (PNA) is required when the local web UI
+    # calls a backend bound to localhost. Keep disabled by default so a public
+    # production origin cannot opt into private-network requests accidentally.
+    cors_allow_private_network: bool = False
 
     @model_validator(mode="after")
     def validate_production_safety(self) -> Settings:
@@ -250,8 +311,38 @@ class Settings(BaseSettings):
             unsafe.append("MCP_API_KEY_RATE_LIMIT_PER_MIN>0")
         if self.llm_base_url and not self.llm_api_key:
             unsafe.append("LLM_API_KEY when LLM_BASE_URL is configured")
+        if self.llm_provider == "endpoint" and not _is_https_or_loopback(self.llm_base_url):
+            unsafe.append(
+                "LLM_BASE_URL=https://... (or http://127.0.0.1/... for a local router) "
+                "when LLM_PROVIDER=endpoint"
+            )
         if self.adapter_base_url and not (self.adapter_api_key or self.llm_api_key):
             unsafe.append("ADAPTER_API_KEY when ADAPTER_BASE_URL is configured")
+        release_email_values = (
+            self.cloudflare_account_id,
+            self.cloudflare_api_token,
+            self.prewise_email_from,
+        )
+        if any(release_email_values) and not all(release_email_values):
+            unsafe.append(
+                "all CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN and PREWISE_EMAIL_FROM values"
+            )
+        if self.prewise_email_from and (
+            "@" not in self.prewise_email_from
+            or self.prewise_email_from.startswith("@")
+            or self.prewise_email_from.endswith("@")
+        ):
+            unsafe.append("PREWISE_EMAIL_FROM=valid sender address")
+        unsubscribe = urlsplit(self.release_unsubscribe_base_url)
+        if unsubscribe.scheme != "https" or not unsubscribe.hostname:
+            unsafe.append("RELEASE_UNSUBSCRIBE_BASE_URL=https://...")
+        reset_page = urlsplit(self.password_reset_web_url)
+        if reset_page.scheme != "https" or not reset_page.hostname:
+            unsafe.append("PASSWORD_RESET_WEB_URL=https://...")
+        if not 1 <= self.release_email_max_attempts <= 5:
+            unsafe.append("RELEASE_EMAIL_MAX_ATTEMPTS between 1 and 5")
+        if not 1 <= self.release_email_timeout_seconds <= 30:
+            unsafe.append("RELEASE_EMAIL_TIMEOUT_SECONDS between 1 and 30")
         gmail_values = (
             self.gmail_oauth_client_id,
             self.gmail_oauth_client_secret,
@@ -296,6 +387,57 @@ class Settings(BaseSettings):
                 "AWS_SANDBOX_AMI_ID, AWS_SANDBOX_SUBNET_ID and "
                 "AWS_SANDBOX_SECURITY_GROUP_ID"
             )
+        interactive_values = (
+            self.aws_sandbox_interactive_ami_id,
+            self.aws_sandbox_interactive_security_group_id,
+            self.sandbox_remote_broker_url_template or self.aws_sandbox_remote_url_tag,
+            self.sandbox_remote_broker_secret,
+            self.sandbox_remote_broker_health_url,
+        )
+        if any(interactive_values) and not all(interactive_values):
+            unsafe.append(
+                "AWS_SANDBOX_INTERACTIVE_AMI_ID, "
+                "AWS_SANDBOX_INTERACTIVE_SECURITY_GROUP_ID, a remote broker URL "
+                "source, SANDBOX_REMOTE_BROKER_SECRET, and "
+                "SANDBOX_REMOTE_BROKER_HEALTH_URL"
+            )
+        if self.sandbox_remote_broker_url_template and not _is_https_or_loopback(
+            self.sandbox_remote_broker_url_template
+        ):
+            unsafe.append("SANDBOX_REMOTE_BROKER_URL_TEMPLATE=https://...")
+        if self.sandbox_public_base_url:
+            callback = urlsplit(self.sandbox_public_base_url)
+            if callback.scheme != "https" or not callback.hostname:
+                unsafe.append("SANDBOX_PUBLIC_BASE_URL=https://...")
+        if self.sandbox_remote_broker_secret and len(
+            self.sandbox_remote_broker_secret.encode("utf-8")
+        ) < 32:
+            unsafe.append("SANDBOX_REMOTE_BROKER_SECRET>=32 bytes")
+        if self.sandbox_remote_broker_health_url:
+            broker_health = urlsplit(self.sandbox_remote_broker_health_url)
+            if (
+                broker_health.scheme != "https"
+                or not broker_health.hostname
+                or broker_health.username
+                or broker_health.password
+                or broker_health.query
+                or broker_health.fragment
+            ):
+                unsafe.append(
+                    "SANDBOX_REMOTE_BROKER_HEALTH_URL=credential-free HTTPS URL"
+                )
+            elif broker_health.hostname.lower().endswith(".trycloudflare.com"):
+                unsafe.append(
+                    "SANDBOX_REMOTE_BROKER_HEALTH_URL=stable managed hostname"
+                )
+        if not 15 <= self.sandbox_remote_access_token_ttl_seconds <= 300:
+            unsafe.append("SANDBOX_REMOTE_ACCESS_TOKEN_TTL_SECONDS between 15 and 300")
+        if not 5 <= self.sandbox_agent_report_grace_seconds <= 30:
+            unsafe.append("SANDBOX_AGENT_REPORT_GRACE_SECONDS between 5 and 30")
+        if not 30 <= self.sandbox_agent_bootstrap_timeout_seconds <= 300:
+            unsafe.append("SANDBOX_AGENT_BOOTSTRAP_TIMEOUT_SECONDS between 30 and 300")
+        if not 2 <= self.sandbox_cloud_provision_timeout_minutes <= 30:
+            unsafe.append("SANDBOX_CLOUD_PROVISION_TIMEOUT_MINUTES between 2 and 30")
         if self.misp_enabled and (
             not self.misp_base_url.startswith("https://") or not self.misp_api_key
         ):

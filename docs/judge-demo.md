@@ -1,40 +1,57 @@
-# Kịch bản demo cho ban giám khảo
+# Kịch bản trình diễn Prewise cho ban giám khảo
 
-Mở `http://127.0.0.1:3001/demo` sau khi backend và web đã chạy.
+## Mục tiêu
 
-## Đề tài 1: Deepfake & Phishing Detection
+Chứng minh Prewise là lớp kiểm soát rủi ro trước khi người dùng hoặc AI agent hành động. Trình diễn dùng luồng sản phẩm thật; không có route `/demo` riêng.
 
-1. Chọn `Giả mạo Facebook` và bấm `Chạy so sánh A/B`.
-2. Giải thích cột Trước: blacklist tĩnh không biết URL mới nên cho phép.
-3. Giải thích cột Sau: Armor phân tích tên miền, subdomain, từ khóa và model URL; URL bị chặn kèm risk score và evidence.
-4. Chọn `URL an toàn` và chạy lại để chứng minh hệ thống không chặn nhầm mọi URL.
+## Chuẩn bị trước khi trình diễn
 
-### Ảnh AI-generated / deepfake tĩnh
+1. Khởi động backend tại `http://127.0.0.1:8000` và web tại `http://127.0.0.1:3000`.
+2. Mở `http://127.0.0.1:3000/analyze`.
+3. Kiểm tra backend đã nạp model trước khi bắt đầu. Chuẩn bị sẵn một video/screenshot dự phòng của cùng luồng.
 
-1. Bấm `Dùng ảnh AI demo có sẵn` hoặc tải một ảnh PNG/JPG/WebP.
-2. Cột Trước chỉ xác nhận file hợp lệ nên vẫn cho phép.
-3. Cột Sau chạy model ViT ONNX cục bộ và hiển thị xác suất `REAL/FAKE`, evidence, latency và verdict.
+## Phần 1 — URL nguy hiểm (khoảng 75 giây)
 
-Phạm vi phải được trình bày chính xác: model sàng lọc ảnh tĩnh và tập trung dấu vết ảnh AI-generated. Dự án chưa phân tích video/audio, không bao phủ mọi kỹ thuật face-swap và không coi kết quả model là bằng chứng pháp y tuyệt đối.
+1. Chọn **Website / URL** và dán mẫu phishing được phép trong bộ demo cục bộ.
+2. Bấm **Phân tích nội dung**.
+3. Trình bày quyết định `WARN` hoặc `BLOCK`, risk score và các evidence như domain giả mạo, typo-squatting, homoglyph, HTTP hoặc credential lure.
+4. Mở chi tiết các lớp kiểm tra để giải thích rằng Prewise không chỉ trả một nhãn: hệ thống phân biệt lớp đã chạy, bị bỏ qua và không khả dụng.
 
-## Đề tài 2: AI Security & Robustness
+## Phần 2 — URL an toàn (khoảng 45 giây)
 
-### Prompt injection
+1. Quay lại `/analyze` và dán URL an toàn đã xác minh trong bộ demo.
+2. Chạy cùng mức phân tích.
+3. Đối chiếu kết quả để chứng minh Prewise không chặn mọi URL có từ khóa nhạy cảm.
 
-1. Chọn `Đánh cắp system prompt` và bấm `Chạy so sánh A/B`.
-2. Cột Trước cho thấy chatbot sandbox nhận payload, lộ `ARMOR-CANARY-2026` và yêu cầu một tool call giả lập.
-3. Cột Sau cho thấy cùng payload bị chặn trước chatbot, không lộ canary, kèm model version và evidence.
-4. Chọn `Câu hỏi an toàn` để chứng minh prompt hợp lệ vẫn được phép đi qua.
+## Phần 3 — Local Shield → Windows Cloud Lab (khoảng 90 giây)
 
-Canary và tool call chỉ tồn tại trong sandbox; không dùng secret, dữ liệu hoặc kết nối tới hệ thống thật.
+1. Trong ứng dụng Desktop, chọn một EXE thử nghiệm do đội sở hữu. Chỉ ra SHA-256,
+   chữ ký Authenticode và việc file chưa được chạy.
+2. Chọn **Auto Analyze**. Trình bày cây tiến trình, file trong vùng giám sát,
+   registry persistence và network theo PID; kết thúc bằng trạng thái VM đã được
+   hủy, không chỉ “đã gửi yêu cầu hủy”.
+3. Với một lượt khác, chọn **Interactive Investigate · 5 phút**. Nhấn mạnh mẫu
+   chỉ được stage, không tự chạy; đồng hồ bắt đầu sau `ready` và desktop chỉ mở
+   sau one-time handshake với private broker.
+4. Dừng phiên và chỉ ra chuỗi `termination_requested → terminating → terminated`.
 
-### Bảo vệ dữ liệu huấn luyện
+Nếu Interactive AMI/broker chưa được cấu hình, không dùng màn hình giả. Hiển thị
+trạng thái fail-visible và chuyển sang video dự phòng của chính build đã kiểm thử.
 
-1. Chọn `Đảo nhãn phishing`, sau đó bấm `Kiểm tra dataset`.
-2. Cột Trước nhận toàn bộ dataset nên còn một bản ghi độc trong tập huấn luyện.
-3. Cột Sau đối chiếu nhãn với phishing score và cách ly bản ghi mâu thuẫn.
-4. Chạy lại với `Instruction injection` để trình bày dữ liệu có chỉ dẫn độc hại bị chặn trước training pipeline.
+## Phần 4 — Bảo vệ AI agent (khoảng 60 giây)
 
-## Thông điệp kết luận
+1. Chạy MCP server trên máy cục bộ và gọi `scan_prompt_injection` với payload prompt injection nằm trong bộ mẫu được phép.
+2. Trình bày evidence và policy quyết định trước khi agent được phép ghi memory, dùng tool hoặc thực hiện hành động nhạy cảm.
+3. Chạy một prompt an toàn để đối chiếu. Không sử dụng secret, dữ liệu cá nhân hoặc kết nối tới hệ thống bên thứ ba.
 
-Armor không thay thế chatbot hoặc mô hình nghiệp vụ. Nó là security gateway đứng trước người dùng, LLM, công cụ agent và pipeline huấn luyện để phân tích, đưa bằng chứng và áp policy `ALLOW/WARN/BLOCK`.
+## Thông điệp kết thúc
+
+Prewise không thay thế mô hình nghiệp vụ hoặc người dùng. Nó tập hợp bằng chứng, công khai mức độ chắc chắn và áp policy `ALLOW/WARN/BLOCK` trước khi một hành động rủi ro diễn ra.
+
+## Giới hạn phải nêu rõ
+
+- Kết quả URL là đánh giá rủi ro, không phải kết luận pháp y.
+- Các nguồn ngoài hoặc sandbox không khả dụng sẽ được hiển thị là chưa kiểm tra, không bị coi là an toàn.
+- Auto và Interactive chỉ chạy mẫu do đội sở hữu/được phép; không tải hoặc phát tán malware thật trong phần thi.
+- “Interactive desktop” chỉ được tuyên bố đã vận hành khi AMI và private broker đã qua một ca end-to-end; code/UI một mình chưa phải bằng chứng hạ tầng.
+- Sàng lọc ảnh AI-generated chỉ hỗ trợ ảnh và frame video; không phân tích audio hoặc tính nhất quán chuyển động.

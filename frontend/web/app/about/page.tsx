@@ -12,9 +12,9 @@ import type { Metadata } from "next";
  */
 
 export const metadata: Metadata = {
-    title: "Về chúng tôi — AI Security Armor",
+    title: "Về chúng tôi — Prewise",
     description:
-        "Vì sao chúng tôi xây AI Security Armor: khi phishing không chỉ nhắm vào con người mà còn nhắm vào AI agent. Prompt injection chính là phishing dành cho AI.",
+        "Vì sao chúng tôi xây Prewise: khi phishing không chỉ nhắm vào con người mà còn nhắm vào AI agent. Prompt injection chính là phishing dành cho AI.",
 };
 
 interface TeamMember {
@@ -40,27 +40,27 @@ const TECH_STACK: string[] = [
 
 export default function AboutPage() {
     return (
-        <main className="mx-auto max-w-5xl px-6 py-16">
+        <main className="mx-auto w-full max-w-5xl overflow-hidden px-4 py-10 sm:px-6 sm:py-16">
             {/* Hero / Intro — "Vì sao chúng tôi xây sản phẩm này" */}
             <section className="text-center">
                 <p className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
                     Về chúng tôi
                 </p>
-                <h1 className="mt-3 text-3xl font-bold tracking-tight text-neutral-900 sm:text-4xl">
+                <h1 className="mt-3 text-3xl font-bold leading-tight tracking-tight text-neutral-900 sm:text-4xl">
                     Vì sao chúng tôi xây sản phẩm này
                 </h1>
-                <div className="mx-auto mt-6 max-w-2xl space-y-4 text-lg text-neutral-600">
+                <div className="mx-auto mt-5 max-w-2xl space-y-4 text-base leading-7 text-neutral-600 sm:mt-6 sm:text-lg">
                     <p>
                         Trong nhiều năm, phishing nhắm vào con người: những email giả mạo,
                         đường link đánh cắp thông tin đăng nhập. Giờ đây, khi các AI agent
                         thay chúng ta đọc email, truy cập URL và tự động hành động, kẻ tấn
                         công chuyển hướng nhắm thẳng vào chính những AI agent đó.
                     </p>
-                    <p className="text-xl font-semibold text-neutral-900">
+                    <p className="text-lg font-semibold text-neutral-900 sm:text-xl">
                         “Prompt injection = phishing dành cho AI.”
                     </p>
                     <p>
-                        Chúng tôi xây AI Security Armor để trở thành lá chắn giữa nội dung
+                        Chúng tôi xây Prewise để trở thành lớp kiểm soát giữa nội dung
                         độc hại và các quy trình AI — đánh giá rủi ro tức thì, luôn kèm bằng
                         chứng minh bạch, để cả con người lẫn AI agent đều ra quyết định an
                         toàn hơn.
@@ -69,7 +69,7 @@ export default function AboutPage() {
             </section>
 
             {/* Threat model — sơ đồ minh họa bằng JSX/CSS */}
-            <section className="mt-20">
+            <section className="mt-14 sm:mt-20">
                 <h2 className="text-center text-2xl font-bold tracking-tight text-neutral-900">
                     Mô hình mối đe dọa
                 </h2>
@@ -78,9 +78,9 @@ export default function AboutPage() {
                     con người và AI agent.
                 </p>
 
-                <div className="mt-10 flex flex-col items-center gap-6 md:flex-row md:justify-center">
+                <div className="mt-8 flex flex-col items-center gap-4 sm:mt-10 sm:gap-6 md:flex-row md:justify-center">
                     {/* Attacker */}
-                    <div className="flex flex-col items-center rounded-xl border border-risk-danger-border bg-risk-danger-bg px-6 py-5 text-center">
+                    <div className="flex w-full max-w-xs flex-col items-center rounded-xl border border-risk-danger-border bg-risk-danger-bg px-6 py-5 text-center">
                         <span className="text-3xl" aria-hidden="true">
                             🕵️
                         </span>
@@ -94,14 +94,14 @@ export default function AboutPage() {
 
                     {/* Mũi tên */}
                     <span
-                        className="text-2xl text-neutral-400"
+                        className="rotate-90 text-2xl text-neutral-400 md:rotate-0"
                         aria-hidden="true"
                     >
                         →
                     </span>
 
                     {/* Email / URL */}
-                    <div className="flex flex-col items-center rounded-xl border border-risk-warn-border bg-risk-warn-bg px-6 py-5 text-center">
+                    <div className="flex w-full max-w-xs flex-col items-center rounded-xl border border-risk-warn-border bg-risk-warn-bg px-6 py-5 text-center">
                         <span className="text-3xl" aria-hidden="true">
                             ✉️
                         </span>
@@ -115,14 +115,14 @@ export default function AboutPage() {
 
                     {/* Mũi tên tách nhánh */}
                     <span
-                        className="text-2xl text-neutral-400"
+                        className="rotate-90 text-2xl text-neutral-400 md:rotate-0"
                         aria-hidden="true"
                     >
                         →
                     </span>
 
                     {/* Mục tiêu: Người và AI Agent */}
-                    <div className="flex flex-col gap-4">
+                    <div className="flex w-full max-w-xs flex-col gap-4">
                         <div className="flex flex-col items-center rounded-xl border border-neutral-300 bg-neutral-50 px-6 py-4 text-center">
                             <span className="text-2xl" aria-hidden="true">
                                 🧑
@@ -144,15 +144,15 @@ export default function AboutPage() {
             </section>
 
             {/* Đội ngũ */}
-            <section className="mt-20">
+            <section className="mt-14 sm:mt-20">
                 <h2 className="text-center text-2xl font-bold tracking-tight text-neutral-900">
                     Đội ngũ
                 </h2>
-                <div className="mt-10 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="mt-8 grid grid-cols-1 gap-4 sm:mt-10 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
                     {TEAM.map((member) => (
                         <div
                             key={member.name}
-                            className="flex flex-col items-center rounded-xl border border-neutral-200 bg-white p-6 text-center shadow-sm"
+                            className="flex flex-col items-center rounded-xl border border-neutral-200 bg-white p-5 text-center shadow-sm sm:p-6"
                         >
                             <div
                                 className="flex h-16 w-16 items-center justify-center rounded-full bg-neutral-100 text-xl font-semibold text-neutral-600"
@@ -172,7 +172,7 @@ export default function AboutPage() {
             </section>
 
             {/* Công nghệ */}
-            <section className="mt-20">
+            <section className="mt-14 sm:mt-20">
                 <h2 className="text-center text-2xl font-bold tracking-tight text-neutral-900">
                     Công nghệ
                 </h2>
@@ -192,7 +192,7 @@ export default function AboutPage() {
                 <div className="mt-10 text-center">
                     <a
                         href="/analyze"
-                        className="inline-flex items-center justify-center rounded-lg bg-neutral-900 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-neutral-700"
+                        className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-neutral-900 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-neutral-700 sm:w-auto"
                     >
                         Mở demo kỹ thuật
                     </a>

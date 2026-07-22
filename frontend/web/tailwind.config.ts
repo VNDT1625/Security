@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 /**
- * TailwindCSS config cho Web App UI — AI Security Armor.
+ * TailwindCSS config cho Web App UI — Prewise.
  *
  * Design token màu rủi ro theo thang chuẩn (khớp wireframe & Extension badge):
  *   - safe   (Xanh)  : điểm 0–39   → "AN TOÀN"

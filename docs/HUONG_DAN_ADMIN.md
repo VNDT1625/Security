@@ -139,9 +139,9 @@ URL Model
 ### Bước 5: Kiểm tra mô hình mới
 
 ```bash
-# Test với demo page
-# Vào http://localhost:3000/demo
-# Thử các URL/prompts mới để xem mô hình hoạt động
+# Test với luồng sản phẩm thật
+# Vào http://localhost:3000/analyze
+# Thử URL, email hoặc SMS mới để xem mô hình hoạt động
 ```
 
 ## Chạy Training Từ Command Line

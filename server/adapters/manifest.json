@@ -1,0 +1,21 @@
+{
+  "schema_version": "1",
+  "base_model": "admin-configured-openai-compatible",
+  "context_length": 16384,
+  "adapters": [
+    {
+      "adapter_id": "openai-compatible-message-context",
+      "task": "message-context-adapter",
+      "runtime": "openai_compatible",
+      "served_model_name": "admin-configured-model",
+      "priority": 10
+    },
+    {
+      "adapter_id": "openai-compatible-web-context",
+      "task": "web-context-adapter",
+      "runtime": "openai_compatible",
+      "served_model_name": "admin-configured-model",
+      "priority": 10
+    }
+  ]
+}

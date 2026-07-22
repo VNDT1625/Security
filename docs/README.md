@@ -4,6 +4,7 @@
 - [Live URL sandbox](./url-sandbox.md)
 - [Advanced browser sandbox](./browser-sandbox.md)
 - [Quick EXE Lab](./exe-quick-scan.md)
+- [Windows Cloud Lab: Auto Analyze, Interactive Investigate và SePay](./sandbox-cloud-billing.md)
 - [Account authentication](./authentication.md)
 - [Portable local deployment](./portable-local-deployment.md)
 - [PostgreSQL production design](./postgresql-production-design.md)

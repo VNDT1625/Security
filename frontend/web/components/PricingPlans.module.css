@@ -1,0 +1,63 @@
+.plans {
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .plans :global(.billing-toggle) {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .plans :global(.billing-toggle button) {
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 10px;
+    white-space: normal;
+  }
+
+  .plans :global(.billing-toggle small) {
+    display: block;
+    margin-top: 3px;
+  }
+
+  .plans :global(.pricing-grid) {
+    margin-top: 28px;
+  }
+
+  .plans :global(.pricing-grid article) {
+    min-width: 0;
+    min-height: 0;
+    padding: 22px 18px;
+  }
+
+  .plans :global(.pricing-grid article > em) {
+    position: static;
+    width: max-content;
+    margin: 0 0 12px auto;
+  }
+
+  .plans :global(.plan-price) {
+    margin-block: 34px 12px;
+  }
+
+  .plans :global(.plan-price strong) {
+    font-size: clamp(30px, 11vw, 44px);
+    overflow-wrap: anywhere;
+  }
+
+  .plans :global(.pricing-grid li) {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr);
+    line-height: 1.55;
+  }
+
+  .plans :global(.pricing-grid li i) {
+    margin-right: 0;
+  }
+
+  .plans :global(.pricing-grid article > a) {
+    min-height: 44px;
+    align-items: center;
+  }
+}

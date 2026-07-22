@@ -12,6 +12,7 @@ from security.risk_core.detectors import (
     add_http_sandbox,
     build_criteria_evidence,
 )
+from security.risk_core.url_overrides import URL_OVERRIDE_RULES
 from security.scan_history import LocalScanHistory
 from shared.schemas import (
     BrowserSandboxURLResponse,
@@ -123,6 +124,50 @@ def test_password_form_with_cross_origin_submission_still_blocks():
 
     assert by_id[29].status == CriterionStatus.MALICIOUS
     assert result.risk_score >= 60
+
+
+def test_unverified_payee_without_business_identity_soft_blocks():
+    report = SandboxURLResponse(
+        ok=True,
+        execution_status="completed",
+        url="https://event.example.test",
+        page_signals={
+            "is_commercial": True,
+            "payment_recipient_hints": ["STK: 123456789012"],
+        },
+        issues=[
+            SandboxIssue(
+                code="unverified_payment_recipient",
+                severity=Severity.CRITICAL,
+                category="content",
+                message="A payment recipient is shown without a legal identity to compare.",
+            ),
+            SandboxIssue(
+                code="missing_legal_identity",
+                severity=Severity.HIGH,
+                category="content",
+                message="Commercial page has no public legal business identity.",
+            ),
+            SandboxIssue(
+                code="metadata_identity_mismatch",
+                severity=Severity.MEDIUM,
+                category="content",
+                message="Title and og:site_name have no shared identity token.",
+            ),
+        ],
+    )
+    observations = ScanObservations(report.url)
+    add_http_sandbox(observations, report)
+    config = default_config()
+    result = assess(
+        build_criteria_evidence(observations, config),
+        config=config,
+        override_rules=URL_OVERRIDE_RULES,
+    )
+
+    assert result.risk_score >= 60
+    assert result.effective_override is not None
+    assert result.effective_override.rule_id == "url-unverified-payee-without-business-identity-v1"
 
 
 def test_advanced_scan_completes_requested_criteria_without_fabricating_clean(tmp_path):

@@ -25,11 +25,13 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
 import ChatMessage from "@/components/ChatMessage";
 import { useAuth } from "@/context/AuthContext";
 import { useChatSession, type ChatContext } from "@/hooks/useChatSession";
 import { looksLikeUrl } from "@/lib/quick-scan";
+import type { LegalContext } from "@/lib/types";
 
 /** Nội dung bong bóng chào mừng của trợ lý (UI_wireframe §1.5). */
 const WELCOME_TEXT =
@@ -45,22 +47,34 @@ const QUOTA_EXCEEDED_TEXT =
 export default function ChatPage(): JSX.Element {
     const { messages, sendMessage, isStreaming, error, retryLast } =
         useChatSession();
-    const { quota, session } = useAuth();
+    const { quota, quotaInfo, refreshQuota, session } = useAuth();
 
     // Nội dung ô nhập (controlled) + thông báo hết quota (client-side).
     const [input, setInput] = useState("");
     const [quotaBlocked, setQuotaBlocked] = useState(false);
     const [activeContext, setActiveContext] = useState<ChatContext | null>(null);
+    const [legalMode, setLegalMode] = useState(false);
+    const [legalContext, setLegalContext] = useState<LegalContext>({
+        jurisdiction: "VN",
+        as_of_date: new Date().toISOString().slice(0, 10),
+        actor: "",
+        action: "",
+        data_or_asset: "",
+    });
 
     // Vùng cuộn danh sách tin nhắn — tự cuộn tới tin mới nhất.
     const scrollRef = useRef<HTMLDivElement | null>(null);
+    const emlInputRef = useRef<HTMLInputElement | null>(null);
 
     // Số lượt còn lại + giới hạn theo gói hiện tại (∞ cho pro/team).
-    const remaining = quota.getRemaining();
-    const limit = quota.getLimitForPlan();
-    const remainingLabel = Number.isFinite(remaining)
-        ? `${remaining}/${limit}`
-        : "∞";
+    const remaining = quotaInfo?.remaining ?? quota.getRemaining();
+    const limit = quotaInfo?.dailyScanLimit ?? quota.getLimitForPlan();
+    const remainingLabel = limit >= 999_999
+        ? "∞"
+        : `${remaining}/${limit}`;
+    const aiLimit = quotaInfo?.aiCreditDailyLimit ?? session?.plan.aiCreditDailyLimit ?? 5;
+    const aiRemaining = quotaInfo?.aiRemaining ?? aiLimit;
+    const aiRemainingLabel = aiLimit >= 999_999 ? "∞" : `${aiRemaining}/${aiLimit}`;
 
     // Có ít nhất một kết quả đánh giá từ assistant → hiện CTA cài Extension.
     const hasAssessment = useMemo(
@@ -87,7 +101,7 @@ export default function ChatPage(): JSX.Element {
     }, [messages]);
 
     /** Gửi câu hỏi hiện tại: chặn rỗng, kiểm tra quota, dựng context. */
-    function handleSend(): void {
+    async function handleSend(): Promise<void> {
         const question = input.trim();
 
         // (Req 8.4) Câu hỏi rỗng sau trim → không gửi.
@@ -95,48 +109,52 @@ export default function ChatPage(): JSX.Element {
             return;
         }
 
-        const startsNewAssessment =
+        const startsNewAssessment = !legalMode && (
             activeContext === null ||
             looksLikeUrl(question) ||
             question.length > 240 ||
-            question.includes("\n");
+            question.includes("\n"));
 
         // Chỉ nội dung mới tiêu thụ scan. Câu hỏi tiếp nối tái sử dụng assessment.
-        if (startsNewAssessment && !quota.canScan()) {
+        if (startsNewAssessment && remaining <= 0) {
             setQuotaBlocked(true);
             return;
         }
 
         // Dựng context từ đầu vào: url nếu trông giống URL, ngược lại email —
         // để trợ lý trả về đánh giá đúng đối tượng (chat có ngữ cảnh).
-        const context: ChatContext = startsNewAssessment
+        const context: ChatContext | undefined = legalMode ? undefined : startsNewAssessment
             ? {
                 content: question,
                 modality: looksLikeUrl(question) ? "url" : "email",
             }
-            : activeContext;
+            : (activeContext ?? undefined);
 
         if (startsNewAssessment) {
-            quota.consume();
+            if (quotaInfo === null) quota.consume();
             setActiveContext(context);
         }
         setQuotaBlocked(false);
         setInput("");
-        void sendMessage(question, context);
+        try {
+            await sendMessage(question, context, legalMode ? legalContext : undefined);
+        } finally {
+            await refreshQuota();
+        }
     }
 
     /** Gửi bằng Enter (Shift+Enter để xuống dòng). */
     function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>): void {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            handleSend();
+            void handleSend();
         }
     }
 
     const showWelcome = messages.length === 0;
 
     return (
-        <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl flex-col px-4 py-6">
+        <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-3xl min-w-0 flex-col px-3 py-3 pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-6 sm:pb-6">
             {/* Danh sách hội thoại (cuộn) */}
             <div
                 ref={scrollRef}
@@ -170,12 +188,12 @@ export default function ChatPage(): JSX.Element {
                 {hasAssessment && (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                         💡 Muốn được bảo vệ tự động khi duyệt web?{" "}
-                        <button
-                            type="button"
+                        <Link
+                            href="/downloads"
                             className="font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-950"
                         >
                             Cài Extension
-                        </button>
+                        </Link>
                     </div>
                 )}
             </div>
@@ -184,7 +202,7 @@ export default function ChatPage(): JSX.Element {
             {error && (
                 <div
                     role="alert"
-                    className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700"
+                    className="mb-3 flex flex-col items-stretch justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 sm:flex-row sm:items-center"
                 >
                     <span>⚠ {error}</span>
                     <button
@@ -192,7 +210,7 @@ export default function ChatPage(): JSX.Element {
                         onClick={() => {
                             void retryLast();
                         }}
-                        className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1 font-medium text-red-700 hover:bg-red-100"
+                        className="min-h-11 shrink-0 rounded-md border border-red-300 bg-white px-3 py-2 font-medium text-red-700 hover:bg-red-100"
                     >
                         Thử lại
                     </button>
@@ -217,38 +235,78 @@ export default function ChatPage(): JSX.Element {
 
             {/* Ô nhập cố định dưới cùng */}
             <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-                <div className="flex items-end gap-2">
+                <label className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <input type="checkbox" checked={legalMode}
+                        onChange={(event) => setLegalMode(event.target.checked)} />
+                    ⚖ Câu hỏi pháp luật
+                </label>
+                {legalMode && (
+                    <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-blue-100 bg-blue-50 p-3 sm:grid-cols-2">
+                        <input value={legalContext.jurisdiction} aria-label="Quốc gia"
+                            onChange={(e) => setLegalContext({ ...legalContext, jurisdiction: e.target.value })}
+                            placeholder="Quốc gia (VN)" className="rounded border px-3 py-2 text-sm text-gray-800" />
+                        <input type="date" value={legalContext.as_of_date} aria-label="Ngày áp dụng"
+                            onChange={(e) => setLegalContext({ ...legalContext, as_of_date: e.target.value })}
+                            className="rounded border px-3 py-2 text-sm text-gray-800" />
+                        <input value={legalContext.actor} aria-label="Chủ thể"
+                            onChange={(e) => setLegalContext({ ...legalContext, actor: e.target.value })}
+                            placeholder="Chủ thể, ví dụ: doanh nghiệp" className="rounded border px-3 py-2 text-sm text-gray-800" />
+                        <input value={legalContext.action} aria-label="Hành động"
+                            onChange={(e) => setLegalContext({ ...legalContext, action: e.target.value })}
+                            placeholder="Hành động cần đánh giá" className="rounded border px-3 py-2 text-sm text-gray-800" />
+                        <input value={legalContext.data_or_asset} aria-label="Dữ liệu hoặc tài sản"
+                            onChange={(e) => setLegalContext({ ...legalContext, data_or_asset: e.target.value })}
+                            placeholder="Dữ liệu/tài sản liên quan" className="rounded border px-3 py-2 text-sm text-gray-800 sm:col-span-2" />
+                    </div>
+                )}
+                <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-end">
                     <textarea
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
                         rows={2}
-                        placeholder="Dán URL hoặc nội dung email..."
+                        placeholder={legalMode ? "Nhập câu hỏi pháp luật..." : "Dán URL hoặc nội dung email..."}
                         aria-label="Nội dung cần đánh giá"
-                        className="flex-1 resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
+                        className="min-h-11 min-w-0 flex-1 resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
                     />
                     <button
                         type="button"
-                        onClick={handleSend}
+                        onClick={() => void handleSend()}
                         disabled={isStreaming || input.trim().length === 0}
-                        className="shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="min-h-11 shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         Gửi ▶
                     </button>
                 </div>
 
-                <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-                    {/* Affordance tải file .eml (trang trí — chưa xử lý upload) */}
+                <div className="mt-2 flex flex-col items-stretch justify-between gap-2 text-xs text-gray-500 sm:flex-row sm:items-center">
+                    <input
+                        ref={emlInputRef}
+                        type="file"
+                        accept=".eml,message/rfc822"
+                        className="hidden"
+                        aria-hidden="true"
+                        onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            void file.text().then((raw) => {
+                                setLegalMode(false);
+                                setInput(raw.slice(0, 200_000));
+                            });
+                            event.target.value = "";
+                        }}
+                    />
                     <button
                         type="button"
-                        className="rounded-md px-2 py-1 text-gray-500 hover:bg-gray-100"
+                        onClick={() => emlInputRef.current?.click()}
+                        className="min-h-11 rounded-md px-2 py-2 text-left text-gray-500 hover:bg-gray-100"
                         aria-label="Tải file .eml"
                     >
                         📎 Tải file .eml
                     </button>
 
                     {/* Quota còn lại hôm nay theo gói (∞ cho pro/team) */}
-                    <span title="Nội dung mới dùng 1 scan; AI Evaluate và AI Explain là hai lần gọi riêng.">Core: {remainingLabel} scan · AI: {session?.plan.aiCreditDailyLimit ?? 5} credit/ngày</span>
+                    <span className="break-words" title="Nội dung mới dùng 1 scan; AI Evaluate và AI Explain là hai lần gọi riêng.">Core: {remainingLabel} scan · AI: {aiRemainingLabel} credit</span>
                 </div>
             </div>
         </div>

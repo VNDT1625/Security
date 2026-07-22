@@ -26,6 +26,7 @@ from backend.services.integration_status_service import integration_status
 from backend.services.operational_maintenance_service import (
     normalized_scan_history_retention_days,
 )
+from backend.services.release_email_service import email_configured
 from security.attachment_security import clamav_ready
 from shared.schemas import HealthResponse
 
@@ -49,6 +50,12 @@ def health(
         "configured": expl.configured,
         "ready": expl.available,
         "model": expl.model,
+        "provider": expl.provider,
+        "external_data_contract": (
+            "harness_and_allowlisted_assessment_context_only"
+            if expl.provider == "endpoint"
+            else "not_applicable"
+        ),
         "last_error": expl.last_error,
     }
     model_status["context_adapters"] = adapters.status()
@@ -64,6 +71,10 @@ def health(
         "scan_history_retention_days": normalized_scan_history_retention_days(),
         "maintenance_scheduler_enabled": settings.operational_maintenance_scheduler_enabled,
         "maintenance_interval_minutes": max(5, settings.operational_maintenance_interval_minutes),
+    }
+    model_status["release_notifications"] = {
+        "configured": email_configured(),
+        "provider": "cloudflare_email_sending",
     }
     model_status["integrations"] = integration_status(
         settings,

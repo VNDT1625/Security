@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -24,6 +25,40 @@ from backend.security_utils import utcnow
 
 def uuid_str() -> str:
     return str(uuid.uuid4())
+
+
+class ProductWaitlistEntry(Base):
+    """A release notification subscription for one public product."""
+
+    __tablename__ = "product_waitlist_entries"
+    __table_args__ = (
+        UniqueConstraint("email", "product", name="uq_waitlist_email_product"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    email: Mapped[str] = mapped_column(String(320), index=True, nullable=False)
+    product: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    created_at: Mapped[object] = mapped_column(DateTime, default=utcnow, nullable=False)
+    unsubscribed_at: Mapped[object | None] = mapped_column(DateTime)
+    notified_at: Mapped[object | None] = mapped_column(DateTime)
+
+
+class ProductRelease(Base):
+    """A validated public download manifest published by an administrator."""
+
+    __tablename__ = "product_releases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    product: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    download_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature_note: Mapped[str | None] = mapped_column(String(500))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    published_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    published_at: Mapped[object] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
 class User(Base):
@@ -62,6 +97,65 @@ class SystemSetting(Base):
     updated_by_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    updated_at: Mapped[object] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class LLMProviderSetting(Base):
+    """Encrypted OpenAI-compatible provider configuration managed by admins."""
+
+    __tablename__ = "llm_provider_settings"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="default")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="auto")
+    base_url: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    api_key_ciphertext: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    allowed_user_providers: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=lambda: ["auto", "adapter", "local", "endpoint"]
+    )
+    allowed_user_models: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    updated_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    updated_at: Mapped[object] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class UserLLMProviderSetting(Base):
+    """Encrypted AI provider preference owned by one user account."""
+
+    __tablename__ = "user_llm_provider_settings"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="auto")
+    base_url: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    api_key_ciphertext: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[object] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class UserAIContextSetting(Base):
+    """Per-account AI scoring preference constrained by the global policy."""
+
+    __tablename__ = "user_ai_context_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "weight_percent >= 0 AND weight_percent <= 100",
+            name="ck_user_ai_context_weight_percent",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    weight_percent: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[object] = mapped_column(
         DateTime, default=utcnow, onupdate=utcnow, nullable=False
     )
@@ -329,6 +423,21 @@ class ScanEvidence(Base):
     scan_event: Mapped[ScanEvent] = relationship(back_populates="evidence")
 
 
+class ReportShare(Base):
+    """Revocable, expiring public view of a strictly redacted scan snapshot."""
+
+    __tablename__ = "report_shares"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    scan_event_id: Mapped[str] = mapped_column(ForeignKey("scan_events.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    expires_at: Mapped[object] = mapped_column(DateTime, index=True, nullable=False)
+    revoked_at: Mapped[object | None] = mapped_column(DateTime, index=True)
+    created_at: Mapped[object] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
 class AssessmentCache(Base):
     __tablename__ = "assessment_cache"
 
@@ -454,10 +563,15 @@ class CloudSandboxSession(Base):
     status: Mapped[str] = mapped_column(String(24), default="provisioning", index=True, nullable=False)
     provider: Mapped[str] = mapped_column(String(24), default="aws", nullable=False)
     sandbox_tier: Mapped[str] = mapped_column(String(24), default="pro", index=True, nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), default="auto", index=True, nullable=False)
+    lease_minutes: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     provider_instance_id: Mapped[str | None] = mapped_column(String(100), unique=True)
     remote_url: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     agent_token_hash: Mapped[str | None] = mapped_column(String(64))
+    remote_access_token_hash: Mapped[str | None] = mapped_column(String(64))
+    remote_access_token_expires_at: Mapped[object | None] = mapped_column(DateTime)
+    remote_access_token_used_at: Mapped[object | None] = mapped_column(DateTime)
     sample_filename: Mapped[str | None] = mapped_column(String(260))
     sample_storage_path: Mapped[str | None] = mapped_column(Text)
     sample_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
@@ -466,7 +580,12 @@ class CloudSandboxSession(Base):
     sample_report: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     sample_uploaded_at: Mapped[object | None] = mapped_column(DateTime)
     sample_completed_at: Mapped[object | None] = mapped_column(DateTime)
+    ready_at: Mapped[object | None] = mapped_column(DateTime)
+    lease_expires_at: Mapped[object | None] = mapped_column(DateTime)
     expires_at: Mapped[object] = mapped_column(DateTime, nullable=False)
+    termination_reason: Mapped[str | None] = mapped_column(String(32))
+    termination_requested_at: Mapped[object | None] = mapped_column(DateTime)
+    cleanup_completed_at: Mapped[object | None] = mapped_column(DateTime)
     terminated_at: Mapped[object | None] = mapped_column(DateTime)
     created_at: Mapped[object] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[object] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
@@ -574,10 +693,22 @@ class AuditLog(Base):
 class UserFeedback(Base):
     __tablename__ = "user_feedback"
 
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_user_feedback_idempotency"),
+    )
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     scan_event_id: Mapped[str] = mapped_column(ForeignKey("scan_events.id", ondelete="CASCADE"))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     label: Mapped[str] = mapped_column(String(40), nullable=False)
+    reason: Mapped[str] = mapped_column(String(40), default="other", nullable=False)
     corrected_risk_level: Mapped[str | None] = mapped_column(String(32))
     comment: Mapped[str | None] = mapped_column(Text)
+    comment_sha256: Mapped[str | None] = mapped_column(String(64))
+    idempotency_key: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="received", nullable=False)
+    admin_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[object] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[object] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
+    )

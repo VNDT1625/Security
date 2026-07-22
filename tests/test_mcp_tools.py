@@ -1,5 +1,8 @@
 """MCP tool handler tests (test-plan.md §3 test_mcp_tool_call_e2e)."""
 
+import base64
+import struct
+
 from mcp_server.tools import TOOL_DEFINITIONS, MCPTools
 
 tools = MCPTools()
@@ -16,6 +19,9 @@ def test_tool_definitions_schema():
         "assess_action",
         "assess_page",
         "assess_file_static",
+        "quick_scan_exe",
+        "quick_scan_exe_content",
+        "get_exe_quick_scan_report",
         "summarize_risk_safely",
     }
 
@@ -82,3 +88,86 @@ def test_file_tool_assesses_file_inside_sandbox(tmp_path):
     result = isolated_tools.dispatch("assess_file_static", {"path": "sample.ps1"})
     assert result["risk_score"] > 0.1
     assert result["evidence"]
+
+
+def _build_pe() -> bytes:
+    pe_offset = 0x80
+    optional_size = 224
+    section_table = pe_offset + 4 + 20 + optional_size
+    data = bytearray(0x400)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, pe_offset)
+    data[pe_offset : pe_offset + 4] = b"PE\0\0"
+    struct.pack_into("<HHIIIHH", data, pe_offset + 4, 0x014C, 1, 1_700_000_000, 0, 0, optional_size, 0x010F)
+    optional_offset = pe_offset + 24
+    struct.pack_into("<H", data, optional_offset, 0x10B)
+    struct.pack_into("<I", data, optional_offset + 16, 0x1000)
+    struct.pack_into("<H", data, optional_offset + 68, 3)
+    struct.pack_into("<I", data, optional_offset + 92, 16)
+    data[section_table : section_table + 8] = b".text\0\0\0"
+    struct.pack_into("<IIII", data, section_table + 8, 512, 0x1000, 512, 0x200)
+    struct.pack_into("<I", data, section_table + 36, 0x60000020)
+    data[0x200:] = b"\x90" * 512
+    return bytes(data)
+
+
+def test_quick_scan_exe_inside_sandbox_never_executes(tmp_path):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "sample.exe").write_bytes(_build_pe())
+
+    result = MCPTools(sandbox_dir=sandbox).dispatch(
+        "quick_scan_exe",
+        {"path": "sample.exe", "share_with_provider": False},
+    )
+
+    assert result["ok"] is True
+    assert result["analysis_mode"] == "quick_scan"
+    assert result["dynamic_execution"] is False
+    assert result["local_analysis"]["architecture"] == "x86"
+    assert result["provider"]["sample_shared"] is False
+    assert result["verdict"] in {"ALLOW", "WARN", "BLOCK"}
+    assert result["scan_verdict"] == "no_obvious_theft_detected"
+
+
+def test_quick_scan_exe_rejects_traversal_and_non_exe(tmp_path):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "sample.bin").write_bytes(_build_pe())
+
+    isolated_tools = MCPTools(sandbox_dir=sandbox)
+    traversal = isolated_tools.dispatch("quick_scan_exe", {"path": "../sample.exe"})
+    wrong_extension = isolated_tools.dispatch("quick_scan_exe", {"path": "sample.bin"})
+
+    assert traversal["error"] == "invalid_input"
+    assert wrong_extension["error"] == "invalid_input"
+
+
+def test_remote_quick_scan_accepts_base64_without_writing_or_executing():
+    result = MCPTools().dispatch(
+        "quick_scan_exe_content",
+        {
+            "filename": "remote-sample.exe",
+            "content_base64": base64.b64encode(_build_pe()).decode("ascii"),
+            "share_with_provider": False,
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["dynamic_execution"] is False
+    assert result["filename"] == "remote-sample.exe"
+    assert result["provider"]["sample_shared"] is False
+
+
+def test_remote_quick_scan_rejects_invalid_base64_and_unsafe_filename():
+    invalid_content = MCPTools().dispatch(
+        "quick_scan_exe_content",
+        {"filename": "sample.exe", "content_base64": "not-base64!"},
+    )
+    unsafe_name = MCPTools().dispatch(
+        "quick_scan_exe_content",
+        {"filename": "../sample.exe", "content_base64": "AAAA"},
+    )
+
+    assert invalid_content["error"] == "invalid_input"
+    assert unsafe_name["error"] == "invalid_input"

@@ -45,6 +45,15 @@ function TypingCursor() {
     );
 }
 
+const IMPORTANT_LEGAL_PHRASES = /^(Hướng xử lý thận trọng|Cần bổ sung dữ kiện|Tạm thời chưa|Trước khi thực hiện, hãy xác minh:|Hệ thống đã tìm thấy nguồn liên quan nhưng chưa đủ để đưa ra kết luận chắc chắn\.)$/i;
+
+function FormattedAssistantText({ text }: { text: string }) {
+    const parts = text.split(/(Hướng xử lý thận trọng|Cần bổ sung dữ kiện|Tạm thời chưa|Trước khi thực hiện, hãy xác minh:|Hệ thống đã tìm thấy nguồn liên quan nhưng chưa đủ để đưa ra kết luận chắc chắn\.)/gi);
+    return <>{parts.map((part, index) => IMPORTANT_LEGAL_PHRASES.test(part)
+        ? <strong key={index} className="font-semibold text-gray-950">{part}</strong>
+        : <span key={index}>{part}</span>)}</>;
+}
+
 /**
  * ChatMessage — bong bóng hội thoại phân biệt vai trò user/assistant.
  */
@@ -54,6 +63,14 @@ export default function ChatMessage({
 }: ChatMessageProps) {
     const isUser = message.role === "user";
     const assessment = message.assessment;
+    const legal = message.legalAnswer;
+    const legalStatusText = legal ? {
+        answered: "Đã trả lời với căn cứ",
+        need_more_facts: "Cần bổ sung dữ kiện",
+        insufficient_legal_basis: "Chưa đủ căn cứ pháp lý để kết luận",
+        conflicting_sources: "Nguồn pháp lý mâu thuẫn",
+        human_legal_review: "Cần chuyên gia pháp lý rà soát",
+    }[legal.status] : "";
 
     // Canh lề: user bên phải, assistant bên trái.
     const rowClass = isUser
@@ -104,7 +121,7 @@ export default function ChatMessage({
                         {isUser ? (
                             <InertContent text={message.text} />
                         ) : (
-                            message.text
+                            <FormattedAssistantText text={message.text} />
                         )}
                         {isStreaming && <TypingCursor />}
                     </p>
@@ -115,6 +132,48 @@ export default function ChatMessage({
                     <p className="text-sm leading-relaxed" aria-label="Đang trả lời">
                         <TypingCursor />
                     </p>
+                )}
+
+                {!isUser && legal && (
+                    <div className="space-y-3 text-sm">
+                        <div className={`rounded-lg border px-3 py-2 font-medium ${
+                            legal.status === "answered"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                                : "border-amber-200 bg-amber-50 text-amber-800"
+                        }`}>
+                            ⚖ {legalStatusText}
+                        </div>
+                        {legal.missing_facts.length > 0 && (
+                            <p className="text-gray-700">
+                                Còn thiếu: {legal.missing_facts.join(", ")}.
+                            </p>
+                        )}
+                        {legal.citations.length > 0 && (
+                            <div>
+                                <p className="font-semibold text-gray-700">Nguồn đã truy xuất:</p>
+                                <ul className="mt-1 space-y-2">
+                                    {legal.citations.map((citation) => (
+                                        <li key={citation.chunk_id} className="rounded border border-gray-200 p-2 text-xs text-gray-600">
+                                            <span className="font-semibold text-gray-800">
+                                                {citation.title} — {citation.document_number}
+                                            </span>
+                                            <br />{citation.section}; trang {citation.page_start ?? "?"}
+                                            <br />Hiệu lực: {citation.status}; kiểm tra ngày {citation.status_checked_at}
+                                            {citation.source_page_url && (
+                                                <><br /><a className="text-blue-700 underline" href={citation.source_page_url}
+                                                    target="_blank" rel="noreferrer">Nguồn văn bản chính thức</a></>
+                                            )}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                        {legal.disclaimer && (
+                            <p className="border-t border-gray-200 pt-2 text-[11px] leading-relaxed text-gray-500">
+                                {legal.disclaimer}
+                            </p>
+                        )}
+                    </div>
                 )}
 
                 {/* Phần đánh giá chi tiết: reasons + EvidencePanel */}

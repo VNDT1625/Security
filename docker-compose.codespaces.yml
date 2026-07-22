@@ -1,0 +1,22 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    network_mode: host
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/tunnel-token"]
+    secrets:
+      - tunnel-token
+    depends_on:
+      backend:
+        condition: service_healthy
+      api-gateway:
+        condition: service_started
+      web:
+        condition: service_started
+      mcp:
+        condition: service_started
+    security_opt: ["no-new-privileges:true"]
+
+secrets:
+  tunnel-token:
+    file: ./.codespaces-secrets/cloudflare-tunnel-token

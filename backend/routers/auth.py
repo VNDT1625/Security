@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Annotated, NoReturn
+from datetime import date, timedelta
+from typing import Annotated, Any, NoReturn
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
+from sqlalchemy.orm import selectinload
 
 from backend.config import settings
 from backend.db import get_db
@@ -18,10 +20,13 @@ from backend.models import (
     ApiKey,
     DailyQuotaUsage,
     PasswordResetToken,
+    ReportShare,
     ScanEvent,
+    ScanEvidence,
     SessionRecord,
     Subscription,
     User,
+    UserFeedback,
 )
 from backend.security_utils import (
     create_api_key_value,
@@ -35,6 +40,12 @@ from backend.security_utils import (
     session_key,
     utcnow,
     verify_password,
+)
+from backend.services.llm_provider_config_service import (
+    get_runtime_llm_config,
+    safe_config_payload,
+    save_user_llm_config,
+    test_runtime_llm_config,
 )
 
 router = APIRouter(prefix="/v1", tags=["auth"])
@@ -118,6 +129,15 @@ class PasswordChange(BaseModel):
         return value
 
 
+class AISettingsInput(BaseModel):
+    provider: str = Field(pattern="^(auto|adapter|local|endpoint)$")
+    baseUrl: str = Field(default="", max_length=1000)
+    model: str = Field(default="", max_length=300)
+    apiKey: str | None = Field(default=None, max_length=1000)
+    clearApiKey: bool = False
+    weightPercent: int | None = Field(default=None, ge=0, le=100)
+
+
 class UserProfile(BaseModel):
     id: str
     email: str
@@ -144,12 +164,40 @@ class Session(BaseModel):
     plan: PlanInfo
 
 
+class ScanRecordEvidence(BaseModel):
+    source: str
+    message: str
+    severity: str
+    feature: str | None = None
+
+
 class ScanRecord(BaseModel):
     id: str
     timestamp: str
     type: str
     score: int
     riskLevel: str
+    target: str
+    decision: str
+    confidence: int
+    modelVersion: str
+    evidence: list[ScanRecordEvidence] = Field(default_factory=list)
+
+
+class ScanRecordDetail(ScanRecord):
+    """Privacy-minimised result that can be reopened by the owning account."""
+
+    createdAt: str
+    modality: str
+    latencyMs: float = 0
+    reasons: list[str] = Field(default_factory=list)
+    schemaVersion: str | None = None
+    scoringVersion: str | None = None
+    riskCore: dict[str, Any] | None = None
+
+
+class DeleteHistoryResult(BaseModel):
+    deleted: int
 
 
 class ApiKeyInfo(BaseModel):
@@ -176,7 +224,7 @@ class ApiKeyRotateInput(BaseModel):
     def validate_scopes(cls, scopes: list[str]) -> list[str]:
         allowed = {
             "assess:url", "assess:content", "assess:prompt", "assess:file",
-            "assess:action", "mcp:invoke", "logs:read",
+            "assess:action", "mcp:invoke", "mcp:file:share_external", "logs:read",
         }
         normalized = list(dict.fromkeys(scopes))
         if not normalized or any(scope not in allowed for scope in normalized):
@@ -230,26 +278,17 @@ def unauthorized() -> NoReturn:
     )
 
 
-def infer_plan_tier(email: str) -> str:
-    local = email.split("@", 1)[0].lower()
-    if "team" in local:
-        return "team"
-    if "pro" in local or "demo" in local:
-        return "pro"
-    return "free"
-
-
 _PLAN_ENTITLEMENT_DEFAULTS: dict[str, dict[str, int | bool]] = {
     "free": {
         "ai_credit_daily_limit": 5,
-        "deep_scan_daily_limit": 1,
+        "deep_scan_daily_limit": 100,
         "chat_followup_limit": 3,
         "auto_message_context": False,
         "auto_web_context": False,
     },
     "pro": {
         "ai_credit_daily_limit": 50,
-        "deep_scan_daily_limit": 10,
+        "deep_scan_daily_limit": 100,
         "chat_followup_limit": 20,
         "auto_message_context": True,
         "auto_web_context": True,
@@ -285,7 +324,7 @@ def build_free_plan_info() -> PlanInfo:
         tier="free",
         label="FREE",
         renewsAt=None,
-        dailyScanLimit=50,
+        dailyScanLimit=1000,
         aiCreditDailyLimit=int(entitlements["ai_credit_daily_limit"]),
         deepScanDailyLimit=int(entitlements["deep_scan_daily_limit"]),
         chatFollowupLimit=int(entitlements["chat_followup_limit"]),
@@ -295,11 +334,21 @@ def build_free_plan_info() -> PlanInfo:
 
 
 def _active_subscription(db: DbSession, user_id: str) -> Subscription | None:
-    return db.execute(
+    rows = db.execute(
         select(Subscription)
         .where(Subscription.user_id == user_id, Subscription.status.in_(("trialing", "active")))
         .order_by(Subscription.created_at.desc())
-    ).scalar_one_or_none()
+    ).scalars()
+    now = utcnow()
+    for subscription in rows:
+        expires_at = (
+            subscription.trial_ends_at
+            if subscription.status == "trialing" and subscription.trial_ends_at is not None
+            else subscription.renews_at
+        )
+        if expires_at is None or expires_at > now:
+            return subscription
+    return None
 
 
 def build_plan_info(db: DbSession, user_id: str) -> PlanInfo:
@@ -313,8 +362,6 @@ def build_plan_info(db: DbSession, user_id: str) -> PlanInfo:
         plan.features if plan is not None else None,
     )
     renews_at = subscription.renews_at
-    if renews_at is None and subscription.plan_tier != "free":
-        renews_at = datetime.combine(date.today() + timedelta(days=30), datetime.min.time())
     return PlanInfo(
         tier=subscription.plan_tier,
         label=plan.label if plan is not None else subscription.plan_tier.upper(),
@@ -330,6 +377,18 @@ def build_plan_info(db: DbSession, user_id: str) -> PlanInfo:
 
 def build_actor_plan_info(db: DbSession, actor: ActorContext) -> PlanInfo:
     return build_plan_info(db, actor.user.id) if actor.user is not None else build_free_plan_info()
+
+
+def require_api_key_entitlement(db: DbSession, user_id: str) -> PlanInfo:
+    """Keep Team/API credentials unavailable after downgrade or expiry."""
+
+    plan = build_plan_info(db, user_id)
+    if plan.tier not in {"team", "enterprise"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key và MCP endpoint yêu cầu gói Team hoặc cao hơn.",
+        )
+    return plan
 
 
 def _create_api_key_record(
@@ -394,8 +453,12 @@ def create_user(
     )
     db.add(user)
     db.flush()
-    db.add(Subscription(user_id=user.id, plan_tier=plan_tier or infer_plan_tier(normalized)))
-    _create_api_key_record(db, user.id)
+    # Public registration never infers paid access from user-controlled fields.
+    # Trusted internal callers may still provision a paid tier explicitly.
+    assigned_tier = plan_tier or "free"
+    db.add(Subscription(user_id=user.id, plan_tier=assigned_tier))
+    if assigned_tier in {"team", "enterprise"}:
+        _create_api_key_record(db, user.id)
     db.commit()
     db.refresh(user)
     return user
@@ -499,6 +562,7 @@ def resolve_actor(
     ):
         user = db.get(User, api_key.user_id)
         if user is not None and user.status == "active":
+            require_api_key_entitlement(db, user.id)
             now = utcnow()
             write_interval = timedelta(
                 seconds=settings.api_key_last_used_write_interval_seconds
@@ -601,6 +665,14 @@ def register(
 
 @router.post("/auth/password/forgot")
 def forgot_password(payload: PasswordResetRequest, db: DbSession = Depends(get_db)) -> dict:
+    if settings.app_env == "production":
+        from backend.services.release_email_service import email_configured
+
+        if not email_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="Dịch vụ gửi email khôi phục chưa được cấu hình.",
+            )
     email = payload.email.strip().lower()
     user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
     response: dict = {"ok": True, "message": "Nếu email tồn tại, hướng dẫn đặt lại mật khẩu đã được tạo."}
@@ -615,6 +687,14 @@ def forgot_password(payload: PasswordResetRequest, db: DbSession = Depends(get_d
     # Development exposes the token so the local UI can complete the flow without an email provider.
     if settings.app_env != "production":
         response["resetToken"] = token
+    else:
+        from backend.services.release_email_service import send_password_reset_email
+
+        query = urlencode({"mode": "reset", "token": token})
+        send_password_reset_email(
+            recipient=user.email,
+            reset_url=f"{settings.password_reset_web_url}?{query}",
+        )
     return response
 
 
@@ -731,13 +811,16 @@ def change_password(
 def get_scan_history(auth: CurrentSession, db: DbSession = Depends(get_db)) -> list[ScanRecord]:
     rows = db.execute(
         select(ScanEvent)
+        .options(selectinload(ScanEvent.evidence))
         .where(ScanEvent.user_id == auth.user.id)
         .order_by(ScanEvent.created_at.desc())
         .limit(200)
     ).scalars()
     records: list[ScanRecord] = []
     for row in rows:
-        scan_type = "URL" if row.modality == "url" else "Email"
+        scan_type = {"url": "URL", "email": "Email", "sms": "SMS"}.get(
+            row.modality.lower(), row.modality.upper()
+        )
         records.append(
             ScanRecord(
                 id=row.request_id,
@@ -745,13 +828,163 @@ def get_scan_history(auth: CurrentSession, db: DbSession = Depends(get_db)) -> l
                 type=scan_type,
                 score=round(row.risk_score * 100),
                 riskLevel=row.risk_level,
+                target=_safe_history_target(row),
+                decision=row.decision,
+                confidence=round(row.confidence * 100),
+                modelVersion=row.model_version,
+                evidence=_history_evidence(row),
             )
         )
     return records
 
 
+_HISTORY_SECRET_KEYS = {
+    "api_key", "authorization", "body", "content", "cookie", "email", "headers",
+    "input", "message", "operator_context", "password", "phone", "prompt", "secret",
+    "subject", "target", "token", "url",
+}
+
+
+def _safe_history_text(value: str, limit: int = 500) -> str:
+    """Mask identifiers and common credentials in history/export responses."""
+    import re
+
+    text = " ".join(value.split())
+    text = re.sub(r"https?://\S+", "[URL đã che]", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])", "[email đã che]", text)
+    text = re.sub(r"(?<!\w)(?:\+?\d[\s().-]?){8,19}(?!\w)", "[số đã che]", text)
+    text = re.sub(
+        r"\b(password|passcode|mật khẩu|mat khau|otp|mã otp|token)\b\s*[:=\-]?\s*\S+",
+        r"\1: [ĐÃ CHE]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text[:limit]
+
+
+def _safe_history_target(row: ScanEvent) -> str:
+    if row.modality.lower() == "url" and row.normalized_url:
+        try:
+            parsed = urlsplit(row.normalized_url)
+            if parsed.scheme in {"http", "https"} and parsed.hostname:
+                port = f":{parsed.port}" if parsed.port else ""
+                path = "/…" if parsed.path not in {"", "/"} else ""
+                return f"{parsed.scheme}://{parsed.hostname}{port}{path}"
+        except (ValueError, UnicodeError):
+            pass
+        return "Website đã được che"
+    preview = _safe_history_text(row.input_preview or "", 160)
+    return preview or "Nội dung đã được ẩn để bảo vệ riêng tư"
+
+
+def _safe_risk_core(value: Any, *, depth: int = 0) -> Any:
+    """Keep scoring metadata while removing raw inputs and credential-shaped fields."""
+    if depth > 8:
+        return "[đã rút gọn]"
+    if isinstance(value, dict):
+        return {
+            str(key): _safe_risk_core(item, depth=depth + 1)
+            for key, item in value.items()
+            if str(key).lower() not in _HISTORY_SECRET_KEYS
+        }
+    if isinstance(value, list):
+        return [_safe_risk_core(item, depth=depth + 1) for item in value[:100]]
+    if isinstance(value, str):
+        return _safe_history_text(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:200]
+
+
+def _history_evidence(row: ScanEvent) -> list[ScanRecordEvidence]:
+    return [
+        ScanRecordEvidence(
+            source=_safe_history_text(item.source, 120),
+            message=_safe_history_text(item.message),
+            severity=item.severity,
+            feature=_safe_history_text(item.feature, 160) if item.feature else None,
+        )
+        for item in row.evidence
+    ]
+
+
+@router.get("/account/history/{request_id}", response_model=ScanRecordDetail)
+def get_scan_history_detail(
+    request_id: str,
+    auth: CurrentSession,
+    db: DbSession = Depends(get_db),
+) -> ScanRecordDetail:
+    row = db.execute(
+        select(ScanEvent)
+        .options(selectinload(ScanEvent.evidence))
+        .where(ScanEvent.request_id == request_id, ScanEvent.user_id == auth.user.id)
+    ).scalar_one_or_none()
+    if row is None:
+        # Deliberately do not reveal whether another account owns this request id.
+        raise HTTPException(status_code=404, detail="Không tìm thấy lượt phân tích này.")
+    scan_type = {"url": "URL", "email": "Email", "sms": "SMS"}.get(
+        row.modality.lower(), row.modality.upper()
+    )
+    evidence = _history_evidence(row)
+    trace = row.risk_core_trace or (row.extra_metadata or {}).get("risk_core")
+    return ScanRecordDetail(
+        id=row.request_id,
+        timestamp=format_short_datetime(row.created_at),
+        createdAt=row.created_at.isoformat() + "Z",
+        type=scan_type,
+        modality=row.modality.lower(),
+        score=round(row.risk_score * 100),
+        riskLevel=row.risk_level,
+        target=_safe_history_target(row),
+        decision=row.decision,
+        confidence=round(row.confidence * 100),
+        modelVersion=row.model_version,
+        latencyMs=float(row.latency_ms),
+        evidence=evidence,
+        reasons=[item.message for item in evidence[:10]],
+        schemaVersion=row.schema_version or (row.extra_metadata or {}).get("schema_version"),
+        scoringVersion=row.scoring_version or (row.extra_metadata or {}).get("scoring_version"),
+        riskCore=_safe_risk_core(trace) if isinstance(trace, dict) else None,
+    )
+
+
+def _delete_owned_history(db: DbSession, user_id: str, request_id: str | None = None) -> int:
+    query = select(ScanEvent.id).where(ScanEvent.user_id == user_id)
+    if request_id is not None:
+        query = query.where(ScanEvent.request_id == request_id)
+    event_ids = list(db.execute(query).scalars())
+    if not event_ids:
+        return 0
+    # Explicit deletes make the cascade deterministic even when SQLite foreign keys
+    # were disabled by a legacy connection.
+    db.execute(delete(UserFeedback).where(UserFeedback.scan_event_id.in_(event_ids)))
+    db.execute(delete(ReportShare).where(ReportShare.scan_event_id.in_(event_ids)))
+    db.execute(delete(ScanEvidence).where(ScanEvidence.scan_event_id.in_(event_ids)))
+    db.execute(delete(ScanEvent).where(ScanEvent.id.in_(event_ids)))
+    db.commit()
+    return len(event_ids)
+
+
+@router.delete("/account/history/{request_id}", response_model=DeleteHistoryResult)
+def delete_scan_history_record(
+    request_id: str,
+    auth: CurrentSession,
+    db: DbSession = Depends(get_db),
+) -> DeleteHistoryResult:
+    deleted = _delete_owned_history(db, auth.user.id, request_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lượt phân tích này.")
+    return DeleteHistoryResult(deleted=deleted)
+
+
+@router.delete("/account/history", response_model=DeleteHistoryResult)
+def clear_scan_history(auth: CurrentSession, db: DbSession = Depends(get_db)) -> DeleteHistoryResult:
+    return DeleteHistoryResult(deleted=_delete_owned_history(db, auth.user.id))
+
+
 @router.get("/account/api-key", response_model=ApiKeyInfo)
 def get_api_key(auth: CurrentSession, db: DbSession = Depends(get_db)) -> ApiKeyInfo:
+    require_api_key_entitlement(db, auth.user.id)
     return _api_key_info(_active_api_key(db, auth.user.id))
 
 
@@ -790,12 +1023,105 @@ def get_quota(auth: CurrentSession, db: DbSession = Depends(get_db)) -> QuotaInf
     )
 
 
+@router.get("/account/ai-settings")
+def get_account_ai_settings(auth: CurrentSession, db: DbSession = Depends(get_db)) -> dict:
+    """Return only the current user's provider preference; never return its key."""
+    try:
+        from backend.services.ai_context_weight_service import get_user_ai_context_weight_payload
+
+        plan = build_plan_info(db, auth.user.id)
+        from backend.services.llm_provider_config_service import get_user_llm_policy
+
+        return {
+            **safe_config_payload(get_runtime_llm_config(db, user_id=auth.user.id)),
+            **get_user_llm_policy(db),
+            **get_user_ai_context_weight_payload(
+                db, user_id=auth.user.id, plan_tier=plan.tier
+            ),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put("/account/ai-settings")
+def update_account_ai_settings(
+    payload: AISettingsInput,
+    auth: CurrentSession,
+    db: DbSession = Depends(get_db),
+) -> dict:
+    try:
+        from backend.services.ai_context_weight_service import (
+            get_user_ai_context_weight_payload,
+            set_user_ai_context_weight_percent,
+            validate_user_ai_context_weight_percent,
+        )
+
+        plan = build_plan_info(db, auth.user.id)
+        if payload.weightPercent is not None:
+            # Validate every field before either service commits. This prevents
+            # a rejected weight from partially saving the provider selection.
+            validate_user_ai_context_weight_percent(
+                db, plan_tier=plan.tier, percent=payload.weightPercent
+            )
+        configured = save_user_llm_config(
+            db,
+            user_id=auth.user.id,
+            provider=payload.provider,  # type: ignore[arg-type]
+            base_url=payload.baseUrl,
+            model=payload.model,
+            api_key=payload.apiKey,
+            clear_api_key=payload.clearApiKey,
+            commit=False,
+        )
+        if payload.weightPercent is not None:
+            set_user_ai_context_weight_percent(
+                db,
+                user_id=auth.user.id,
+                plan_tier=plan.tier,
+                percent=payload.weightPercent,
+                commit=False,
+            )
+        db.commit()
+        from backend.services.llm_provider_config_service import get_user_llm_policy
+
+        return {
+            **safe_config_payload(configured),
+            **get_user_llm_policy(db),
+            **get_user_ai_context_weight_payload(
+                db, user_id=auth.user.id, plan_tier=plan.tier
+            ),
+        }
+    except PermissionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post("/account/ai-settings/test")
+def test_account_ai_settings(auth: CurrentSession, db: DbSession = Depends(get_db)) -> dict:
+    try:
+        return test_runtime_llm_config(
+            get_runtime_llm_config(db, user_id=auth.user.id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        # Keep provider details and credentials out of the response.
+        raise HTTPException(status_code=502, detail="Không kết nối hoặc gọi được model đã chọn.") from exc
+
+
 @router.post("/account/api-key/rotate", response_model=ApiKeyInfo)
 def rotate_api_key(
     auth: CurrentSession,
     payload: ApiKeyRotateInput = ApiKeyRotateInput(),
     db: DbSession = Depends(get_db),
 ) -> ApiKeyInfo:
+    require_api_key_entitlement(db, auth.user.id)
     current = list(db.execute(
         select(ApiKey)
         .where(ApiKey.user_id == auth.user.id, ApiKey.status == "active")
@@ -815,6 +1141,7 @@ def rotate_api_key(
 
 @router.delete("/account/api-key")
 def revoke_api_key(auth: CurrentSession, db: DbSession = Depends(get_db)) -> dict[str, bool]:
+    require_api_key_entitlement(db, auth.user.id)
     keys = db.execute(
         select(ApiKey).where(ApiKey.user_id == auth.user.id, ApiKey.status == "active")
     ).scalars()
