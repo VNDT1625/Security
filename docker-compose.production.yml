@@ -102,11 +102,12 @@ services:
       ANONYMOUS_DAILY_SCAN_LIMIT: ${ANONYMOUS_DAILY_SCAN_LIMIT:-1000}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-["https://prewise.site","https://www.prewise.site"]}
       ADAPTER_REGISTRY_ENABLED: ${ADAPTER_REGISTRY_ENABLED:-true}
-      ADAPTER_MANIFEST_PATH: /app/server/adapters/manifest.json
+      ADAPTER_MANIFEST_PATH: ${ADAPTER_MANIFEST_PATH:-/app/server/adapters/manifest.json}
       ADAPTER_BASE_URL: ${ADAPTER_BASE_URL:-}
       ADAPTER_API_KEY: ${ADAPTER_API_KEY:-}
       ADAPTER_TIMEOUT_SECONDS: ${ADAPTER_TIMEOUT_SECONDS:-15}
       ADAPTER_MAX_RISK_CONTRIBUTION: ${ADAPTER_MAX_RISK_CONTRIBUTION:-0.25}
+      LEGAL_ADAPTER_MODEL: ${LEGAL_ADAPTER_MODEL:-prewise-legal-rag}
       LLM_PROVIDER: ${LLM_PROVIDER:-auto}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -183,6 +184,7 @@ services:
       MAX_SANDBOX_SESSION_MINUTES: ${MAX_SANDBOX_SESSION_MINUTES:-30}
     volumes:
       - ./server/adapters:/app/server/adapters:ro
+      - ${ADAPTER_RUNTIME_ROOT:-./server/adapters/runtime}:/runtime:ro
     depends_on:
       postgres:
         condition: service_healthy

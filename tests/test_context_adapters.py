@@ -181,6 +181,70 @@ def test_generic_openai_compatible_runtime_uses_admin_model_without_lora_artifac
     assert outcome.trace.status == AdapterRunStatus.COMPLETED
 
 
+def test_runtime_health_requires_every_specialist_model(tmp_path: Path) -> None:
+    manifest = _manifest(
+        tmp_path,
+        [
+            {
+                "adapter_id": "message",
+                "task": "message-context-adapter",
+                "runtime": "openai_compatible",
+                "served_model_name": "prewise-message-context",
+            }
+        ],
+    )
+    registry = AdapterRegistry(
+        str(manifest),
+        base_url="https://adapter.example/v1",
+        api_key="secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "prewise-message-context"},
+                        {"id": "prewise-legal-rag"},
+                    ]
+                },
+            )
+        ),
+    )
+
+    status = registry.runtime_status(("prewise-legal-rag",), cache_seconds=0)
+
+    assert status["ready"] is True
+    assert status["missing_models"] == []
+
+
+def test_runtime_health_fails_closed_when_model_is_missing(tmp_path: Path) -> None:
+    manifest = _manifest(
+        tmp_path,
+        [
+            {
+                "adapter_id": "message",
+                "task": "message-context-adapter",
+                "runtime": "openai_compatible",
+                "served_model_name": "prewise-message-context",
+            }
+        ],
+    )
+    registry = AdapterRegistry(
+        str(manifest),
+        base_url="https://adapter.example/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": []})
+        ),
+    )
+
+    status = registry.runtime_status(("prewise-legal-rag",), cache_seconds=0)
+
+    assert status["ready"] is False
+    assert status["missing_models"] == [
+        "prewise-legal-rag",
+        "prewise-message-context",
+    ]
+
+
 def test_wrong_schema_is_rejected_and_cannot_return_policy_decision(
     tmp_path: Path,
 ) -> None:

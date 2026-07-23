@@ -71,6 +71,7 @@ def _build_explanation_service(
         return ExplanationService(
             model=runtime.model or "prewise-security-v1",
             adapter_registry=adapter_registry,
+            provider="adapter",
         )
 
     # Preserve existing deployments unless they make an explicit replacement:
@@ -150,13 +151,17 @@ def get_user_legal_answer_service(db: DbSession, user_id: str | None) -> LegalAn
     base_url = runtime.base_url
     model = runtime.model
     api_key = runtime.api_key
-    if runtime.provider in {"auto", "local"} and not base_url:
+    if runtime.provider == "adapter":
+        base_url = settings.adapter_base_url
+        model = settings.legal_adapter_model
+        api_key = settings.adapter_api_key
+    elif runtime.provider in {"auto", "local"} and not base_url:
         base_url = settings.ollama_base_url.rstrip("/") + "/v1"
         model = model or settings.ollama_model
         api_key = ""
     generator = (
         OpenAIJSONGenerator(base_url, model, api_key, settings.llm_timeout_seconds)
-        if base_url and model and runtime.provider != "adapter"
+        if base_url and model
         else None
     )
     return LegalAnswerService(generator=generator)

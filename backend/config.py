@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     adapter_api_key: str = ""
     adapter_timeout_seconds: float = 15
     adapter_max_risk_contribution: float = 0.25
+    legal_adapter_model: str = "prewise-legal-rag"
     # Backward-compatible local Ollama settings. Used only when LLM_BASE_URL is empty.
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:7b-instruct-q4_K_M"

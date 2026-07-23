@@ -57,9 +57,9 @@ def test_rejects_incomplete_adapter_package(tmp_path: Path) -> None:
         detect_model_package(tmp_path)
 
 
-def test_builds_one_vllm_server_with_multiple_loras(tmp_path: Path) -> None:
+def test_builds_one_vllm_server_with_four_loras(tmp_path: Path) -> None:
     adapters = []
-    for name in ("message", "web", "explanation"):
+    for name in ("message", "web", "explanation", "legal"):
         path = tmp_path / name
         path.mkdir()
         (path / "adapter_config.json").write_text(
@@ -97,4 +97,6 @@ def test_builds_one_vllm_server_with_multiple_loras(tmp_path: Path) -> None:
 
     assert command[:3] == ["vllm", "serve", "Qwen/Qwen3.5-4B"]
     assert "--enable-lora" in command
-    assert sum("adapter=" in item for item in command) == 3
+    assert command[command.index("--max-lora-rank") + 1] == "16"
+    assert command[command.index("--max-loras") + 1] == "4"
+    assert sum("adapter=" in item for item in command) == 4

@@ -157,6 +157,10 @@ def _build_multi_lora_command(env: Mapping[str, str], manifest_path: Path) -> li
         "--dtype",
         env.get("LLM_DTYPE", "auto"),
         "--enable-lora",
+        "--max-lora-rank",
+        str(_positive_int(env, "LLM_MAX_LORA_RANK", 16)),
+        "--max-loras",
+        str(_positive_int(env, "LLM_MAX_LORAS", len(modules))),
         "--lora-modules",
         *modules,
     ]

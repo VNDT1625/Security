@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "base_model": "Qwen/Qwen3.5-9B",
+  "base_revision": "ef3d031a90d340a92d71f83ec17d054e100ce713",
+  "context_length": 16384,
+  "adapters": [
+    {
+      "adapter_id": "prewise-message-context",
+      "task": "message-context-adapter",
+      "runtime": "openai_lora",
+      "path": "/runtime/message-context-adapter/current",
+      "served_model_name": "prewise-message-context",
+      "priority": 10
+    },
+    {
+      "adapter_id": "prewise-web-context",
+      "task": "web-context-adapter",
+      "runtime": "openai_lora",
+      "path": "/runtime/web-context-adapter/current",
+      "served_model_name": "prewise-web-context",
+      "priority": 10
+    },
+    {
+      "adapter_id": "prewise-explanation",
+      "task": "explanation-adapter",
+      "runtime": "openai_lora",
+      "path": "/runtime/explanation-adapter/current",
+      "served_model_name": "prewise-explanation",
+      "priority": 10
+    }
+  ]
+}

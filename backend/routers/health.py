@@ -59,6 +59,10 @@ def health(
         "last_error": expl.last_error,
     }
     model_status["context_adapters"] = adapters.status()
+    if expl.provider == "adapter":
+        model_status["adapter_runtime"] = adapters.runtime_status(
+            (settings.legal_adapter_model,)
+        )
     clamav_is_ready = clamav_ready(settings.clamav_host, settings.clamav_port)
     model_status["message_security"] = {
         "clamav_configured": bool(settings.clamav_host),
@@ -124,6 +128,10 @@ def readiness(
         "clamav": not message_security.get("clamav_configured")
         or bool(message_security.get("clamav_ready")),
     }
+    if expl.provider == "adapter":
+        checks["adapter_runtime"] = bool(
+            model_status.get("adapter_runtime", {}).get("ready")
+        )
     ready = all(checks.values())
     return JSONResponse(
         status_code=200 if ready else 503,

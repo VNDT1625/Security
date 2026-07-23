@@ -147,6 +147,7 @@ class AdapterRegistry:
         self._load_error = ""
         self._last: dict[str, AdapterTrace] = {}
         self._last_by_adapter: dict[str, AdapterTrace] = {}
+        self._runtime_probe: tuple[float, dict[str, Any]] | None = None
         self._lock = threading.RLock()
         self.reload(force=True)
 
@@ -224,6 +225,69 @@ class AdapterRegistry:
             artifact_status, _ = self._artifact_status(definition)
             return artifact_status is None
         return bool(self.model_name or definition.served_model_name)
+
+    def runtime_status(
+        self,
+        additional_models: tuple[str, ...] = (),
+        *,
+        cache_seconds: float = 15,
+    ) -> dict[str, Any]:
+        """Probe the OpenAI model catalog and require every configured LoRA."""
+
+        manifest = self.manifest
+        required = {
+            item.served_model_name
+            for item in (manifest.adapters if manifest else [])
+            if item.enabled
+            and item.runtime in {"openai_lora", "openai_compatible"}
+            and item.served_model_name
+        }
+        required.update(model for model in additional_models if model)
+        now = time.monotonic()
+        with self._lock:
+            cached = self._runtime_probe
+            if cached and now - cached[0] < cache_seconds:
+                return dict(cached[1])
+        result: dict[str, Any] = {
+            "configured": bool(self.enabled and self.base_url),
+            "ready": False,
+            "required_models": sorted(required),
+            "missing_models": sorted(required),
+            "error": "",
+        }
+        if not result["configured"]:
+            result["error"] = "adapter endpoint is not configured"
+        else:
+            headers = {"Accept": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            base = self.base_url if self.base_url.endswith("/v1") else self.base_url + "/v1"
+            try:
+                with httpx.Client(
+                    timeout=self.default_timeout_seconds,
+                    transport=self.transport,
+                ) as client:
+                    response = client.get(f"{base}/models", headers=headers)
+                    response.raise_for_status()
+                    payload = response.json()
+                rows = payload.get("data") if isinstance(payload, dict) else None
+                available = {
+                    str(row.get("id", ""))
+                    for row in rows
+                    if isinstance(row, dict) and row.get("id")
+                } if isinstance(rows, list) else set()
+                missing = sorted(required - available)
+                result["missing_models"] = missing
+                result["ready"] = not missing and bool(required)
+                if not required:
+                    result["error"] = "adapter manifest declares no models"
+                elif missing:
+                    result["error"] = "required adapter models are unavailable"
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError, TypeError):
+                result["error"] = "adapter endpoint health check failed"
+        with self._lock:
+            self._runtime_probe = (now, dict(result))
+        return result
 
     def invoke(self, task: AdapterTask, payload: BaseModel) -> AdapterOutcome:
         started = time.perf_counter()

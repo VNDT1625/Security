@@ -16,10 +16,14 @@ services:
       LLM_DTYPE: ${LLM_DTYPE:-auto}
       LLM_QUANTIZATION: ${LLM_QUANTIZATION:-}
       LLM_BASE_MODEL: ${LLM_BASE_MODEL:-}
+      LLM_BASE_REVISION: ${LLM_BASE_REVISION:-}
+      LLM_MAX_LORA_RANK: ${LLM_MAX_LORA_RANK:-16}
+      LLM_MAX_LORAS: ${LLM_MAX_LORAS:-4}
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ./server/llm-models/current:/models/current:ro
       - ./server/adapters:/adapters:ro
+      - ${ADAPTER_RUNTIME_ROOT:-./server/adapters/runtime}:/runtime:ro
       - huggingface-cache:/root/.cache/huggingface
     ipc: host
     deploy:
