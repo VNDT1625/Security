@@ -75,6 +75,14 @@ def _validate_installed(root: Path) -> dict[str, dict[str, object]]:
     return result
 
 
+def _make_runtime_readable(root: Path) -> None:
+    """Allow an unprivileged inference container to read the immutable packages."""
+
+    for path in root.rglob("*"):
+        path.chmod(0o755 if path.is_dir() else 0o444)
+    root.chmod(0o755)
+
+
 def install(zip_path: Path, checksum_path: Path, target: Path) -> dict[str, object]:
     zip_path = zip_path.resolve()
     checksum_path = checksum_path.resolve()
@@ -99,6 +107,7 @@ def install(zip_path: Path, checksum_path: Path, target: Path) -> dict[str, obje
         )
     if target.exists():
         installed = _validate_installed(target)
+        _make_runtime_readable(target)
         return {
             "status": "already_installed",
             "zip": str(zip_path),
@@ -136,6 +145,7 @@ def install(zip_path: Path, checksum_path: Path, target: Path) -> dict[str, obje
                 with archive.open(info) as source, destination.open("wb") as output:
                     shutil.copyfileobj(source, output, length=1024 * 1024)
         installed = _validate_installed(staging)
+        _make_runtime_readable(staging)
         os.replace(staging, target)
         installed = _validate_installed(target)
     except Exception:
@@ -158,6 +168,7 @@ def install(zip_path: Path, checksum_path: Path, target: Path) -> dict[str, obje
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    report_path.chmod(0o444)
     return report
 
 

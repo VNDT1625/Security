@@ -55,6 +55,14 @@ def test_installer_verifies_and_atomically_extracts_four_adapters(
     assert set(report["adapters"]) == set(installer.ADAPTERS)
     assert (tmp_path / "runtime" / "install-report.json").is_file()
     assert not list(tmp_path.glob(".runtime-*"))
+    assert (tmp_path / "runtime").stat().st_mode & 0o777 == 0o755
+    assert (
+        tmp_path
+        / "runtime"
+        / "message-context-adapter"
+        / "current"
+        / "adapter_model.safetensors"
+    ).stat().st_mode & 0o777 == 0o444
 
 
 def test_installer_rejects_zip_slip_without_creating_target(
