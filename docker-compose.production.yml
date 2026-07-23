@@ -233,6 +233,18 @@ services:
       dockerfile: Dockerfile.backend
     command: ["python", "-m", "mcp_server.server", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "3001"]
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; sock = socket.create_connection(('127.0.0.1', 3001), 2); sock.close()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     environment:
       APP_ENV: production
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-armor}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-armor}?sslmode=disable

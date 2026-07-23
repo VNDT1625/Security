@@ -31,6 +31,18 @@ for attempt in {1..60}; do
   sleep 5
 done
 
-curl --fail --silent http://127.0.0.1:3000/ >/dev/null
+echo "Waiting for the Prewise web app..."
+for attempt in {1..60}; do
+  if curl --fail --silent http://127.0.0.1:3000/ >/dev/null; then
+    break
+  fi
+  if [[ "$attempt" == "60" ]]; then
+    docker compose --env-file .env.codespaces -f docker-compose.production.yml -f docker-compose.codespaces.yml ps
+    echo "Web app did not become ready in time."
+    exit 1
+  fi
+  sleep 5
+done
+
 docker compose --env-file .env.codespaces -f docker-compose.production.yml -f docker-compose.codespaces.yml ps
 echo "Prewise is running through the named Cloudflare Tunnel."
