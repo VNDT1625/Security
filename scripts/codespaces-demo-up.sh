@@ -12,6 +12,12 @@ if [[ ! -s .codespaces-secrets/cloudflare-tunnel-token ]]; then
   exit 1
 fi
 
+# The verified adapters live outside the repository so they survive rebuilds
+# and are never committed. Mount them for metadata validation even while the
+# GPU endpoint is intentionally left unconfigured.
+export ADAPTER_RUNTIME_ROOT="${ADAPTER_RUNTIME_ROOT:-/workspaces/prewise-qwen35-9b-four-adapters/runtime}"
+export ADAPTER_MANIFEST_PATH="${ADAPTER_MANIFEST_PATH:-/app/server/adapters/qwen35-backend-manifest.json}"
+
 docker compose \
   --env-file .env.codespaces \
   -f docker-compose.production.yml \
