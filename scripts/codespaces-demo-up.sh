@@ -24,6 +24,14 @@ docker compose \
   -f docker-compose.codespaces.yml \
   up -d --build --remove-orphans
 
+# nginx resolves Docker service names when its worker starts. Recreate it after
+# backend so a backend container replacement cannot leave a stale upstream IP.
+docker compose \
+  --env-file .env.codespaces \
+  -f docker-compose.production.yml \
+  -f docker-compose.codespaces.yml \
+  up -d --force-recreate --no-deps api-gateway
+
 echo "Waiting for the Prewise API..."
 for attempt in {1..60}; do
   if curl --fail --silent http://127.0.0.1:8000/v1/health >/dev/null; then
