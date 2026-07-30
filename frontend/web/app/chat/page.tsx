@@ -28,6 +28,7 @@ import type { LegalContext, ScanRecord } from "@/lib/types";
 import styles from "./chat.module.css";
 
 const CONTEXT_TOKEN = /@([A-Za-z0-9]+(?:-[A-Za-z0-9]+){1,})/g;
+const LEGAL_JURISDICTIONS = [{ code: "VN", label: "Việt Nam" }] as const;
 
 const QUICK_QUESTIONS = [
     {
@@ -222,7 +223,7 @@ export default function ChatPage(): JSX.Element {
                     </div>
                     <div className={styles.headerStatus} aria-label="Trạng thái trợ lý">
                         <span><span className={styles.liveDot} /> Trợ lý sẵn sàng</span>
-                        <span><Scale /> Legal adapter</span>
+                        <span><Scale /> RAG + nguồn Chính phủ</span>
                     </div>
                 </header>
 
@@ -255,8 +256,8 @@ export default function ChatPage(): JSX.Element {
                                     {mode === "legal" ? (
                                         <>
                                             <p>
-                                                Câu hỏi được chuyển thẳng tới adapter pháp luật,
-                                                kèm căn cứ và trạng thái hiệu lực nguồn.
+                                                AI tự phân tích bối cảnh, đối chiếu Legal RAG và
+                                                truy xuất nguồn Chính phủ kèm liên kết gốc.
                                             </p>
                                             <div className={styles.quickStarts}>
                                                 {QUICK_QUESTIONS.map((item) => {
@@ -330,66 +331,31 @@ export default function ChatPage(): JSX.Element {
                             )}
 
                             {mode === "legal" && (
-                                <div className={styles.legalFields} aria-label="Bối cảnh pháp luật">
+                                <div className={styles.legalContextBar} aria-label="Bối cảnh pháp luật">
                                     <label>
                                         Quốc gia
-                                        <input
+                                        <select
                                             aria-label="Quốc gia"
                                             value={legalContext.jurisdiction}
                                             onChange={(event) => setLegalContext((current) => ({
                                                 ...current,
                                                 jurisdiction: event.target.value,
                                             }))}
-                                        />
+                                        >
+                                            {LEGAL_JURISDICTIONS.map((item) => (
+                                                <option key={item.code} value={item.code}>
+                                                    {item.label}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </label>
-                                    <label>
-                                        Ngày áp dụng
-                                        <input
-                                            aria-label="Ngày áp dụng"
-                                            type="date"
-                                            value={legalContext.as_of_date}
-                                            onChange={(event) => setLegalContext((current) => ({
-                                                ...current,
-                                                as_of_date: event.target.value,
-                                            }))}
-                                        />
-                                    </label>
-                                    <label>
-                                        Chủ thể
-                                        <input
-                                            aria-label="Chủ thể"
-                                            placeholder="VD: doanh nghiệp"
-                                            value={legalContext.actor}
-                                            onChange={(event) => setLegalContext((current) => ({
-                                                ...current,
-                                                actor: event.target.value,
-                                            }))}
-                                        />
-                                    </label>
-                                    <label>
-                                        Hành động
-                                        <input
-                                            aria-label="Hành động"
-                                            placeholder="VD: thông báo sự cố"
-                                            value={legalContext.action}
-                                            onChange={(event) => setLegalContext((current) => ({
-                                                ...current,
-                                                action: event.target.value,
-                                            }))}
-                                        />
-                                    </label>
-                                    <label className={styles.wideField}>
-                                        Dữ liệu / tài sản liên quan
-                                        <input
-                                            aria-label="Dữ liệu hoặc tài sản liên quan"
-                                            placeholder="VD: dữ liệu cá nhân khách hàng"
-                                            value={legalContext.data_or_asset}
-                                            onChange={(event) => setLegalContext((current) => ({
-                                                ...current,
-                                                data_or_asset: event.target.value,
-                                            }))}
-                                        />
-                                    </label>
+                                    <div className={styles.legalSourceInfo}>
+                                        <strong>LEGAL RAG + WEB CHÍNH PHỦ</strong>
+                                        <span>
+                                            AI tự xác định chủ thể, hành động và dữ liệu từ câu hỏi.
+                                            Nguồn dùng để trả lời sẽ có liên kết để đối chiếu.
+                                        </span>
+                                    </div>
                                 </div>
                             )}
 
@@ -494,7 +460,7 @@ export default function ChatPage(): JSX.Element {
                                 <span>ENTER để gửi · SHIFT + ENTER để xuống dòng</span>
                                 <span className={styles.composerHint}>
                                     {mode === "legal"
-                                        ? <><Scale /> Dùng adapter pháp luật</>
+                                        ? <><Scale /> RAG + nguồn Chính phủ</>
                                         : <><Sparkles /> Không quét lại Analyze</>}
                                 </span>
                                 <div>

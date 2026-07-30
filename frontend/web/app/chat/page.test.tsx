@@ -84,7 +84,7 @@ describe("ChatPage question-and-answer contract", () => {
             .toHaveAttribute("aria-selected", "true");
         expect(screen.getByRole("tab", { name: "Hỏi theo @ID lịch sử" }))
             .toBeInTheDocument();
-        expect(screen.getByText("Dùng adapter pháp luật")).toBeInTheDocument();
+        expect(screen.getAllByText("RAG + nguồn Chính phủ").length).toBeGreaterThan(0);
         expect(screen.queryByText("Core scans")).not.toBeInTheDocument();
         expect(screen.queryByText("Kiểm tra một URL")).not.toBeInTheDocument();
 
@@ -141,28 +141,31 @@ describe("ChatPage question-and-answer contract", () => {
         expect(input).toHaveValue("@019f-test-history-0001 ");
     });
 
-    it("forces legal questions through the legal adapter context", async () => {
+    it("uses a supported-country dropdown and lets AI infer legal context", async () => {
         const user = userEvent.setup();
         render(<ChatPage />);
 
-        await user.type(screen.getByRole("textbox", { name: "Chủ thể" }), "doanh nghiệp");
-        await user.type(screen.getByRole("textbox", { name: "Hành động" }), "thông báo sự cố");
-        await user.type(
-            screen.getByRole("textbox", { name: "Dữ liệu hoặc tài sản liên quan" }),
-            "dữ liệu cá nhân",
-        );
+        expect(screen.getByRole("combobox", { name: "Quốc gia" })).toHaveValue("VN");
+        expect(screen.getByRole("option", { name: "Việt Nam" })).toBeInTheDocument();
+        expect(screen.queryByRole("textbox", { name: "Chủ thể" })).not.toBeInTheDocument();
+        expect(screen.getByText(/AI tự xác định chủ thể, hành động và dữ liệu/))
+            .toBeInTheDocument();
         const input = screen.getByRole("textbox", { name: "Câu hỏi cho trợ lý" });
-        await user.type(input, "Tôi phải thông báo trong thời hạn nào?");
+        await user.type(
+            input,
+            "Doanh nghiệp phải thông báo sự cố dữ liệu cá nhân trong thời hạn nào?",
+        );
         await user.click(screen.getByRole("button", { name: "Gửi câu hỏi" }));
 
         await waitFor(() => expect(mocks.sendMessage).toHaveBeenCalledWith(
-            "Tôi phải thông báo trong thời hạn nào?",
+            "Doanh nghiệp phải thông báo sự cố dữ liệu cá nhân trong thời hạn nào?",
             undefined,
             expect.objectContaining({
                 jurisdiction: "VN",
-                actor: "doanh nghiệp",
-                action: "thông báo sự cố",
-                data_or_asset: "dữ liệu cá nhân",
+                as_of_date: expect.any(String),
+                actor: "",
+                action: "",
+                data_or_asset: "",
             }),
         ));
     });

@@ -154,11 +154,19 @@ export default function ChatMessage({
                                             <span>
                                                 {citation.title} — {citation.document_number}
                                             </span>
-                                            <br />{citation.section}; trang {citation.page_start ?? "?"}
+                                            {citation.authority && (
+                                                <><br />Cơ quan: {citation.authority}</>
+                                            )}
+                                            <br />
+                                            {citation.source_kind === "official_web"
+                                                ? "Nội dung truy xuất trực tiếp từ trang chính thức"
+                                                : `${citation.section}; trang ${citation.page_start ?? "?"}`}
                                             <br />Hiệu lực: {citation.status}; kiểm tra ngày {citation.status_checked_at}
                                             {citation.source_page_url && (
                                                 <><br /><a className="text-blue-700 underline" href={citation.source_page_url}
-                                                    target="_blank" rel="noreferrer">Nguồn văn bản chính thức</a></>
+                                                    target="_blank" rel="noreferrer">
+                                                    Mở nguồn chính thức ↗
+                                                </a></>
                                             )}
                                         </li>
                                     ))}

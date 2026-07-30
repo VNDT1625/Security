@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.services.legal_answer_service import LegalAnswerService, LegalQuestionContext
+from backend.services.official_legal_web_service import OfficialWebSearchResult
 from security.legal.query_planner import LegalQueryPlanner
 from security.legal_rag import LegalReference, LocalLegalRAG
 
@@ -92,6 +93,27 @@ class RetrieveStubRAG:
 
     def query(self, *_args: object, **_kwargs: object) -> tuple[LegalReference, ...]:
         raise AssertionError("query fallback must not run when retrieve is available")
+
+
+class WebStub:
+    def __init__(self, refs: tuple[LegalReference, ...] = ()) -> None:
+        self.refs = refs
+        self.calls: list[tuple[str, str]] = []
+
+    async def search(
+        self,
+        question: str,
+        *,
+        jurisdiction: str,
+        reference_hints: tuple[str, ...] = (),
+    ) -> OfficialWebSearchResult:
+        self.calls.append((question, jurisdiction))
+        return OfficialWebSearchResult(
+            references=self.refs,
+            query_count=2,
+            candidate_count=len(self.refs),
+            fetched_count=len(self.refs),
+        )
 
 
 CTX = LegalQuestionContext("VN", "2026-07-22", "doanh nghiệp", "chuyển dữ liệu", "dữ liệu cá nhân")
@@ -195,6 +217,116 @@ async def test_missing_required_facts_stops_before_retrieval() -> None:
     assert callback_calls == 0
     assert result.generation_attempted is False
     assert result.generation_succeeded is False
+
+
+@pytest.mark.asyncio
+async def test_ai_infers_missing_legal_context_before_hybrid_retrieval() -> None:
+    rag = RetrieveStubRAG([_ref()])
+    web = WebStub()
+    generator_calls = 0
+    callback_calls = 0
+
+    async def generator(system: str, _prompt: str) -> dict[str, object]:
+        nonlocal generator_calls
+        generator_calls += 1
+        if "trích xuất bối cảnh" in system:
+            return {
+                "actor": "doanh nghiệp",
+                "action": "thông báo sự cố",
+                "data_or_asset": "dữ liệu cá nhân khách hàng",
+            }
+        return _generation()
+
+    def before_generate() -> None:
+        nonlocal callback_calls
+        callback_calls += 1
+
+    result = await LegalAnswerService(
+        rag,
+        generator,
+        web_retriever=web,
+    ).answer(
+        "Doanh nghiệp phải thông báo sự cố dữ liệu cá nhân thế nào?",
+        LegalQuestionContext(jurisdiction="VN", as_of_date="2026-07-22"),
+        intent_mode="legal",
+        before_generate=before_generate,
+    )
+
+    assert result is not None
+    assert result.status == "answered"
+    assert generator_calls == 2
+    assert callback_calls == 1
+    assert rag.context["actor"] == "doanh nghiệp"
+    assert rag.context["action"] == "thông báo sự cố"
+    assert rag.context["data_or_asset"] == "dữ liệu cá nhân khách hàng"
+
+
+@pytest.mark.asyncio
+async def test_official_web_sources_merge_with_local_rag_and_expose_provenance() -> None:
+    web_ref = _ref(
+        chunk_id="official-web::1",
+        document_id="official-web::doc",
+        legal_weight="official_guidance",
+        document_type="official_web",
+        authority="Bộ Công an",
+        retrieval_channels=("official_web",),
+        extraction_method="official_html_text",
+        source_page_url="https://bocongan.gov.vn/canh-bao",
+        corpus_release_id="official-web-2026-07-22",
+    )
+    rag = RetrieveStubRAG([_ref()])
+
+    result = await LegalAnswerService(
+        rag,
+        lambda *_: _generation(),
+        web_retriever=WebStub((web_ref,)),
+    ).answer("Có phải xin sự đồng ý không?", CTX)
+
+    assert result is not None
+    assert result.status == "answered"
+    assert result.retrieval_mode == "hybrid+official_web"
+    assert result.retrieval_trace["official_web"]["fetched_count"] == 1
+    assert result.corpus_coverage_domains == [
+        "personal_data",
+        "cybersecurity",
+        "official_web",
+    ]
+    assert result.citations[0]["source_kind"] == "corpus"
+
+
+@pytest.mark.asyncio
+async def test_verified_factual_claim_can_link_to_retrieved_official_page() -> None:
+    official_fact = "Bộ Công an công bố cảnh báo về nguy cơ lộ lọt dữ liệu trên không gian mạng."
+    web_ref = _ref(
+        chunk_id="official-web::fact",
+        document_id="official-web::doc",
+        legal_weight="official_guidance",
+        document_type="official_web",
+        authority="Bộ Công an",
+        retrieval_channels=("official_web",),
+        extraction_method="official_html_text",
+        source_page_url="https://bocongan.gov.vn/canh-bao",
+        corpus_release_id="official-web-2026-07-22",
+        text_preview=official_fact,
+        full_text=official_fact,
+    )
+
+    result = await LegalAnswerService(
+        RetrieveStubRAG(insufficient_reason="corpus_stale"),
+        lambda *_: _generation(
+            chunk_id="official-web::fact",
+            claim_type="fact",
+            quote=official_fact,
+            claim=official_fact,
+        ),
+        web_retriever=WebStub((web_ref,)),
+    ).answer("Cơ quan chức năng đang cảnh báo điều gì?", CTX, intent_mode="legal")
+
+    assert result is not None
+    assert result.status == "answered"
+    assert result.citations[0]["source_kind"] == "official_web"
+    assert result.citations[0]["authority"] == "Bộ Công an"
+    assert result.citations[0]["source_page_url"] == "https://bocongan.gov.vn/canh-bao"
 
 
 @pytest.mark.asyncio

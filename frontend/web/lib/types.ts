@@ -302,6 +302,9 @@ export interface LegalCitation {
     effective_date: string;
     status_checked_at: string;
     source_page_url: string;
+    authority?: string;
+    source_kind?: "corpus" | "official_web";
+    retrieval_channels?: string[];
 }
 
 export interface LegalAnswerResult {
@@ -552,6 +555,7 @@ export interface PublicReportShare {
 }
 
 export type AIProvider = "auto" | "adapter" | "local" | "endpoint";
+export type UserSelectableAIProvider = Exclude<AIProvider, "auto">;
 
 export interface UserAISettings {
     provider: AIProvider;
@@ -566,7 +570,7 @@ export interface UserAISettings {
     weightPercent: number;
     weightEligible: boolean;
     weightSource: "global" | "account";
-    allowedProviders: AIProvider[];
+    allowedProviders: UserSelectableAIProvider[];
     allowedModels: string[];
 }
 
