@@ -75,6 +75,15 @@ function stripContextTokens(value: string): string {
     return value.replace(CONTEXT_TOKEN, " ").replace(/\s+/g, " ").trim();
 }
 
+function todayInVietnam(): string {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Ho_Chi_Minh",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(new Date());
+}
+
 export default function ChatPage(): JSX.Element {
     const { messages, sendMessage, isStreaming, error, retryLast } = useChatSession();
     const { quotaInfo, refreshQuota } = useAuth();
@@ -87,7 +96,7 @@ export default function ChatPage(): JSX.Element {
     const [mode, setMode] = useState<"legal" | "history">("legal");
     const [legalContext, setLegalContext] = useState<LegalContext>(() => ({
         jurisdiction: "VN",
-        as_of_date: new Date().toISOString().slice(0, 10),
+        as_of_date: todayInVietnam(),
         actor: "",
         action: "",
         data_or_asset: "",
