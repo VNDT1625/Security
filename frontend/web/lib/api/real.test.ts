@@ -128,6 +128,36 @@ describe("RealApiClient authentication", () => {
         expect(request.headers).not.toHaveProperty("Authorization");
     });
 
+    it("shows only the server-provided login message instead of technical HTTP details", async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 401,
+            statusText: "Unauthorized",
+            text: async () => '{"detail":"Email hoặc mật khẩu không đúng."}',
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(new RealApiClient().login({
+            email: "demo@aisec.local",
+            password: "wrong-password",
+        })).rejects.toThrow("Email hoặc mật khẩu không đúng.");
+    });
+
+    it("does not expose an HTML gateway error in the user interface", async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 502,
+            statusText: "Bad Gateway",
+            text: async () => "<html><body>upstream connect error</body></html>",
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(new RealApiClient().login({
+            email: "demo@aisec.local",
+            password: "Demo@123456",
+        })).rejects.toThrow("Hệ thống đang tạm thời gián đoạn. Vui lòng thử lại sau.");
+    });
+
     it("sends EXE bytes only with the explicit provider consent flag", async () => {
         const fetchMock = vi.fn().mockResolvedValue({
             ok: true,

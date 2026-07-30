@@ -276,6 +276,42 @@ function generateRequestId(): string {
 // HTTP helper
 // ---------------------------------------------------------------------------
 
+function apiErrorFallback(status: number): string {
+    if (status === 429) {
+        return "Bạn thao tác quá nhanh. Vui lòng thử lại sau.";
+    }
+    if (status >= 500) {
+        return "Hệ thống đang tạm thời gián đoạn. Vui lòng thử lại sau.";
+    }
+    return "Không thể hoàn tất yêu cầu. Vui lòng kiểm tra thông tin và thử lại.";
+}
+
+function apiErrorMessage(rawBody: string, status: number): string {
+    const body = rawBody.trim();
+    if (body) {
+        try {
+            const payload = JSON.parse(body) as { detail?: unknown; message?: unknown };
+            if (typeof payload.detail === "string" && payload.detail.trim()) {
+                return payload.detail.trim();
+            }
+            if (typeof payload.message === "string" && payload.message.trim()) {
+                return payload.message.trim();
+            }
+        } catch {
+            // Chỉ hiển thị body dạng text ngắn; không đưa HTML/proxy dump ra UI.
+            if (!body.startsWith("<") && body.length <= 300) {
+                return body;
+            }
+        }
+    }
+    return apiErrorFallback(status);
+}
+
+async function throwApiError(response: Response): Promise<never> {
+    const body = await response.text().catch(() => "");
+    throw new Error(apiErrorMessage(body, response.status));
+}
+
 /**
  * Gửi một yêu cầu JSON và trả về body đã parse.
  *
@@ -295,16 +331,7 @@ async function requestJson<TResponse>(
     });
 
     if (!response.ok) {
-        let detail = "";
-        try {
-            detail = await response.text();
-        } catch {
-            // bỏ qua lỗi đọc body
-        }
-        throw new Error(
-            `Yêu cầu ${path} thất bại: ${response.status} ${response.statusText}${detail ? ` — ${detail}` : ""
-            }`,
-        );
+        return throwApiError(response);
     }
 
     return (await response.json()) as TResponse;
@@ -322,10 +349,7 @@ async function requestAnonymousAssessmentJson<TResponse>(
         },
     });
     if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(
-            `Yêu cầu ${path} thất bại: ${response.status} ${response.statusText}${detail ? ` — ${detail}` : ""}`,
-        );
+        return throwApiError(response);
     }
     return response.json() as Promise<TResponse>;
 }
