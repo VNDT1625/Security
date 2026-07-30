@@ -254,11 +254,36 @@ async def test_ai_infers_missing_legal_context_before_hybrid_retrieval() -> None
 
     assert result is not None
     assert result.status == "answered"
-    assert generator_calls == 2
+    # Explicit Vietnamese phrases are extracted locally, so the model is used
+    # only once for the evidence-grounded legal claims.
+    assert generator_calls == 1
     assert callback_calls == 1
     assert rag.context["actor"] == "doanh nghiệp"
     assert rag.context["action"] == "thông báo sự cố"
-    assert rag.context["data_or_asset"] == "dữ liệu cá nhân khách hàng"
+    assert rag.context["data_or_asset"] == "dữ liệu cá nhân"
+
+
+@pytest.mark.asyncio
+async def test_clear_vietnamese_incident_question_works_when_generator_is_unavailable() -> None:
+    rag = RetrieveStubRAG([_ref()])
+    result = await LegalAnswerService(
+        rag,
+        generator=None,
+        web_retriever=WebStub(),
+    ).answer(
+        "Doanh nghiệp tại Việt Nam cần làm gì khi phát hiện sự cố rò rỉ dữ liệu cá nhân?",
+        LegalQuestionContext(jurisdiction="VN", as_of_date="2026-07-22"),
+        intent_mode="legal",
+    )
+
+    assert result is not None
+    assert result.status == "insufficient_legal_basis"
+    assert result.reason_code == "generator_unavailable"
+    assert rag.context["actor"] == "doanh nghiệp"
+    assert rag.context["action"] == "ứng phó và thông báo sự cố rò rỉ dữ liệu"
+    assert rag.context["data_or_asset"] == "dữ liệu cá nhân"
+    assert result.citations
+    assert result.citations[0]["source_page_url"]
 
 
 @pytest.mark.asyncio

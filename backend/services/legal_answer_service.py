@@ -411,12 +411,99 @@ class LegalAnswerService:
     def _bounded_context_value(value: object) -> str:
         return " ".join(str(value or "").split())[:300]
 
+    @staticmethod
+    def _infer_context_from_question(question: str) -> dict[str, str]:
+        """Extract conservative Vietnamese context when the model is unavailable.
+
+        This intentionally recognizes only explicit phrases. It does not infer
+        identities, events or legal conclusions that the user did not state.
+        """
+        normalized = " ".join(question.casefold().split())
+
+        actor_patterns: tuple[tuple[str, str], ...] = (
+            (r"\b(?:doanh nghiệp|công ty)\b", "doanh nghiệp"),
+            (r"\bcơ quan nhà nước\b", "cơ quan nhà nước"),
+            (r"\bnhà cung cấp dịch vụ\b", "nhà cung cấp dịch vụ"),
+            (r"\bchủ thể dữ liệu\b", "chủ thể dữ liệu"),
+            (r"\bngười lao động\b", "người lao động"),
+            (r"\bngười dùng\b", "người dùng"),
+            (r"\btổ chức\b", "tổ chức"),
+            (r"\bcá nhân\b", "cá nhân"),
+        )
+        asset_patterns: tuple[tuple[str, str], ...] = (
+            (r"\bdữ liệu cá nhân\b", "dữ liệu cá nhân"),
+            (r"\bdữ liệu khách hàng\b", "dữ liệu khách hàng"),
+            (r"\bhệ thống thông tin\b", "hệ thống thông tin"),
+            (r"\b(?:nhật ký|log) truy cập\b", "log truy cập"),
+            (r"\btài khoản\b", "tài khoản"),
+            (r"\bemail\b", "email"),
+            (r"\bdữ liệu\b", "dữ liệu"),
+            (r"\bhệ thống\b", "hệ thống"),
+        )
+        action_patterns: tuple[tuple[str, str], ...] = (
+            (
+                r"\b(?:rò rỉ|lộ|lọt|mất)\s+(?:lọt\s+)?dữ liệu\b",
+                "ứng phó và thông báo sự cố rò rỉ dữ liệu",
+            ),
+            (
+                r"\bphát hiện\s+(?:một\s+)?sự cố\b",
+                "ứng phó và thông báo sự cố",
+            ),
+            (
+                r"\b(?:thông báo|báo cáo)\s+sự cố\b",
+                "thông báo sự cố",
+            ),
+            (
+                r"\bchuyển\b.{0,80}\bra nước ngoài\b",
+                "chuyển dữ liệu ra nước ngoài",
+            ),
+            (
+                r"\bthu thập\b.{0,40}\b(?:nhật ký|log)\b",
+                "thu thập log truy cập",
+            ),
+            (r"\blưu trữ\b", "lưu trữ dữ liệu"),
+            (r"\bxử lý\b", "xử lý dữ liệu"),
+            (
+                r"\b(?:chia sẻ|cung cấp|tiết lộ)\b",
+                "chia sẻ hoặc cung cấp dữ liệu",
+            ),
+            (
+                r"\b(?:xin|thu thập)\b.{0,40}\bsự đồng ý\b",
+                "thu thập sự đồng ý",
+            ),
+        )
+
+        def first_match(patterns: Sequence[tuple[str, str]]) -> str:
+            return next(
+                (value for pattern, value in patterns if re.search(pattern, normalized)),
+                "",
+            )
+
+        return {
+            "actor": first_match(actor_patterns),
+            "action": first_match(action_patterns),
+            "data_or_asset": first_match(asset_patterns),
+        }
+
     async def _infer_context(
         self,
         question: str,
         context: LegalQuestionContext,
         before_generate: BeforeGenerate | None,
     ) -> tuple[LegalQuestionContext, bool, bool, str]:
+        missing = [
+            name for name in ("actor", "action", "data_or_asset")
+            if not getattr(context, name).strip()
+        ]
+        if not missing:
+            return context, False, False, ""
+        local_values = self._infer_context_from_question(question)
+        context = replace(
+            context,
+            actor=context.actor or local_values["actor"],
+            action=context.action or local_values["action"],
+            data_or_asset=context.data_or_asset or local_values["data_or_asset"],
+        )
         missing = [
             name for name in ("actor", "action", "data_or_asset")
             if not getattr(context, name).strip()
@@ -659,6 +746,26 @@ class LegalAnswerService:
         generation_succeeded: bool = False,
     ) -> LegalAnswer:
         issues = [issue.model_dump() for issue in verification.issues] if verification else []
+        source_refs = (
+            tuple(retrieval.context_references[:5])
+            if reason in {"generator_unavailable", "generation_failed"}
+            else ()
+        )
+        citations = [
+            self._citation(
+                ref,
+                quotes=[(ref.full_text or ref.text_preview).strip()[:800]],
+            )
+            for ref in source_refs
+            if (ref.full_text or ref.text_preview).strip()
+        ]
+        source_note = ""
+        if citations and status != "need_more_facts":
+            markers = ", ".join(f"[{index}]" for index in range(1, len(citations) + 1))
+            source_note = (
+                "\n\nĐã truy xuất nguồn để bạn đối chiếu trực tiếp "
+                f"{markers}. Chưa dùng các nguồn này để tự suy diễn nghĩa vụ hoặc chế tài."
+            )
         return LegalAnswer(
             status=status,
             jurisdiction="VN",
@@ -666,8 +773,9 @@ class LegalAnswerService:
             answer=(
                 self._need_facts_direction(missing_facts)
                 if status == "need_more_facts"
-                else self._safe_direction(context, reason=reason)
+                else self._safe_direction(context, reason=reason) + source_note
             ),
+            citations=citations,
             missing_facts=list(missing_facts),
             uncertainties=list(uncertainties),
             requires_human_review=requires_human_review,
