@@ -39,7 +39,15 @@ from security.ip_intelligence import ip_intelligence_service
 from security.legal_rag import LocalLegalRAG
 from security.misp_adapter import collect_misp
 from security.policy_engine import PolicyEngine, score_to_level
-from security.risk_core import PolicyEngineV2, default_config
+from security.risk_core import (
+    ActionPolicyDecision,
+    ActionRiskInput,
+    ActionRiskLevel,
+    EvidenceBasedActionRiskEngine,
+    LightGBMRiskAdapter,
+    PolicyEngineV2,
+    default_config,
+)
 from security.risk_core import assess as assess_risk_v2
 from security.risk_core.detectors import (
     ScanObservations,
@@ -53,6 +61,7 @@ from security.risk_core.detectors import (
     build_criteria_evidence,
 )
 from security.risk_core.external_adapters import collect_external
+from security.risk_core.action_explanation import build_action_audit_record
 from security.risk_core.url_overrides import URL_OVERRIDE_RULES
 from security.scan_history import local_scan_history
 from security.url_basic_intelligence import build_url_basic_intelligence
@@ -80,6 +89,7 @@ from shared.schemas import (
     LegalEvidenceStatus,
     Modality,
     RiskCoreTrace,
+    RiskLevel,
     Severity,
 )
 
@@ -163,6 +173,8 @@ class InferenceService:
         adapter_registry: AdapterRegistry | None = None,
         adapter_max_risk_contribution: float = 0.25,
         legal_rag: LocalLegalRAG | None = None,
+        action_risk_engine: EvidenceBasedActionRiskEngine | None = None,
+        security_core_mode: Literal["legacy", "shadow", "new_engine"] | None = None,
     ):
         self.engine = engine or InferenceEngine()
         self.policy = policy or PolicyEngine()
@@ -171,6 +183,12 @@ class InferenceService:
         self.adapter_max_risk_contribution = max(
             0.0, min(0.5, adapter_max_risk_contribution)
         )
+        self.action_risk_engine = action_risk_engine or EvidenceBasedActionRiskEngine(
+            lightgbm=LightGBMRiskAdapter.from_onnx(
+                settings.action_lightgbm_model_path
+            )
+        )
+        self.security_core_mode = security_core_mode or settings.security_core_mode
         self._recent_results: dict[str, tuple[float, AssessResponse]] = {}
         self._recent_results_lock = threading.Lock()
         self._recent_results_ttl = 5 * 60
@@ -1396,20 +1414,147 @@ class InferenceService:
         data_types: list[str],
         agent_context: AgentContext,
     ) -> AgentRiskResponse:
-        # Base content risk from the target (URL) if present.
+        action_id = str(uuid.uuid4())
+        available_assets = tuple(
+            getattr(agent_context, "available_assets", ()) or ()
+        )
+        # Preserve the established calculation for legacy/shadow comparison.
         evidence: list[Evidence] = []
         base = 0.05
+        destination_assessment: AssessResponse | None = None
         if target_url:
             pred = self.engine.predict_url(target_url)
             base = pred.risk_score
             evidence = pred.evidence
+            if self.security_core_mode != "legacy":
+                destination_assessment = self.assess_url(
+                    target_url,
+                    context_ai_mode="off",
+                )
         base = self._finalize_score(base, evidence)
-        decision = self.policy.evaluate_action(
-            action_type, base, data_types, agent_context.available_assets
+        legacy_decision = self.policy.evaluate_action(
+            action_type, base, data_types, list(available_assets)
         )
-        eff = self.policy.effective_action_score(action_type, base, data_types)
-        level = score_to_level(eff)
-        confidence = self._confidence(eff, evidence, "policy-action")
+        legacy_score = self.policy.effective_action_score(
+            action_type, base, data_types
+        )
+        decision = legacy_decision
+        eff = legacy_score
+        level = score_to_level(legacy_score)
+        confidence = self._confidence(legacy_score, evidence, "policy-action")
+        action_core = None
+        new_result = None
+        if self.security_core_mode != "legacy":
+            workflow_id = next(
+                (
+                    item.split(":", 1)[1]
+                    for item in available_assets
+                    if item.startswith("workflow_id:") and ":" in item
+                ),
+                None,
+            )
+            new_result = self.action_risk_engine.evaluate(
+                ActionRiskInput(
+                    action_id=action_id,
+                    action_type=action_type,
+                    target_url=target_url,
+                    data_types=tuple(data_types),
+                    user_intent=getattr(agent_context, "user_intent", None),
+                    planned_action=getattr(agent_context, "planned_action", None),
+                    permission_level=getattr(agent_context, "permission_level", None),
+                    available_assets=available_assets,
+                    session_id=getattr(agent_context, "session_id", None),
+                    workflow_id=workflow_id,
+                    destination_risk_score=(
+                        float(destination_assessment.risk_score) * 100.0
+                        if destination_assessment is not None
+                        else None
+                    ),
+                    destination_confidence=(
+                        float(destination_assessment.confidence)
+                        if destination_assessment is not None
+                        else None
+                    ),
+                )
+            )
+            new_result.mode = self.security_core_mode
+            new_result.legacy_comparison = {
+                "legacy_score": round(legacy_score * 100.0, 4),
+                "new_score": new_result.danger_score,
+                "new_composite_score": new_result.composite_score,
+                "legacy_decision": legacy_decision.value,
+                "new_decision": new_result.decision.value,
+                "disagrees": (
+                    legacy_decision.value
+                    != {
+                        ActionPolicyDecision.ALLOW: Decision.ALLOW,
+                        ActionPolicyDecision.ALLOW_WITH_LOG: Decision.ALLOW,
+                        ActionPolicyDecision.WARN: Decision.WARN,
+                        ActionPolicyDecision.ASK_CONFIRM: Decision.ASK_USER_CONFIRMATION,
+                        ActionPolicyDecision.SANDBOX: Decision.ASK_USER_CONFIRMATION,
+                        ActionPolicyDecision.TEMPORARY_BLOCK: Decision.BLOCK,
+                        ActionPolicyDecision.BLOCK: Decision.BLOCK,
+                    }[new_result.decision].value
+                ),
+                "difference_reason": new_result.reason_codes[-1]
+                if new_result.reason_codes
+                else "",
+            }
+            action_core = new_result.to_trace()
+            action_core["audit"] = build_action_audit_record(
+                new_result,
+                workflow_id=workflow_id,
+            )
+            if self.security_core_mode == "new_engine":
+                decision = {
+                    ActionPolicyDecision.ALLOW: Decision.ALLOW,
+                    ActionPolicyDecision.ALLOW_WITH_LOG: Decision.ALLOW,
+                    ActionPolicyDecision.WARN: Decision.WARN,
+                    ActionPolicyDecision.ASK_CONFIRM: Decision.ASK_USER_CONFIRMATION,
+                    ActionPolicyDecision.SANDBOX: Decision.ASK_USER_CONFIRMATION,
+                    ActionPolicyDecision.TEMPORARY_BLOCK: Decision.BLOCK,
+                    ActionPolicyDecision.BLOCK: Decision.BLOCK,
+                }[new_result.decision]
+                eff = (
+                    new_result.composite_score / 100.0
+                    if new_result.danger_score is None
+                    else new_result.danger_score / 100.0
+                )
+                level = {
+                    ActionRiskLevel.SAFE: RiskLevel.SAFE,
+                    ActionRiskLevel.SUSPICIOUS: RiskLevel.MEDIUM,
+                    ActionRiskLevel.DANGEROUS: RiskLevel.HIGH,
+                    ActionRiskLevel.CRITICAL: RiskLevel.CRITICAL,
+                    ActionRiskLevel.INSUFFICIENT_INFORMATION: RiskLevel.LOW,
+                }[new_result.risk_level]
+                confidence = new_result.confidence / 100.0
+                evidence = [
+                    *(
+                        destination_assessment.evidence
+                        if destination_assessment is not None
+                        else evidence
+                    ),
+                    *[
+                        Evidence(
+                            source=item.source.value,
+                            message=item.summary,
+                            severity=(
+                                Severity.CRITICAL
+                                if item.severity >= 90
+                                else Severity.HIGH
+                                if item.severity >= 70
+                                else Severity.MEDIUM
+                                if item.severity >= 40
+                                else Severity.LOW
+                            ),
+                            feature=item.category.value,
+                            contribution=round(item.severity / 100.0, 4),
+                            evidence_id=item.id,
+                            category=item.category.value,
+                        )
+                        for item in new_result.evidence_after_dedup
+                    ],
+                ]
 
         legal_status = "unavailable"
         legal_evidence_status = LegalEvidenceStatus.INSUFFICIENT_BASIS
@@ -1420,9 +1565,9 @@ class InferenceService:
             legal = self.legal_rag.assess_action(
                 action_type,
                 data_types,
-                available_assets=agent_context.available_assets,
-                user_intent=agent_context.user_intent or "",
-                planned_action=agent_context.planned_action or "",
+                available_assets=list(available_assets),
+                user_intent=getattr(agent_context, "user_intent", None) or "",
+                planned_action=getattr(agent_context, "planned_action", None) or "",
             )
             legal_status = legal.status
             legal_evidence_status = LegalEvidenceStatus(legal.evidence_status)
@@ -1464,10 +1609,17 @@ class InferenceService:
         if legal_review_required and decision in {Decision.ALLOW, Decision.WARN}:
             decision = Decision.ASK_USER_CONFIRMATION
 
-        rid = str(uuid.uuid4())
-        summary = self._safe_summary(decision, action_type, data_types)
+        rid = action_id
+        summary = (
+            new_result.explanation
+            if self.security_core_mode == "new_engine" and new_result is not None
+            else self._safe_summary(decision, action_type, data_types)
+        )
         if legal_reason:
             summary = f"{summary} {legal_reason}"
+        if action_core is not None:
+            action_core["final_public_decision"] = decision.value
+            action_core["legal_review_required"] = legal_review_required
         return AgentRiskResponse(
             decision=decision,
             verdict=decision,
@@ -1483,6 +1635,7 @@ class InferenceService:
             legal_evidence_status=legal_evidence_status,
             legal_review_required=legal_review_required,
             legal_references=legal_references,
+            security_core=action_core,
             request_id=rid,
         )
 

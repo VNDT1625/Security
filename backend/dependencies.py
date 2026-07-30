@@ -141,6 +141,8 @@ def get_user_inference_service(
         policy=shared.policy,
         adapter_registry=_build_adapter_registry(runtime),
         adapter_max_risk_contribution=settings.adapter_max_risk_contribution,
+        action_risk_engine=shared.action_risk_engine,
+        security_core_mode=shared.security_core_mode,
     )
 
 

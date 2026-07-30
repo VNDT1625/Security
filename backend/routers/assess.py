@@ -25,6 +25,7 @@ from backend.services.ai_context_weight_service import (
     get_effective_ai_context_weight_percent,
     get_url_assessment_cache_enabled,
 )
+from backend.services.action_audit_service import log_action_assessment
 from backend.services.exe_quick_scan_service import exe_quick_scan_service
 from backend.services.inference_service import InferenceService
 from backend.services.quota_service import (
@@ -538,7 +539,16 @@ def assess_action(
     require_api_key_scope(actor, "assess:action")
     reserve_scan_quota(db, actor, request)
     target = sanitize_text(req.target_url or req.target or "") or None
-    return svc.assess_action(req.action_type, target, req.data_types, req.agent_context)
+    result = svc.assess_action(req.action_type, target, req.data_types, req.agent_context)
+    log_action_assessment(
+        db,
+        result=result,
+        actor=actor,
+        request=request,
+        action_type=req.action_type,
+        target=target,
+    )
+    return result
 
 
 @router.post("/file/exe-quick-scan", response_model=dict)

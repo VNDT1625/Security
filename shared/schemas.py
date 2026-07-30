@@ -427,6 +427,8 @@ class AgentRiskResponse(BaseModel):
     legal_evidence_status: LegalEvidenceStatus = LegalEvidenceStatus.NOT_APPLICABLE
     legal_review_required: bool = False
     legal_references: list[dict[str, Any]] = Field(default_factory=list)
+    # Additive evidence-engine trace. Existing clients can ignore this field.
+    security_core: dict[str, Any] | None = None
     request_id: str = ""
 
 
