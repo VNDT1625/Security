@@ -12,7 +12,8 @@ ENV LANG=en_US.UTF-8 \
     LANGUAGE=en_US:en \
     LC_ALL=en_US.UTF-8 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Production image excludes pytest, coverage and lint tooling.
 COPY requirements.runtime.txt ./
@@ -21,7 +22,9 @@ RUN pip install --no-cache-dir --no-compile -r requirements.runtime.txt
 # The browser sandbox uses Chromium in a temporary Playwright profile.  Keep the
 # headless shell and its OS libraries in the image so deep analysis does not
 # silently fall back to HTTP-only inspection after deployment.
-RUN python -m playwright install --with-deps --only-shell chromium
+RUN mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && python -m playwright install --with-deps --only-shell chromium \
+    && chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}"
 
 # Source
 COPY backend/ ./backend/
@@ -35,6 +38,10 @@ COPY alembic.ini ./alembic.ini
 
 RUN useradd -m armor && mkdir -p /app/.aisec-data && chown -R armor /app
 USER armor
+
+# Fail the image build if the non-root runtime user cannot resolve the exact
+# Chromium revision installed alongside the current Playwright package.
+RUN python -c "from pathlib import Path; from playwright.sync_api import sync_playwright; p = sync_playwright().start(); executable = Path(p.chromium.executable_path); assert executable.is_file(), executable; p.stop()"
 
 EXPOSE 8000
 

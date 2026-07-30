@@ -3,9 +3,9 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-if [[ ! -f .env.codespaces ]]; then
-  bash scripts/codespaces-demo-prepare.sh
-fi
+# Always refresh runtime configuration. GitHub injects newly added or rotated
+# Codespaces secrets into this process even when .env.codespaces already exists.
+bash scripts/codespaces-demo-prepare.sh
 
 if [[ ! -s .codespaces-secrets/cloudflare-tunnel-token ]]; then
   echo "Cloudflare Tunnel token is missing. Add CLOUDFLARE_TUNNEL_TOKEN as a Codespaces secret and rebuild."
