@@ -1,7 +1,7 @@
-"""WebSocket chat endpoint (design.md GAP-2.6 RAG-like pattern).
+"""WebSocket Q&A endpoint with optional owned-history context.
 
-Flow: user question (+context) -> Layer 1 assessment -> Layer 2 LLM explanation
-streamed token-by-token -> final message with assessment attached.
+Chat never runs a new risk assessment. Fresh URL/email/SMS analysis belongs to
+Analyze; an ``analysis_id`` only reuses the signed-in user's stored result.
 """
 
 from __future__ import annotations
@@ -14,25 +14,25 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
+from sqlalchemy.orm import selectinload
 
 from backend.db import get_db
 from backend.dependencies import (
     get_explanation_service,
-    get_inference_service,
     get_user_explanation_service,
-    get_user_inference_service,
     get_user_legal_answer_service,
 )
 from backend.middleware import sanitize_text
+from backend.models import ScanEvent
 from backend.routers.auth import build_actor_plan_info, resolve_actor
-from backend.services.legal_answer_service import LegalAnswerService, LegalQuestionContext
+from backend.services.legal_answer_service import LegalQuestionContext
 from backend.services.quota_service import (
     refund_ai_credits,
     reserve_ai_credits,
-    reserve_scan_quota,
 )
-from shared.adapter_schemas import AdapterRunStatus, AdapterTask
+from shared.schemas import Evidence, Severity
 
 router = APIRouter(tags=["chat"])
 
@@ -123,14 +123,64 @@ def _public_legal_payload(
     return public, trace_id, retrieval_mode, corpus
 
 
+def _load_owned_history_context(
+    db: DbSession,
+    *,
+    user_id: str | None,
+    request_id: str,
+) -> tuple[ScanEvent, list[Evidence], dict[str, Any]]:
+    """Load one privacy-minimised analysis context owned by the current user."""
+
+    clean_id = sanitize_text(request_id).strip()
+    if not clean_id:
+        raise HTTPException(status_code=422, detail="Mã lịch sử không hợp lệ.")
+    if user_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Bạn cần đăng nhập để dùng kết quả lịch sử làm ngữ cảnh.",
+        )
+
+    row = db.execute(
+        select(ScanEvent)
+        .options(selectinload(ScanEvent.evidence))
+        .where(ScanEvent.request_id == clean_id, ScanEvent.user_id == user_id)
+    ).scalar_one_or_none()
+    if row is None:
+        # Do not reveal whether the id belongs to another account.
+        raise HTTPException(status_code=404, detail="Không tìm thấy kết quả lịch sử này.")
+
+    evidence: list[Evidence] = []
+    for item in row.evidence[:50]:
+        try:
+            severity = Severity(item.severity)
+        except ValueError:
+            severity = Severity.INFO
+        evidence.append(
+            Evidence(
+                evidence_id=item.id,
+                source=sanitize_text(item.source),
+                message=sanitize_text(item.message),
+                severity=severity,
+                feature=sanitize_text(item.feature) if item.feature else None,
+                contribution=item.contribution,
+            )
+        )
+
+    assessment_context = {
+        "risk_score": round(float(row.risk_score) * 100),
+        "risk_level": row.risk_level,
+        "decision": row.decision,
+        "confidence": round(float(row.confidence) * 100),
+        "reasons": [item.message for item in evidence[:10]],
+    }
+    return row, evidence, assessment_context
+
+
 @router.websocket("/v1/chat")
 async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
     await ws.accept()
-    svc = get_inference_service()
     expl = get_explanation_service()
     turn_count = 0
-    cached_context_key = ""
-    cached_assessment = None
     try:
         while True:
             raw = await ws.receive_text()
@@ -143,7 +193,6 @@ async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
             )
             actor = resolve_actor(credentials, db, ws)  # WebSocket exposes client like Request.
             user_id = actor.user.id if actor.user else None
-            svc = get_user_inference_service(db, user_id)
             expl = get_user_explanation_service(db, user_id)
             plan = build_actor_plan_info(db, actor)
             if turn_count > plan.chatFollowupLimit:
@@ -158,6 +207,18 @@ async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
                 continue
 
             question = sanitize_text(payload.get("question", ""))
+            context = payload.get("context") or {}
+            analysis_id = sanitize_text(context.get("analysis_id", "")) if context else ""
+            history_row: ScanEvent | None = None
+            history_evidence: list[Evidence] = []
+            history_assessment: dict[str, Any] | None = None
+            if analysis_id:
+                history_row, history_evidence, history_assessment = _load_owned_history_context(
+                    db,
+                    user_id=user_id,
+                    request_id=analysis_id,
+                )
+
             legal_service = get_user_legal_answer_service(db, user_id)
             raw_legal_context = payload.get("legal_context") or {}
             requested_intent_mode = sanitize_text(
@@ -175,21 +236,6 @@ async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
                 raw_legal_context,
                 intent_mode=intent_mode,
             )
-            legal_turn = intent_mode == "legal"
-            if not legal_turn:
-                detector = getattr(
-                    legal_service,
-                    "is_legal_question",
-                    LegalAnswerService.is_legal_question,
-                )
-                try:
-                    legal_turn = bool(detector(question))
-                except Exception:
-                    legal_turn = LegalAnswerService.is_legal_question(question)
-            scan_reserved = False
-            if legal_turn:
-                reserve_scan_quota(db, actor, ws)
-                scan_reserved = True
             legal_credit_reserved = False
 
             def before_generate(
@@ -209,16 +255,18 @@ async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
                 answer_kwargs["mode"] = intent_mode
             if _accepts_keyword(legal_service.answer, "before_generate"):
                 answer_kwargs["before_generate"] = before_generate
-            try:
-                legal_result = await legal_service.answer(
-                    question,
-                    context_model,
-                    **answer_kwargs,
-                )
-            except Exception:
-                if legal_credit_reserved:
-                    refund_ai_credits(db, actor, ws, kind="explanation")
-                raise
+            legal_result = None
+            if history_row is None:
+                try:
+                    legal_result = await legal_service.answer(
+                        question,
+                        context_model,
+                        **answer_kwargs,
+                    )
+                except Exception:
+                    if legal_credit_reserved:
+                        refund_ai_credits(db, actor, ws, kind="explanation")
+                    raise
             if legal_result is not None:
                 internal_legal_payload = _model_dump(legal_result)
                 if legal_credit_reserved and _generation_attempt_failed(internal_legal_payload):
@@ -244,10 +292,15 @@ async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
                 )
                 turn_count += 1
                 continue
-            context = payload.get("context") or {}
-            content = sanitize_text(context.get("content", "")) if context else ""
-            modality = context.get("modality", "text") if context else "text"
+
+            modality = "text"
             operator_context = sanitize_text(context.get("operator_context", ""))
+            if history_row is not None:
+                modality = history_row.modality
+                operator_context = (
+                    f"Kết quả lịch sử @{history_row.request_id}: "
+                    f"{history_row.risk_level}, quyết định {history_row.decision}."
+                )
             history = payload.get("history") or []
             if isinstance(history, list):
                 history_context = "\n".join(
@@ -259,58 +312,13 @@ async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
                     f"{operator_context}\nLịch sử hội thoại:\n{history_context}"
                 )
 
-            assessment = None
-            if content:
-                context_key = f"{modality}\n{content}\n{operator_context}"
-                if context_key == cached_context_key and cached_assessment is not None:
-                    assessment = cached_assessment
-                else:
-                    if not scan_reserved:
-                        reserve_scan_quota(db, actor, ws)
-                        scan_reserved = True
-                    auto_context = (
-                        plan.autoWebContext if modality == "url" else plan.autoMessageContext
-                    )
-                    context_task = (
-                        AdapterTask.WEB_CONTEXT
-                        if modality == "url"
-                        else AdapterTask.MESSAGE_CONTEXT
-                    )
-                    context_mode = "shadow" if auto_context else "off"
-                    reserved_evaluation = context_mode == "shadow" and svc.context_ai_ready(
-                        context_task
-                    )
-                    if reserved_evaluation:
-                        reserve_ai_credits(db, actor, ws, kind="evaluation")
-                    try:
-                        if modality == "url":
-                            assessment = svc.assess_url(
-                                content,
-                                operator_context,
-                                context_ai_mode=context_mode,
-                            )
-                        else:
-                            assessment = svc.assess_text(
-                                content,
-                                modality,
-                                {"operator_context": operator_context},
-                                context_ai_mode=context_mode,
-                            )
-                    except Exception:
-                        if reserved_evaluation:
-                            refund_ai_credits(db, actor, ws, kind="evaluation")
-                        raise
-                    if reserved_evaluation and (
-                        assessment.contextual_analysis is None
-                        or assessment.contextual_analysis.status != AdapterRunStatus.COMPLETED
-                    ):
-                        refund_ai_credits(db, actor, ws, kind="evaluation")
-                    cached_context_key = context_key
-                    cached_assessment = assessment
-
-            evidence = assessment.evidence if assessment else []
-            excerpt = content or question
-            assessment_context = assessment.model_dump(mode="json") if assessment else None
+            evidence = history_evidence
+            excerpt = (
+                f"Kết quả lịch sử {history_row.request_id}"
+                if history_row is not None
+                else question
+            )
+            assessment_context = history_assessment
             reserved_explanation = expl.llm_ready
             if reserved_explanation:
                 reserve_ai_credits(db, actor, ws, kind="explanation")
@@ -332,11 +340,15 @@ async def chat_ws(ws: WebSocket, db: DbSession = Depends(get_db)):
 
             final = {
                 "type": "final",
-                "message_id": assessment.request_id if assessment else "",
+                "message_id": (
+                    history_row.request_id
+                    if history_row is not None
+                    else str(uuid.uuid4())
+                ),
                 "modality": modality,
             }
-            if assessment:
-                final["assessment"] = assessment.model_dump(mode="json")
+            if history_row is not None:
+                final["analysis_id"] = history_row.request_id
             await ws.send_text(json.dumps(final))
             turn_count += 1
     except WebSocketDisconnect:

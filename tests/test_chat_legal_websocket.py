@@ -98,18 +98,11 @@ def _prepare(
     ws = _WebSocket(payload)
     refunds: list[str] = []
     monkeypatch.setattr(chat, "LegalQuestionContext", _ExpandedContext)
-    monkeypatch.setattr(chat, "get_inference_service", lambda: object())
     monkeypatch.setattr(chat, "get_explanation_service", lambda: object())
-    monkeypatch.setattr(chat, "get_user_inference_service", lambda *_: object())
     monkeypatch.setattr(chat, "get_user_explanation_service", lambda *_: object())
     monkeypatch.setattr(chat, "get_user_legal_answer_service", lambda *_: service)
     monkeypatch.setattr(chat, "resolve_actor", lambda *_: _Actor())
     monkeypatch.setattr(chat, "build_actor_plan_info", lambda *_: _Plan())
-    monkeypatch.setattr(
-        chat,
-        "reserve_scan_quota",
-        lambda *args, **kwargs: events.append("scan"),
-    )
     monkeypatch.setattr(
         chat,
         "reserve_ai_credits",
@@ -142,7 +135,7 @@ def test_legal_websocket_reserves_immediately_before_generation(monkeypatch) -> 
     ws, refunds = _prepare(monkeypatch, Service(), events)
     asyncio.run(chat.chat_ws(ws, db=object()))
 
-    assert events == ["scan", "answer", "reserve:explanation", "model"]
+    assert events == ["answer", "reserve:explanation", "model"]
     assert refunds == []
     final = next(item for item in ws.sent if item["type"] == "final")
     assert uuid.UUID(final["message_id"])
@@ -171,7 +164,7 @@ def test_nonempty_legal_context_forces_legal_mode_over_requested_auto(monkeypatc
     )
     asyncio.run(chat.chat_ws(ws, db=object()))
 
-    assert events == ["scan"]
+    assert events == []
     assert refunds == []
     assert any(item["type"] == "final" for item in ws.sent)
 
@@ -186,7 +179,7 @@ def test_legal_websocket_non_generation_state_costs_no_credit(monkeypatch) -> No
     ws, refunds = _prepare(monkeypatch, Service(), events)
     asyncio.run(chat.chat_ws(ws, db=object()))
 
-    assert events == ["scan"]
+    assert events == []
     assert refunds == []
     assert any(item["type"] == "final" for item in ws.sent)
 
@@ -203,5 +196,5 @@ def test_legal_websocket_refunds_failed_model_attempt(monkeypatch) -> None:
     ws, refunds = _prepare(monkeypatch, Service(), events)
     asyncio.run(chat.chat_ws(ws, db=object()))
 
-    assert events == ["scan", "reserve:explanation", "model_failed"]
+    assert events == ["reserve:explanation", "model_failed"]
     assert refunds == ["explanation"]

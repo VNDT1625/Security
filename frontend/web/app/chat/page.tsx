@@ -1,390 +1,374 @@
 "use client";
 
-/**
- * Trang CHAT — trải nghiệm thử nhanh có ngữ cảnh (streaming).
- *
- * Mục đích (UI_wireframe §1.5): khách mới dán URL/nội dung email vào ô chat,
- * trợ lý đánh giá độ tin cậy + giải thích lý do theo thời gian thực. Cuối phiên
- * luôn gợi ý cài Extension để "bảo vệ thật".
- *
- * Trách nhiệm (design.md — Chat; Luồng 2 streaming):
- *   - Dùng `useChatSession()` cho messages/sendMessage/isStreaming/error/retryLast.
- *   - Bong bóng chào mừng của assistant khi chưa có tin nhắn nào.
- *   - Danh sách hội thoại render qua <ChatMessage>, con trỏ đang gõ ở bong bóng
- *     assistant cuối cùng khi đang stream.
- *   - Ô nhập dưới cùng: textarea + "Gửi ▶" + affordance "📎 Tải file .eml" +
- *     hiển thị quota "Còn lại hôm nay: X/50 scan" (∞ cho pro/team).
- *   - Chặn câu hỏi rỗng (Req 8.4); kiểm tra quota trước khi gửi; nếu hết quota
- *     hiển thị CTA nâng cấp/Extension và KHÔNG gửi; ngược lại tiêu thụ 1 lượt
- *     rồi gọi sendMessage với context suy ra từ đầu vào (url vs email).
- *   - Banner lỗi khi mất kết nối WS + nút "Thử lại" gọi retryLast() (Req 8.5).
- *
- * An toàn hiển thị (Req 18): mọi nội dung render qua JSX escaping.
- *
- * _Requirements: 8.1, 8.2, 8.3, 8.4, 8.6_
- */
-
 import Link from "next/link";
 import {
     ArrowUpRight,
+    Bot,
+    CircleHelp,
+    Clock3,
+    Link2,
     LockKeyhole,
-    MailWarning,
-    Paperclip,
-    RefreshCw,
-    Scale,
-    ScanSearch,
+    MessageCircleQuestion,
     Send,
     ShieldCheck,
     Sparkles,
+    X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import ChatMessage from "@/components/ChatMessage";
 import { PrewiseShell } from "@/components/PrewiseUI";
 import { useAuth } from "@/context/AuthContext";
-import { useChatSession, type ChatContext } from "@/hooks/useChatSession";
-import { looksLikeUrl } from "@/lib/quick-scan";
-import type { LegalContext } from "@/lib/types";
+import { useChatSession } from "@/hooks/useChatSession";
+import { getApiClient } from "@/lib/api";
+import type { ScanRecord } from "@/lib/types";
 
 import styles from "./chat.module.css";
 
-/** Nội dung bong bóng chào mừng của trợ lý (UI_wireframe §1.5). */
-const WELCOME_TEXT =
-    "Dán URL, email hoặc tin nhắn đáng ngờ. Prewise sẽ kiểm tra tín hiệu, chấm điểm rủi ro và giải thích bằng chứng.";
+const CONTEXT_TOKEN = /@([A-Za-z0-9]+(?:-[A-Za-z0-9]+){1,})/g;
 
-/** Thông điệp khi người dùng hết lượt quét trong ngày. */
-const QUOTA_EXCEEDED_TEXT =
-    "Bạn đã hết lượt quét miễn phí hôm nay. Nâng cấp gói hoặc cài Extension để tiếp tục được bảo vệ.";
-
-const QUICK_STARTS = [
+const QUICK_QUESTIONS = [
     {
-        label: "Kiểm tra một URL",
-        detail: "Tên miền, chuyển hướng và dấu hiệu giả mạo",
-        value: "Hãy kiểm tra URL này:\n",
-        icon: ScanSearch,
+        title: "Xử lý sau khi bấm nhầm",
+        detail: "Các bước cần làm ngay để giảm rủi ro.",
+        question: "Tôi vừa bấm vào một liên kết đáng ngờ. Tôi nên làm gì ngay bây giờ?",
+        icon: ShieldCheck,
     },
     {
-        label: "Phân tích email",
-        detail: "Người gửi, ý đồ và yêu cầu nhạy cảm",
-        value: "Hãy phân tích nội dung email sau:\n",
-        icon: MailWarning,
+        title: "Nhận biết email giả mạo",
+        detail: "Dấu hiệu phổ biến và cách tự kiểm tra.",
+        question: "Những dấu hiệu phổ biến của email giả mạo là gì?",
+        icon: CircleHelp,
     },
     {
-        label: "Hỏi tiếp về kết quả",
-        detail: "Giải thích rủi ro bằng ngôn ngữ dễ hiểu",
-        value: "Hãy giải thích những dấu hiệu rủi ro quan trọng nhất.",
-        icon: Sparkles,
+        title: "Bảo vệ lại tài khoản",
+        detail: "Khi nào nên đổi mật khẩu và thu hồi phiên.",
+        question: "Khi nào tôi nên đổi mật khẩu và thu hồi các phiên đăng nhập?",
+        icon: LockKeyhole,
     },
-];
+] as const;
 
-/**
- * ChatPage — giao diện chat đánh giá có ngữ cảnh.
- */
-export default function ChatPage(): JSX.Element {
-    const { messages, sendMessage, isStreaming, error, retryLast } =
-        useChatSession();
-    const { quota, quotaInfo, refreshQuota, session } = useAuth();
+function shortId(id: string): string {
+    return id.length > 12 ? `${id.slice(0, 8)}…` : id;
+}
 
-    // Nội dung ô nhập (controlled) + thông báo hết quota (client-side).
-    const [input, setInput] = useState("");
-    const [quotaBlocked, setQuotaBlocked] = useState(false);
-    const [activeContext, setActiveContext] = useState<ChatContext | null>(null);
-    const [legalMode, setLegalMode] = useState(false);
-    const [legalContext, setLegalContext] = useState<LegalContext>({
-        jurisdiction: "VN",
-        as_of_date: new Date().toISOString().slice(0, 10),
-        actor: "",
-        action: "",
-        data_or_asset: "",
-    });
+function findReferencedId(value: string, records: ScanRecord[]): string | null {
+    const matches = Array.from(value.matchAll(CONTEXT_TOKEN));
+    const token = matches.at(-1)?.[1];
+    if (!token) return null;
 
-    // Vùng cuộn danh sách tin nhắn — tự cuộn tới tin mới nhất.
-    const scrollRef = useRef<HTMLDivElement | null>(null);
-    const emlInputRef = useRef<HTMLInputElement | null>(null);
+    const exact = records.find((record) => record.id.toLowerCase() === token.toLowerCase());
+    if (exact) return exact.id;
 
-    // Số lượt còn lại + giới hạn theo gói hiện tại (∞ cho pro/team).
-    const remaining = quotaInfo?.remaining ?? quota.getRemaining();
-    const limit = quotaInfo?.dailyScanLimit ?? quota.getLimitForPlan();
-    const remainingLabel = limit >= 999_999
-        ? "∞"
-        : `${remaining}/${limit}`;
-    const aiLimit = quotaInfo?.aiCreditDailyLimit ?? session?.plan.aiCreditDailyLimit ?? 5;
-    const aiRemaining = quotaInfo?.aiRemaining ?? aiLimit;
-    const aiRemainingLabel = aiLimit >= 999_999 ? "∞" : `${aiRemaining}/${aiLimit}`;
-
-    // Có ít nhất một kết quả đánh giá từ assistant → hiện CTA cài Extension.
-    const hasAssessment = useMemo(
-        () => messages.some((m) => m.role === "assistant" && m.assessment),
-        [messages],
+    const prefixMatches = records.filter((record) =>
+        record.id.toLowerCase().startsWith(token.toLowerCase()),
     );
+    if (prefixMatches.length === 1) return prefixMatches[0].id;
 
-    // Tự cuộn xuống cuối mỗi khi có tin nhắn mới hoặc delta stream.
+    // Full request ids can be pasted before the history list has finished loading.
+    return token.split("-").length >= 3 ? token : null;
+}
+
+function stripContextTokens(value: string): string {
+    return value.replace(CONTEXT_TOKEN, " ").replace(/\s+/g, " ").trim();
+}
+
+export default function ChatPage(): JSX.Element {
+    const { messages, sendMessage, isStreaming, error, retryLast } = useChatSession();
+    const { quotaInfo, refreshQuota } = useAuth();
+    const [input, setInput] = useState("");
+    const [records, setRecords] = useState<ScanRecord[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(true);
+    const [historyError, setHistoryError] = useState("");
+    const [attachedId, setAttachedId] = useState<string | null>(null);
+    const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
     useEffect(() => {
-        const el = scrollRef.current;
-        if (el) {
-            el.scrollTop = el.scrollHeight;
+        let active = true;
+        setHistoryLoading(true);
+        void getApiClient().getScanHistory()
+            .then((items) => {
+                if (!active) return;
+                setRecords(items);
+                setHistoryError("");
+            })
+            .catch((reason) => {
+                if (!active) return;
+                setRecords([]);
+                setHistoryError(
+                    reason instanceof Error ? reason.message : "Không thể tải lịch sử.",
+                );
+            })
+            .finally(() => {
+                if (active) setHistoryLoading(false);
+            });
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        const scrollIntoView = messagesEndRef.current?.scrollIntoView;
+        if (typeof scrollIntoView === "function") {
+            scrollIntoView.call(messagesEndRef.current, { behavior: "smooth", block: "end" });
         }
     }, [messages, isStreaming]);
 
-    // id của bong bóng assistant cuối cùng (để gắn con trỏ đang gõ khi stream).
-    const lastAssistantId = useMemo(() => {
-        for (let i = messages.length - 1; i >= 0; i--) {
-            if (messages[i].role === "assistant") {
-                return messages[i].id;
-            }
-        }
-        return null;
-    }, [messages]);
+    const attachedRecord = useMemo(
+        () => records.find((record) => record.id === attachedId) ?? null,
+        [attachedId, records],
+    );
+    const recentRecords = records.slice(0, 6);
+    const hasAssessment = messages.some((message) => Boolean(message.assessment));
 
-    /** Gửi câu hỏi hiện tại: chặn rỗng, kiểm tra quota, dựng context. */
+    function updateInput(value: string): void {
+        setInput(value);
+        const referencedId = findReferencedId(value, records);
+        if (referencedId) setAttachedId(referencedId);
+    }
+
+    function attachRecord(record: ScanRecord): void {
+        setAttachedId(record.id);
+        setInput((current) => {
+            const question = stripContextTokens(current);
+            return `@${record.id}${question ? ` ${question}` : " "}`;
+        });
+    }
+
+    function removeContext(): void {
+        setAttachedId(null);
+        setInput((current) => stripContextTokens(current));
+    }
+
     async function handleSend(): Promise<void> {
-        const question = input.trim();
+        const question = stripContextTokens(input);
+        if (!question || isStreaming) return;
 
-        // (Req 8.4) Câu hỏi rỗng sau trim → không gửi.
-        if (question.length === 0) {
-            return;
-        }
-
-        const startsNewAssessment = !legalMode && (
-            activeContext === null ||
-            looksLikeUrl(question) ||
-            question.length > 240 ||
-            question.includes("\n"));
-
-        // Chỉ nội dung mới tiêu thụ scan. Câu hỏi tiếp nối tái sử dụng assessment.
-        if (startsNewAssessment && remaining <= 0) {
-            setQuotaBlocked(true);
-            return;
-        }
-
-        // Dựng context từ đầu vào: url nếu trông giống URL, ngược lại email —
-        // để trợ lý trả về đánh giá đúng đối tượng (chat có ngữ cảnh).
-        const context: ChatContext | undefined = legalMode ? undefined : startsNewAssessment
-            ? {
-                content: question,
-                modality: looksLikeUrl(question) ? "url" : "email",
-            }
-            : (activeContext ?? undefined);
-
-        if (startsNewAssessment) {
-            if (quotaInfo === null) quota.consume();
-            setActiveContext(context);
-        }
-        setQuotaBlocked(false);
         setInput("");
-        try {
-            await sendMessage(question, context, legalMode ? legalContext : undefined);
-        } finally {
-            await refreshQuota();
-        }
+        await sendMessage(
+            question,
+            attachedId
+                ? {
+                    content: "",
+                    modality: "text",
+                    analysis_id: attachedId,
+                }
+                : undefined,
+        );
+        await refreshQuota();
     }
-
-    /** Gửi bằng Enter (Shift+Enter để xuống dòng). */
-    function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>): void {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            void handleSend();
-        }
-    }
-
-    const showWelcome = messages.length === 0;
 
     return (
         <PrewiseShell>
-            <main id="main-content" className={styles.page}>
+            <main className={styles.page}>
                 <header className={styles.pageHeader}>
                     <div>
-                        <p className={styles.eyebrow}><i /> AI / RISK COPILOT</p>
-                        <h1>Trợ lý phân tích</h1>
-                        <p>Kiểm tra tín hiệu đáng ngờ và hỏi tiếp trên cùng một ngữ cảnh.</p>
+                        <p className={styles.eyebrow}><i />CHAT / SECURITY ASSISTANT</p>
+                        <h1>Trợ lý an toàn số</h1>
+                        <p>Hỏi đáp và giải thích kết quả cũ — không chạy lại Analyze.</p>
                     </div>
-                    <div className={styles.headerStatus}>
-                        <span><LockKeyhole aria-hidden /> Kết nối mã hóa</span>
-                        <span><ShieldCheck aria-hidden /> Bằng chứng có giải thích</span>
+                    <div className={styles.headerStatus} aria-label="Trạng thái trợ lý">
+                        <span><span className={styles.liveDot} /> Trợ lý sẵn sàng</span>
+                        <span><LockKeyhole /> Ngữ cảnh riêng tư</span>
                     </div>
                 </header>
 
                 <div className={styles.workspace}>
-                    <section className={styles.conversation} aria-label="Hội thoại phân tích">
+                    <section className={styles.conversation} aria-label="Cuộc trò chuyện">
                         <div className={styles.conversationBar}>
                             <div>
-                                <span className={styles.liveDot} />
-                                <strong>Phiên phân tích mới</strong>
+                                <Bot aria-hidden="true" />
+                                <strong>PREWISE ASSISTANT</strong>
                             </div>
-                            <small>{legalMode ? "LEGAL CONTEXT" : "RISK CONTEXT"} · STREAMING</small>
+                            <small>
+                                {attachedId ? `ACTIVE CONTEXT · @${shortId(attachedId)}` : "NO ACTIVE CONTEXT"}
+                            </small>
                         </div>
 
-                        <div ref={scrollRef} className={styles.messages} aria-live="polite">
-                            {showWelcome && (
-                                <section className={styles.welcome} aria-label="Bắt đầu phiên phân tích">
-                                    <div className={styles.welcomeIcon}><ShieldCheck aria-hidden /></div>
-                                    <p className={styles.welcomeKicker}>PREWISE ASSISTANT</p>
-                                    <h2>Bạn muốn kiểm tra điều gì?</h2>
-                                    <p>{WELCOME_TEXT}</p>
+                        <div className={styles.messages} aria-live="polite">
+                            {messages.length === 0 ? (
+                                <div className={styles.welcome}>
+                                    <span className={styles.welcomeIcon}><MessageCircleQuestion /></span>
+                                    <p className={styles.welcomeKicker}>ASK, UNDERSTAND, ACT</p>
+                                    <h2>Bạn muốn hỏi điều gì?</h2>
+                                    <p>
+                                        Hỏi về an toàn số, cách xử lý sự cố hoặc gắn một kết quả
+                                        trong lịch sử bằng <strong>@ID</strong> để được giải thích.
+                                    </p>
                                     <div className={styles.quickStarts}>
-                                        {QUICK_STARTS.map(({ label, detail, value, icon: Icon }) => (
-                                            <button key={label} type="button" onClick={() => setInput(value)}>
-                                                <Icon aria-hidden />
-                                                <span><strong>{label}</strong><small>{detail}</small></span>
-                                                <ArrowUpRight aria-hidden />
-                                            </button>
-                                        ))}
+                                        {QUICK_QUESTIONS.map((item) => {
+                                            const Icon = item.icon;
+                                            return (
+                                                <button
+                                                    key={item.title}
+                                                    type="button"
+                                                    onClick={() => setInput(item.question)}
+                                                    aria-label={item.title}
+                                                >
+                                                    <Icon />
+                                                    <span>
+                                                        <strong>{item.title}</strong>
+                                                        <small>{item.detail}</small>
+                                                    </span>
+                                                    <ArrowUpRight />
+                                                </button>
+                                            );
+                                        })}
                                     </div>
-                                </section>
-                            )}
-
-                            {messages.map((message) => (
-                                <ChatMessage
-                                    key={message.id}
-                                    message={message}
-                                    isStreaming={isStreaming && message.id === lastAssistantId}
-                                />
-                            ))}
-
-                            {hasAssessment && (
-                                <div className={styles.extensionCta}>
-                                    <Sparkles aria-hidden />
-                                    <span>Muốn được bảo vệ tự động khi duyệt web?</span>
-                                    <Link href="/downloads">Cài Extension <ArrowUpRight aria-hidden /></Link>
                                 </div>
+                            ) : (
+                                messages.map((message, index) => (
+                                    <ChatMessage
+                                        key={message.id}
+                                        message={message}
+                                        isStreaming={isStreaming && index === messages.length - 1}
+                                    />
+                                ))
                             )}
+                            <div ref={messagesEndRef} />
                         </div>
 
                         <div className={styles.composerZone}>
                             {error && (
-                                <div role="alert" className={`${styles.notice} ${styles.errorNotice}`}>
+                                <div className={`${styles.notice} ${styles.errorNotice}`} role="alert">
                                     <span>{error}</span>
                                     <button type="button" onClick={() => void retryLast()}>
-                                        <RefreshCw aria-hidden /> Thử lại
+                                        Thử lại
                                     </button>
                                 </div>
                             )}
 
-                            {quotaBlocked && (
-                                <div role="alert" className={`${styles.notice} ${styles.quotaNotice}`}>
-                                    <span>{QUOTA_EXCEEDED_TEXT}</span>
-                                    <Link href="/pricing">Xem gói nâng cấp</Link>
-                                </div>
-                            )}
-
-                            <div className={styles.modeSwitch} role="group" aria-label="Chế độ trợ lý">
-                                <button
-                                    type="button"
-                                    className={!legalMode ? styles.activeMode : ""}
-                                    aria-pressed={!legalMode}
-                                    onClick={() => setLegalMode(false)}
-                                >
-                                    <ScanSearch aria-hidden /> Phân tích rủi ro
-                                </button>
-                                <button
-                                    type="button"
-                                    className={legalMode ? styles.activeMode : ""}
-                                    aria-pressed={legalMode}
-                                    onClick={() => setLegalMode(true)}
-                                >
-                                    <Scale aria-hidden /> Hỏi pháp luật
-                                </button>
-                            </div>
-
-                            {legalMode && (
-                                <div className={styles.legalFields}>
-                                    <label>Quốc gia
-                                        <input value={legalContext.jurisdiction} aria-label="Quốc gia"
-                                            onChange={(e) => setLegalContext({ ...legalContext, jurisdiction: e.target.value })}
-                                            placeholder="VN" />
-                                    </label>
-                                    <label>Ngày áp dụng
-                                        <input type="date" value={legalContext.as_of_date} aria-label="Ngày áp dụng"
-                                            onChange={(e) => setLegalContext({ ...legalContext, as_of_date: e.target.value })} />
-                                    </label>
-                                    <label>Chủ thể
-                                        <input value={legalContext.actor} aria-label="Chủ thể"
-                                            onChange={(e) => setLegalContext({ ...legalContext, actor: e.target.value })}
-                                            placeholder="Ví dụ: doanh nghiệp" />
-                                    </label>
-                                    <label>Hành động
-                                        <input value={legalContext.action} aria-label="Hành động"
-                                            onChange={(e) => setLegalContext({ ...legalContext, action: e.target.value })}
-                                            placeholder="Hành động cần đánh giá" />
-                                    </label>
-                                    <label className={styles.wideField}>Dữ liệu hoặc tài sản
-                                        <input value={legalContext.data_or_asset} aria-label="Dữ liệu hoặc tài sản"
-                                            onChange={(e) => setLegalContext({ ...legalContext, data_or_asset: e.target.value })}
-                                            placeholder="Thông tin, tài sản hoặc dữ liệu liên quan" />
-                                    </label>
+                            {attachedId && (
+                                <div className={styles.contextChip} role="status">
+                                    <Link2 />
+                                    <span>
+                                        <small>NGỮ CẢNH ĐÃ GẮN</small>
+                                        <strong>
+                                            @{shortId(attachedId)}
+                                            {attachedRecord
+                                                ? ` · ${attachedRecord.type} · ${attachedRecord.score}/100`
+                                                : ""}
+                                        </strong>
+                                    </span>
+                                    <button type="button" onClick={removeContext} aria-label="Bỏ ngữ cảnh">
+                                        <X />
+                                    </button>
                                 </div>
                             )}
 
                             <div className={styles.composer}>
                                 <textarea
+                                    aria-label="Câu hỏi cho trợ lý"
                                     value={input}
-                                    onChange={(e) => setInput(e.target.value)}
-                                    onKeyDown={handleKeyDown}
-                                    rows={3}
-                                    placeholder={legalMode ? "Mô tả tình huống pháp lý cần làm rõ…" : "Dán URL, email hoặc tin nhắn đáng ngờ…"}
-                                    aria-label="Nội dung cần đánh giá"
+                                    onChange={(event) => updateInput(event.target.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter" && !event.shiftKey) {
+                                            event.preventDefault();
+                                            void handleSend();
+                                        }
+                                    }}
+                                    placeholder="Hỏi điều bạn cần biết… Có thể thêm @ID từ lịch sử để làm ngữ cảnh."
                                 />
                                 <button
                                     type="button"
+                                    disabled={!stripContextTokens(input) || isStreaming}
                                     onClick={() => void handleSend()}
-                                    disabled={isStreaming || input.trim().length === 0}
-                                    aria-label="Gửi nội dung"
+                                    aria-label="Gửi câu hỏi"
                                 >
-                                    <Send aria-hidden /><span>Gửi</span>
+                                    <Send />
+                                    <span>{isStreaming ? "Đang trả lời" : "Gửi"}</span>
                                 </button>
                             </div>
 
                             <div className={styles.composerMeta}>
-                                <input
-                                    ref={emlInputRef}
-                                    type="file"
-                                    accept=".eml,message/rfc822"
-                                    hidden
-                                    aria-hidden="true"
-                                    onChange={(event) => {
-                                        const file = event.target.files?.[0];
-                                        if (!file) return;
-                                        void file.text().then((raw) => {
-                                            setLegalMode(false);
-                                            setInput(raw.slice(0, 200_000));
-                                        });
-                                        event.target.value = "";
-                                    }}
-                                />
-                                <button type="button" onClick={() => emlInputRef.current?.click()} aria-label="Tải file .eml">
-                                    <Paperclip aria-hidden /> Đính kèm .eml
-                                </button>
-                                <span>Enter để gửi · Shift + Enter để xuống dòng</span>
-                                <div title="Nội dung mới dùng 1 scan; AI Evaluate và AI Explain là hai lần gọi riêng.">
-                                    <span>CORE <strong>{remainingLabel}</strong></span>
-                                    <span>AI <strong>{aiRemainingLabel}</strong></span>
+                                <span>ENTER để gửi · SHIFT + ENTER để xuống dòng</span>
+                                <span className={styles.composerHint}>
+                                    <Sparkles /> Chat không dùng lượt Analyze
+                                </span>
+                                <div>
+                                    <span>AI CREDITS</span>
+                                    <strong>
+                                        {quotaInfo
+                                            ? `${quotaInfo.aiRemaining}/${quotaInfo.aiCreditDailyLimit}`
+                                            : "—"}
+                                    </strong>
                                 </div>
                             </div>
+
+                            {hasAssessment && (
+                                <div className={styles.extensionCta}>
+                                    <ShieldCheck />
+                                    <span>Muốn kiểm tra nội dung mới? Hãy dùng đúng công cụ Analyze.</span>
+                                    <Link href="/analyze">Mở Analyze <ArrowUpRight /></Link>
+                                </div>
+                            )}
                         </div>
                     </section>
 
-                    <aside className={styles.contextRail} aria-label="Thông tin phiên chat">
+                    <aside className={styles.contextRail} aria-label="Ngữ cảnh từ lịch sử">
                         <section>
-                            <p className={styles.railLabel}>PHẠM VI PHÂN TÍCH</p>
-                            <h2>{legalMode ? "Ngữ cảnh pháp luật" : "Tín hiệu rủi ro"}</h2>
-                            <p>{legalMode
-                                ? "Trả lời dựa trên quốc gia, thời điểm và dữ kiện bạn cung cấp."
-                                : "Đối chiếu URL, nội dung và hành vi đáng ngờ trong cùng một phiên."}</p>
-                            <ul>
-                                <li><i>01</i><span><strong>Nhận diện</strong><small>Loại tín hiệu và mục đích</small></span></li>
-                                <li><i>02</i><span><strong>Đánh giá</strong><small>Điểm rủi ro và bằng chứng</small></span></li>
-                                <li><i>03</i><span><strong>Giải thích</strong><small>Hướng xử lý an toàn</small></span></li>
-                            </ul>
+                            <p className={styles.railLabel}>NGỮ CẢNH TỪ LỊCH SỬ</p>
+                            <h2>Gắn kết quả bằng @ID</h2>
+                            <p>Chọn một kết quả đã phân tích để trợ lý giải thích hoặc trả lời tiếp.</p>
+
+                            {historyLoading ? (
+                                <p className={styles.historyEmpty}>Đang tải lịch sử…</p>
+                            ) : historyError ? (
+                                <p className={styles.historyEmpty}>{historyError}</p>
+                            ) : recentRecords.length === 0 ? (
+                                <div className={styles.historyEmpty}>
+                                    <span>Chưa có kết quả nào.</span>
+                                    <Link href="/analyze">Phân tích nội dung đầu tiên →</Link>
+                                </div>
+                            ) : (
+                                <div className={styles.historyList}>
+                                    {recentRecords.map((record) => (
+                                        <button
+                                            key={record.id}
+                                            type="button"
+                                            className={`${styles.historyItem} ${
+                                                attachedId === record.id ? styles.historyItemActive : ""
+                                            }`}
+                                            onClick={() => attachRecord(record)}
+                                            aria-label={`Gắn kết quả @${record.id}`}
+                                        >
+                                            <span className={styles.historyBadge}>{record.type}</span>
+                                            <span>
+                                                <strong>{record.target || "Nội dung đã được ẩn"}</strong>
+                                                <small>@{shortId(record.id)} · {record.timestamp}</small>
+                                            </span>
+                                            <b>{record.score}</b>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            <Link className={styles.historyLink} href="/account/history">
+                                <Clock3 /> Xem toàn bộ lịch sử <ArrowUpRight />
+                            </Link>
                         </section>
+
                         <section className={styles.privacyCard}>
-                            <LockKeyhole aria-hidden />
-                            <div><strong>Không tự mở liên kết</strong><p>Nội dung được hiển thị dạng trơ. Bạn quyết định mọi hành động tiếp theo.</p></div>
+                            <LockKeyhole />
+                            <div>
+                                <strong>Không quét lại dữ liệu</strong>
+                                <p>
+                                    Chat chỉ đọc kết quả đã lưu, kiểm tra quyền sở hữu tài khoản
+                                    và không trừ lượt Analyze.
+                                </p>
+                            </div>
                         </section>
+
                         <section className={styles.quotaCard}>
-                            <p className={styles.railLabel}>HẠN MỨC HÔM NAY</p>
-                            <div><span>Core scans</span><strong>{remainingLabel}</strong></div>
-                            <div><span>AI credits</span><strong>{aiRemainingLabel}</strong></div>
-                            <Link href="/account/billing">Quản lý gói <ArrowUpRight aria-hidden /></Link>
+                            <p className={styles.railLabel}>CHAT USAGE</p>
+                            <div>
+                                <span>AI credits còn lại</span>
+                                <strong>
+                                    {quotaInfo
+                                        ? `${quotaInfo.aiRemaining}/${quotaInfo.aiCreditDailyLimit}`
+                                        : "—"}
+                                </strong>
+                            </div>
+                            <Link href="/account/plan">Xem gói tài khoản <ArrowUpRight /></Link>
                         </section>
                     </aside>
                 </div>
