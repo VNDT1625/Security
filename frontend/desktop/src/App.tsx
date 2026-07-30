@@ -454,10 +454,10 @@ function App() {
       r.scoreLayers
         ?.map(
           (layer) =>
-            `- ${layer.layer}: ${layer.status} · ${Math.round(layer.score)}/100 · ${layer.signals} tín hiệu`,
+            `- ${layer.layer}: ${layer.status} · ${layer.signals} tín hiệu`,
         )
         .join("\n") || "";
-    const text = `AI SECURITY ARMOR\nĐiểm: ${r.score}/100 — ${riskText(r)}\nĐộ tin cậy: ${Math.round(r.confidence * 100)}%\nThreat level: ${r.threatLevel || "—"}\nThời gian backend: ${r.latencyMs || 0} ms\n\nPHẠM VI ĐÃ KIỂM TRA\n${layers || "Không có dữ liệu lớp"}\n\nBẰNG CHỨNG\n${r.reasons.map((x) => "- " + x).join("\n") || "- Không phát hiện tín hiệu rủi ro nổi bật"}\n\nKHUYẾN NGHỊ\n${r.explanation || ""}`;
+    const text = `AI SECURITY ARMOR\nKết luận: ${riskText(r)}\nĐộ tin cậy: ${Math.round(r.confidence * 100)}%\nMức cảnh báo: ${r.threatLevel || "—"}\nThời gian xử lý: ${r.latencyMs || 0} ms\n\nPHẠM VI ĐÃ KIỂM TRA\n${layers || "Không có dữ liệu lớp"}\n\nBẰNG CHỨNG\n${r.reasons.map((x) => "- " + x).join("\n") || "- Không phát hiện tín hiệu rủi ro nổi bật"}\n\nKHUYẾN NGHỊ\n${r.explanation || ""}`;
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
     a.download = `ai-security-report-${r.requestId}.txt`;
@@ -775,7 +775,7 @@ function App() {
                       }
                     >
                       <span className={`mail-score ${m.result?.riskLevel || ""}`}>
-                        {m.result ? m.result.score : "—"}
+                        {m.result ? riskText(m.result) : "—"}
                       </span>
                       <span>
                         <b>{m.sender}</b>
@@ -1134,7 +1134,13 @@ function AdminConsole() {
                   <div className="scan-list">
                     {overview.recentScans.map((scan) => (
                       <div key={scan.id}>
-                        <span className={`risk-badge ${scan.riskLevel}`}>{scan.score}</span>
+                        <span className={`risk-badge ${scan.riskLevel}`}>
+                          {scan.riskLevel === "danger"
+                            ? "⛔"
+                            : scan.riskLevel === "warn"
+                              ? "⚠"
+                              : "✓"}
+                        </span>
                         <span>
                           <b>{scan.target}</b>
                           <small>
@@ -1545,12 +1551,7 @@ function ResultPanel({
           <small>Mã yêu cầu: {result.requestId}</small>
         </div>
         <div className={`verdict ${result.riskLevel}`}>
-          <b>{result.score}</b>
-          <span>
-            /100
-            <br />
-            {riskText(result)}
-          </span>
+          <b>{riskText(result)}</b>
         </div>
       </div>
       <div className="result-grid">
@@ -1559,7 +1560,7 @@ function ResultPanel({
           <p>
             Độ tin cậy <b>{Math.round(result.confidence * 100)}%</b>
           </p>
-          <small>Điểm số không thay thế đánh giá của con người.</small>
+          <small>Kết luận dựa trên bằng chứng và chính sách bảo vệ.</small>
         </div>
         <div className="evidence">
           <h3>
@@ -1617,30 +1618,17 @@ function RiskRing({ result }: { result: Assessment }) {
       >
         <div>
           <Shield />
-          <b>{result.score}</b>
-          <span>/100</span>
           <strong>{riskText(result)}</strong>
         </div>
       </div>
       {result.aiContext && (
         <div
           className="ai-score-chip"
-          aria-label={`AI chấm ${result.aiContext.score} trên 100, trọng số ${result.aiContext.weightPercent}%`}
+          aria-label="AI hỗ trợ đánh giá ngữ cảnh"
         >
-          <span>AI THỰC CHẤM</span>
-          <b>
-            {Number.isInteger(result.aiContext.score)
-              ? result.aiContext.score
-              : result.aiContext.score.toFixed(1)}
-            <small>/100</small>
-          </b>
-          <em>
-            Trọng số {result.aiContext.weightPercent}%
-            {result.aiContext.effectiveWeightPercent != null &&
-            result.aiContext.effectiveWeightPercent !== result.aiContext.weightPercent
-              ? ` · hiệu lực ${result.aiContext.effectiveWeightPercent}%`
-              : ""}
-          </em>
+          <span>AI HỖ TRỢ NGỮ CẢNH</span>
+          <b>{riskText(result)}</b>
+          <em>Lõi chính sách đưa ra kết luận cuối cùng</em>
         </div>
       )}
     </div>

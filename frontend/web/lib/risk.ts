@@ -165,6 +165,31 @@ export function getRiskLevelForDecision(
 }
 
 /**
+ * Kết luận hiển thị ưu tiên quyết định và mức do máy chủ trả về.
+ * Điểm chỉ là phương án tương thích cho dữ liệu cũ, không được hiển thị ra UI.
+ */
+export function getRiskLevelForContext(
+    decision: string | undefined,
+    riskLevel: string | undefined,
+    score: number,
+): RiskLevel {
+    const policyLevel = getRiskLevelForDecision(decision, score);
+    if (decision) return policyLevel;
+
+    const normalized = String(riskLevel || "").toLowerCase();
+    if (["critical", "dangerous", "danger", "high", "blocked"].includes(normalized)) {
+        return RISK_LEVELS.danger;
+    }
+    if (["suspicious", "warn", "warning", "medium", "review", "unknown"].includes(normalized)) {
+        return RISK_LEVELS.warn;
+    }
+    if (["safe", "low", "allow", "allowed"].includes(normalized)) {
+        return RISK_LEVELS.safe;
+    }
+    return policyLevel;
+}
+
+/**
  * Tiện ích: lấy bảng token màu Tailwind cho một mức rủi ro theo `key`.
  *
  * @param key Khóa mức rủi ro (`safe` | `warn` | `danger`).

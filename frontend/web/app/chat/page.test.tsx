@@ -103,7 +103,7 @@ describe("ChatPage question-and-answer contract", () => {
 
         const input = screen.getByRole("textbox", { name: "Câu hỏi cho trợ lý" });
         expect(input).toHaveValue("@019f-test-history-0001 ");
-        expect(screen.getByText(/@019f-tes… · URL · 82\/100/)).toBeInTheDocument();
+        expect(screen.getByText(/@019f-tes… · URL · RỦI RO CAO/)).toBeInTheDocument();
 
         await user.type(input, "Tại sao kết quả này bị cảnh báo?");
         await user.click(screen.getByRole("button", { name: "Gửi câu hỏi" }));

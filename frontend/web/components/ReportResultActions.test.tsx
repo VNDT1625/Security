@@ -16,7 +16,7 @@ describe("ReportResultActions", () => {
     const payload = safeSharePayload(81.4, "https://prewise.test/shared-report/public-token");
     expect(payload).toEqual({
       title: "Báo cáo an toàn Prewise",
-      text: expect.stringContaining("81/100"),
+      text: expect.stringContaining("RỦI RO CAO"),
       url: "https://prewise.test/shared-report/public-token",
     });
     expect(JSON.stringify(payload)).not.toContain("password");
@@ -33,7 +33,7 @@ describe("ReportResultActions", () => {
     fireEvent.click(screen.getByRole("button", { name: /chia sẻ/i }));
 
     await waitFor(() => expect(share).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining("72/100"),
+      text: expect.stringContaining("RỦI RO CAO"),
       url: expect.stringContaining("/shared-report/portable-token"),
     })));
     expect(createReportShare).toHaveBeenCalledWith({ requestId: "scan-123", expiresIn: "24h" });
@@ -51,7 +51,7 @@ describe("ReportResultActions", () => {
     fireEvent.click(screen.getByRole("button", { name: /chia sẻ/i }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
-    expect(writeText.mock.calls[0][0]).toContain("44/100");
+    expect(writeText.mock.calls[0][0]).toContain("ĐÁNG NGỜ");
     expect(writeText.mock.calls[0][0]).toContain("/shared-report/portable-token");
     expect(writeText.mock.calls[0][0]).not.toContain("/result/");
     expect(await screen.findByText(/đã sao chép liên kết/i)).toBeInTheDocument();

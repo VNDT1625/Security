@@ -142,14 +142,14 @@ function render(entry, tab) {
     let parsed; try { parsed = new URL(tab.url); } catch { parsed = { hostname: tab.url || "" }; }
     $("monitor-title").textContent = "Không phát hiện rủi ro vượt ngưỡng";
     $("monitor-hostname").textContent = parsed.hostname;
-    $("monitor-scan-time").textContent = `Đã kiểm tra lúc ${new Date(entry.completedAt).toLocaleTimeString("vi-VN")} · ${entry.score}/100`;
+    $("monitor-scan-time").textContent = `Đã kiểm tra lúc ${new Date(entry.completedAt).toLocaleTimeString("vi-VN")}`;
     $("monitor-detail").textContent = "Extension tiếp tục bảo vệ âm thầm trong nền.";
     show("monitoring");
     return true;
   }
   const level = getRiskLevel(entry.score, entry.result?.decision);
   $("risk-card").style.setProperty("--risk", level.color);
-  $("score").textContent = entry.score;
+  $("risk-symbol").textContent = level.icon || (level.key === "danger" ? "⛔" : "⚠");
   $("risk-label").textContent = { safe: "RỦI RO THẤP", warn: "CẦN THẬN TRỌNG", danger: "RỦI RO CAO" }[level.key];
   $("risk-summary").textContent = { safe: "Không thấy tín hiệu rủi ro cao", warn: "Trang này cần được thận trọng", danger: "Trang này có rủi ro cao" }[level.key];
   $("scan-time").textContent = `Hoàn tất trong ${((entry.latencyMs || 0) / 1000).toFixed(1)}s · ${new Date(entry.completedAt).toLocaleTimeString("vi-VN")}`;

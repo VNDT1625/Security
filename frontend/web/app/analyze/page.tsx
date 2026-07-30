@@ -16,7 +16,7 @@ type Mode = "url" | "email" | "sms";
 type Depth = "quick" | "balanced" | "deep" | "pro";
 type ApiEvidence = { source: string; message: string; severity: string; feature?: string };
 type UrlResponse = { risk_score: number; threat_level: string; analysis_time_ms: number; evidence: ApiEvidence[]; ai_detection: { model_version: string }; score_layers?: unknown[]; deep_analysis_recommended?: boolean; cache_hit?: boolean; cache_status?: "hit" | "miss" | "bypassed" | "refresh" };
-const STEPS = ["Chuẩn hóa URL", "Phân tích tên miền và giả mạo", "Chấm điểm rủi ro", "Tổng hợp bằng chứng"];
+const STEPS = ["Chuẩn hóa URL", "Phân tích tên miền và giả mạo", "Đánh giá rủi ro", "Tổng hợp bằng chứng"];
 const DEPTH_OPTIONS: Array<{ key: Depth; label: string; badge: string }> = [
   { key: "quick", label: "Nhanh", badge: "Không mở trang" },
   { key: "balanced", label: "Cân bằng", badge: "HTTP sandbox" },

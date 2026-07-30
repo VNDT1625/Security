@@ -690,7 +690,7 @@ export default function AdminPage() {
                             <header><div><span>LIVE ACTIVITY</span><h3>Phân tích gần đây</h3></div><b>{overview?.recentScans.length ?? 0} bản ghi</b></header>
                             <div className={styles.dataRows}>
                                 {overview?.recentScans.length ? overview.recentScans.map((scan) => <div key={scan.id} className={styles.scanRow}>
-                                    <span className={`${styles.riskMark} ${adminRiskTone(scan.riskLevel) === 'danger' ? styles.riskDanger : adminRiskTone(scan.riskLevel) === 'warn' ? styles.riskWarn : styles.riskSafe}`}>{Math.round(scan.score)}</span>
+                                    <span className={`${styles.riskMark} ${adminRiskTone(scan.riskLevel) === 'danger' ? styles.riskDanger : adminRiskTone(scan.riskLevel) === 'warn' ? styles.riskWarn : styles.riskSafe}`}>{adminRiskTone(scan.riskLevel) === 'danger' ? '⛔' : adminRiskTone(scan.riskLevel) === 'warn' ? '⚠' : '✓'}</span>
                                     <div><b>{scan.target}</b><small>{scan.modality.toUpperCase()} · {formatDate(scan.createdAt)}</small></div>
                                     <em>{scan.riskLevel}</em>
                                 </div>) : <p className={styles.compactEmpty}>Chưa có lượt phân tích nào.</p>}

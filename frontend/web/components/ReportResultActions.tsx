@@ -4,17 +4,26 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { getApiClient } from "@/lib/api";
 import { loadResultRecord } from "@/lib/result-storage";
 import type { FeedbackReason, ReportShareExpiry } from "@/lib/types";
+import { getRiskLevelForContext } from "@/lib/risk";
 import styles from "./ReportResultActions.module.css";
 
 type ShareReportButtonProps = {
   score: number;
   requestId?: string;
+  decision?: string;
+  riskLevel?: string;
 };
 
-export function safeSharePayload(score: number, url: string) {
+export function safeSharePayload(
+  score: number,
+  url: string,
+  decision?: string,
+  riskLevel?: string,
+) {
+  const level = getRiskLevelForContext(decision, riskLevel, Math.max(0, Math.min(100, score)));
   return {
     title: "Báo cáo an toàn Prewise",
-    text: `Prewise ghi nhận mức rủi ro ${Math.round(score)}/100. Liên kết chỉ mở bản tóm tắt đã che dữ liệu nhạy cảm.`,
+    text: `Prewise kết luận: ${level.label}. Liên kết chỉ mở bản tóm tắt đã che dữ liệu nhạy cảm.`,
     url,
   };
 }
@@ -37,7 +46,7 @@ async function copyToClipboard(value: string): Promise<void> {
   if (!copied) throw new Error("Clipboard unavailable");
 }
 
-export function ShareReportButton({ score, requestId }: ShareReportButtonProps) {
+export function ShareReportButton({ score, requestId, decision, riskLevel }: ShareReportButtonProps) {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [expiry, setExpiry] = useState<ReportShareExpiry>("24h");
@@ -58,7 +67,7 @@ export function ShareReportButton({ score, requestId }: ShareReportButtonProps) 
         setActiveShare(portable);
         setStatus("Đã tạo liên kết báo cáo đã che. Bạn có thể chia sẻ hoặc thu hồi liên kết này.");
       }
-      const payload = safeSharePayload(score, portable.url);
+      const payload = safeSharePayload(score, portable.url, decision, riskLevel);
       if (navigator.share) {
         try {
           await navigator.share(payload);

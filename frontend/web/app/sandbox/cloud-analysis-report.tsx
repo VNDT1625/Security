@@ -110,8 +110,8 @@ export function CloudAnalysisReport({ analysis, phase, sampleStatus, summary }: 
                     <b>{cloudOutcomeLabel(analysis?.outcome)}</b>
                 </span>
                 <span>
-                    <small>ĐIỂM RỦI RO</small>
-                    <b>{typeof analysis?.riskScore === "number" ? `${analysis.riskScore}/100` : "—"}</b>
+                    <small>MỨC RỦI RO</small>
+                    <b>{cloudOutcomeLabel(analysis?.outcome)}</b>
                 </span>
                 <span>
                     <small>ĐỘ TIN CẬY</small>

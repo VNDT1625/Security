@@ -103,6 +103,8 @@ export default function ChatMessage({
                     <div className="mb-2">
                         <RiskBadge
                             score={assessment.score}
+                            decision={assessment.decision}
+                            riskLevel={assessment.riskLevel}
                             showScore
                             showLabel
                         />

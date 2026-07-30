@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { PrewiseShell } from "@/components/PrewiseUI";
 import { getApiClient } from "@/lib/api";
+import { getRiskLevelForContext } from "@/lib/risk";
 import type { PublicReportShare } from "@/lib/types";
 import styles from "./shared-report.module.css";
 
@@ -16,6 +17,11 @@ export default function SharedReportPage() {
   const { token } = useParams<{ token: string }>();
   const [share, setShare] = useState<PublicReportShare | null>(null);
   const [error, setError] = useState("");
+  const displayLevel = getRiskLevelForContext(
+    share?.snapshot.decision,
+    share?.snapshot.riskLevel,
+    share?.snapshot.score ?? 0,
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -32,8 +38,8 @@ export default function SharedReportPage() {
     {error && <section className={styles.state} role="alert"><h2>Không thể mở báo cáo</h2><p>{error}</p></section>}
     {share && <>
       <section className={styles.overview} aria-label="Tổng quan báo cáo">
-        <div><span>ĐIỂM RỦI RO</span><strong>{share.snapshot.score}<small>/100</small></strong></div>
-        <div><span>KẾT LUẬN</span><h2>{share.snapshot.decision || "REVIEW"}</h2><p>Mức {share.snapshot.riskLevel} · Độ tin cậy {share.snapshot.confidence}% · Loại {share.snapshot.type.toUpperCase()}</p></div>
+        <div><span>MỨC RỦI RO</span><strong>{displayLevel.icon} {displayLevel.label}</strong></div>
+        <div><span>KẾT LUẬN</span><h2>{displayLevel.label}</h2><p>Độ tin cậy {share.snapshot.confidence}% · Loại {share.snapshot.type.toUpperCase()}</p></div>
       </section>
       <section className={styles.evidence} aria-labelledby="shared-evidence-title"><div><span id="shared-evidence-title">BẰNG CHỨNG ĐÃ LỌC</span><b>{share.snapshot.evidence.length} tín hiệu</b></div>{share.snapshot.evidence.length ? share.snapshot.evidence.map((item, index) => <article key={`${item.source}-${index}`}><i>{String(index + 1).padStart(2, "0")}</i><div><h3>{item.feature || item.source}</h3><p>{item.message}</p><small>{item.source} · {item.severity}</small></div></article>) : <p>Không có bằng chứng công khai trong bản tóm tắt này.</p>}</section>
       <footer><span>Liên kết tự hết hạn: {expiryLabel(share.expiresAt)}</span><b>Không dùng báo cáo này thay cho xác minh chuyên môn.</b></footer>

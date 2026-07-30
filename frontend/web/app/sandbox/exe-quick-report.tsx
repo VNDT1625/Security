@@ -73,7 +73,9 @@ export function ExeQuickReport({
         <div className={`exe-quick-report verdict-${result.verdict}`}>
             <div className="exe-report-head">
                 <span>{quickExeVerdictLabel(result.verdict)}</span>
-                <strong aria-label="Điểm rủi ro tĩnh">{result.risk_score}/100</strong>
+                <strong aria-label={`Kết luận: ${quickExeVerdictLabel(result.verdict)}`}>{
+                    result.verdict === "dangerous" ? "⛔" : result.verdict === "suspicious" ? "⚠" : "✓"
+                }</strong>
             </div>
 
             <p className="exe-report-file">{result.filename}</p>

@@ -1,84 +1,1266 @@
 "use client";
 import "./home-demo.css";
-import Image from "next/image";import Link from "next/link";import {useRouter} from "next/navigation";import {useEffect,useRef,useState} from "react";import {LanguageSwitcher} from "@/components/PrewiseUI";import {useAuth} from "@/context/AuthContext";
-type PhishItem={id:number;kind:"word"|"url";label:string;sub?:string;x:number;y:number;duration:number;delay:number};
-function useHeavyLandingVisuals(){const [enabled,setEnabled]=useState(false);useEffect(()=>{if(typeof window.matchMedia!=="function"){setEnabled(false);return}const viewport=window.matchMedia("(min-width: 801px)"),motion=window.matchMedia("(prefers-reduced-motion: reduce)");const update=()=>setEnabled(viewport.matches&&!motion.matches);update();viewport.addEventListener?.("change",update);motion.addEventListener?.("change",update);return()=>{viewport.removeEventListener?.("change",update);motion.removeEventListener?.("change",update)}},[]);return enabled}
-const phishWords=[["VERIFY","identity required"],["LOG_IN","session expired"],["AUTH_RIZE","grant access →"],["CONFIRM","payment pending"],["UNL_CK","account restricted"],["RE-AUTH","session invalid"],["TRANSFER","approval required"],["PAY NOW","invoice overdue"]];
-const phishUrls=["secure-account-check[.]com/verify","paypaI-support[.]net/login","authorize-wallet[.]site/connect","billing-update[.]cloud/confirm"];
-type SafePoint={x:number;y:number};
-function occupiedViewportRects(padding=18){const caseTop=document.querySelector("#case")?.getBoundingClientRect().top??innerHeight;if(caseTop>innerHeight*.85)return[];const selectors="main section:not(.cold-open) h1,main section:not(.cold-open) h2,main section:not(.cold-open) h3,main section:not(.cold-open) p,main section:not(.cold-open) article,main section:not(.cold-open) a,main section:not(.cold-open) button,main section:not(.cold-open) input,main section:not(.cold-open) header,main section:not(.cold-open) footer,.w-nav";return Array.from(document.querySelectorAll<HTMLElement>(selectors)).map(el=>el.getBoundingClientRect()).filter(r=>r.width>20&&r.height>12&&r.bottom>0&&r.top<innerHeight).map(r=>({left:r.left-padding,right:r.right+padding,top:r.top-padding,bottom:r.bottom+padding}))}
-function safeRandomPoint(rects:ReturnType<typeof occupiedViewportRects>,margin=4,attempts=45):SafePoint{for(let i=0;i<attempts;i++){const x=margin+Math.random()*(100-margin*2),y=margin+Math.random()*(100-margin*2),px=x/100*innerWidth,py=y/100*innerHeight;if(!rects.some(r=>px>r.left&&px<r.right&&py>r.top&&py<r.bottom))return{x,y}}const edges=[{x:margin+Math.random()*8,y:margin+Math.random()*(100-margin*2)},{x:88+Math.random()*8,y:margin+Math.random()*(100-margin*2)},{x:margin+Math.random()*(100-margin*2),y:88+Math.random()*8}];return edges[Math.floor(Math.random()*edges.length)]}
-function PhishFragments(){const enabled=useHeavyLandingVisuals(),[items,setItems]=useState<PhishItem[]>([]),[alarm,setAlarm]=useState(false);useEffect(()=>{if(!enabled){setAlarm(false);return}const on=(e:Event)=>setAlarm((e as CustomEvent<boolean>).detail);addEventListener("prewise-threat-alarm",on);return()=>removeEventListener("prewise-threat-alarm",on)},[enabled]);useEffect(()=>{if(!enabled){setItems([]);return}const generate=()=>{const count=alarm?21+Math.floor(Math.random()*10):8+Math.floor(Math.random()*5),next:PhishItem[]=[];let cells:number[]=[];const cols=4,rows=3,rects=alarm?[]:occupiedViewportRects(24);if(!alarm){cells=Array.from({length:cols*rows},(_,i)=>i);for(let i=cells.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[cells[i],cells[j]]=[cells[j],cells[i]]}}for(let i=0;i<count;i++){const word=Math.random()>.35;let x:number,y:number;if(alarm){x=3+Math.random()*86;y=6+Math.random()*86;if(i<8){x=18+Math.random()*64;y=8+Math.random()*23}}else{const cell=cells[i%cells.length],col=cell%cols,row=Math.floor(cell/cols),cellW=90/cols,cellH=82/rows;const preferred={x:3+col*cellW+Math.random()*Math.max(1,cellW-10),y:7+row*cellH+Math.random()*Math.max(1,cellH-10)},px=preferred.x/100*innerWidth,py=preferred.y/100*innerHeight,safe=rects.some(r=>px>r.left&&px<r.right&&py>r.top&&py<r.bottom)?safeRandomPoint(rects,3):preferred;x=safe.x;y=safe.y}if(word){const v=phishWords[Math.floor(Math.random()*phishWords.length)];next.push({id:Date.now()+i,kind:"word",label:v[0],sub:v[1],x,y,duration:alarm?.34:6+Math.random()*7,delay:alarm?0:-Math.random()*7})}else next.push({id:Date.now()+i,kind:"url",label:phishUrls[Math.floor(Math.random()*phishUrls.length)],x,y,duration:alarm?.34:8+Math.random()*9,delay:alarm?0:-Math.random()*8})}setItems(next)};generate();const timer=setInterval(generate,alarm?260:14000);return()=>clearInterval(timer)},[alarm,enabled]);if(!enabled)return null;return <div className={`phish-field${alarm?" alarm":""}`} aria-hidden>{items.map(v=>v.kind==="word"?<span key={v.id} className="phish-fragment" style={{left:`${v.x}%`,top:`${v.y}%`,animationDuration:`${v.duration}s`,animationDelay:`${v.delay}s`}}><b>{v.label}</b><small>{v.sub}</small></span>:<code key={v.id} className="phish-url" style={{left:`${v.x}%`,top:`${v.y}%`,animationDuration:`${v.duration}s`,animationDelay:`${v.delay}s`}}>{v.label}</code>)}</div>}
-type BugItem={id:number;x:number;y:number;duration:number;delay:number;scale:number;opacity:number;alarmX:number;alarmY:number;alarmAngle:number;points:Array<{x:number;y:number;angle:number}>};
-const alarmDirections=[[1,0],[-1,0],[0,1],[0,-1],[.72,.72],[-.72,.72],[.72,-.72],[-.72,-.72]];
-function HiddenBugs(){const enabled=useHeavyLandingVisuals(),[bugs,setBugs]=useState<BugItem[]>([]);useEffect(()=>{if(!enabled){setBugs([]);return}const generate=()=>{const count=30+Math.floor(Math.random()*13),rects=occupiedViewportRects(14);setBugs(Array.from({length:count},(_,i)=>{const start=safeRandomPoint(rects,3),startX=start.x,startY=start.y;let px=startX,py=startY;const routed=Array.from({length:8},()=>{let nx=px,ny=py;for(let attempt=0;attempt<28;attempt++){const angle=Math.random()*Math.PI*2,distance=9+Math.random()*22,cx=Math.max(2,Math.min(98,px+Math.cos(angle)*distance)),cy=Math.max(3,Math.min(97,py+Math.sin(angle)*distance)),screenX=cx/100*innerWidth,screenY=cy/100*innerHeight;if(!rects.some(r=>screenX>r.left&&screenX<r.right&&screenY>r.top&&screenY<r.bottom)){nx=cx;ny=cy;break}}const point={x:nx-startX,y:ny-startY,angle:Math.atan2(ny-py,nx-px)*180/Math.PI+90};px=nx;py=ny;return point});const direction=alarmDirections[Math.floor(Math.random()*alarmDirections.length)],alarmDistance=55+Math.random()*45;return{id:Date.now()+i,x:startX,y:startY,duration:14+Math.random()*18,delay:-Math.random()*28,scale:.7+Math.random()*.28,opacity:.48+Math.random()*.32,alarmX:direction[0]*alarmDistance,alarmY:direction[1]*alarmDistance,alarmAngle:Math.atan2(direction[1],direction[0])*180/Math.PI+90,points:routed}}))};generate();const timer=setInterval(generate,30000),refresh=()=>generate();addEventListener("resize",refresh);return()=>{clearInterval(timer);removeEventListener("resize",refresh)}},[enabled]);if(!enabled)return null;return <div className="bug-field" aria-hidden>{bugs.map((bug,i)=><i key={bug.id} className={i>=Math.floor(bugs.length/1.5)?"alarm-bug":""} style={{"--b":i,"--bx":`${bug.x}vw`,"--by":`${bug.y}vh`,"--bug-duration":`${bug.duration}s`,"--bug-delay":`${bug.delay}s`,"--bug-scale":bug.scale,"--bug-opacity":bug.opacity,"--alarm-x":`${bug.alarmX}vw`,"--alarm-y":`${bug.alarmY}vh`,"--alarm-angle":`${bug.alarmAngle}deg`,...Object.fromEntries(bug.points.flatMap((p,n)=>[[`--p${n+1}x`,`${p.x}vw`],[`--p${n+1}y`,`${p.y}vh`],[`--a${n+1}`,`${p.angle}deg`]]))} as React.CSSProperties}/>)}</div>}
-function HeroSignalInput(){const router=useRouter(),[value,setValue]=useState("");function submit(e:React.FormEvent){e.preventDefault();const signal=value.trim();if(!signal)return;router.push(`/analyze?signal=${encodeURIComponent(signal)}`)}return <form className="hero-quick-cta" onSubmit={submit}><label htmlFor="hero-signal">URL · EMAIL · SMS</label><input id="hero-signal" value={value} onChange={e=>setValue(e.target.value)} placeholder="Dán tín hiệu cần kiểm tra…" aria-label="Tín hiệu cần kiểm tra"/><button type="submit" disabled={!value.trim()} aria-label="Mở scanner">→</button></form>}
-function LandingHeader(){const [alarm,setAlarm]=useState(false);const {session}=useAuth();useEffect(()=>{const on=(event:Event)=>setAlarm((event as CustomEvent<boolean>).detail);addEventListener("prewise-threat-alarm",on);return()=>removeEventListener("prewise-threat-alarm",on)},[]);const authenticated=session!==null;return <header className={`w-nav${alarm?" threat-active":""}`}><Link href="/" className="brand"><Image src="/brand-logo?v=3" width={142} height={48} priority unoptimized alt="Prewise"/></Link><nav aria-label="Điều hướng câu chuyện"><a href="#case">Vấn đề</a><a href="#product">Giải Pháp</a><a href="#ledger">Lý Do</a><a href="#scan">Hành Động</a></nav><div className="landing-header-tools"><LanguageSwitcher/><Link href={authenticated?"/analyze":"/auth"} className="landing-header-cta">{authenticated?"PHÂN TÍCH TÍN HIỆU ↗":"ĐĂNG NHẬP"}</Link></div></header>}
-function ThreatReveal(){const enabled=useHeavyLandingVisuals(),magnifier=useRef<HTMLSpanElement>(null);useEffect(()=>{if(!enabled){document.documentElement.classList.remove("evidence-paper-visible","evidence-paper-hover");return}let raf=0,targetX=innerWidth/2,targetY=innerHeight/2,currentX=targetX,currentY=targetY,hovering=false;const render=()=>{const ease=hovering?.28:.5;currentX+=(targetX-currentX)*ease;currentY+=(targetY-currentY)*ease;if(magnifier.current)magnifier.current.style.transform=`translate3d(${currentX}px,${currentY}px,0) translate(-50%,-50%)`;raf=requestAnimationFrame(render)};const f=(e:PointerEvent)=>{targetX=e.clientX;targetY=e.clientY;document.documentElement.style.setProperty("--threat-x",`${e.clientX}px`);document.documentElement.style.setProperty("--threat-y",`${e.clientY}px`);const paper=document.querySelector<HTMLElement>(".paper"),overPaper=Boolean(paper&&paper.contains(e.target as Node));if(overPaper!==hovering){hovering=overPaper;document.documentElement.classList.toggle("evidence-paper-hover",overPaper);if(overPaper){currentX=targetX;currentY=targetY}}};const protect=()=>{const paper=document.querySelector<HTMLElement>(".paper")?.getBoundingClientRect(),blocked=Boolean(paper&&paper.bottom>0&&paper.top<innerHeight);document.documentElement.classList.toggle("evidence-paper-visible",blocked)};render();addEventListener("pointermove",f,{passive:true});addEventListener("scroll",protect,{passive:true});addEventListener("resize",protect);protect();return()=>{cancelAnimationFrame(raf);removeEventListener("pointermove",f);removeEventListener("scroll",protect);removeEventListener("resize",protect);document.documentElement.classList.remove("evidence-paper-visible","evidence-paper-hover")}},[enabled]);if(!enabled)return null;return <span ref={magnifier} className="paper-magnifier" aria-hidden><i/></span>}
-function Eye(){const enabled=useHeavyLandingVisuals(),r=useRef<HTMLDivElement>(null),[blink,setBlink]=useState<"idle"|"closing"|"closed"|"opening">("idle");useEffect(()=>{if(!enabled)return;let raf=0,targetX=0,targetY=0,gazeX=0,gazeY=0,velocityX=0,velocityY=0,lastTargetX=0,lastTargetY=0;const render=()=>{const dx=targetX-gazeX,dy=targetY-gazeY;velocityX=velocityX*.58+dx*.24;velocityY=velocityY*.58+dy*.24;gazeX+=velocityX;gazeY+=velocityY;const edge=Math.hypot(gazeX,gazeY);if(edge>1.04){gazeX=gazeX/edge*1.04;gazeY=gazeY/edge*1.04;velocityX*=.28;velocityY*=.28}if(r.current){const focus=Math.min(1,Math.hypot(targetX,targetY));r.current.style.setProperty("--ex",`${gazeX*52}px`);r.current.style.setProperty("--ey",`${gazeY*22}px`);r.current.style.setProperty("--px",`${gazeX*(6+focus*2)}px`);r.current.style.setProperty("--py",`${gazeY*(4+focus)}px`);r.current.style.setProperty("--shine-x",`${gazeX*-6}px`);r.current.style.setProperty("--shine-y",`${gazeY*-4}px`);r.current.style.setProperty("--gaze-x",gazeX.toFixed(3));r.current.style.setProperty("--gaze-y",gazeY.toFixed(3))}raf=requestAnimationFrame(render)};const f=(e:PointerEvent)=>{if(!r.current)return;const b=r.current.getBoundingClientRect(),dx=(e.clientX-(b.left+b.width/2))/(innerWidth*.34),dy=(e.clientY-(b.top+b.height/2))/(innerHeight*.4);let nx=Math.max(-1,Math.min(1,dx)),ny=Math.max(-1,Math.min(1,dy));const ellipse=Math.sqrt(nx*nx+ny*ny);if(ellipse>1){nx/=ellipse;ny/=ellipse}const jump=Math.hypot(nx-lastTargetX,ny-lastTargetY);if(jump>.12){const overshoot=Math.min(.1,jump*.055);targetX=nx+Math.sign(nx-gazeX)*overshoot;targetY=ny+Math.sign(ny-gazeY)*overshoot}else{targetX=nx;targetY=ny}lastTargetX=nx;lastTargetY=ny};addEventListener("pointermove",f,{passive:true});render();return()=>{cancelAnimationFrame(raf);removeEventListener("pointermove",f)}},[enabled]);useEffect(()=>{if(!enabled){setBlink("idle");return}let timer:ReturnType<typeof setTimeout>,cancelled=false;const later=(fn:()=>void,ms:number)=>{timer=setTimeout(()=>{if(!cancelled)fn()},ms)};const schedule=()=>later(run,3000+Math.random()*5000);const run=()=>{setBlink("closing");later(()=>{setBlink("closed");later(()=>{setBlink("opening");later(()=>{setBlink("idle");if(Math.random()<.09)later(run,140+Math.random()*50);else schedule()},180)},30)},115)};schedule();return()=>{cancelled=true;clearTimeout(timer)}},[enabled]);const alarm=(on:boolean)=>{if(enabled)dispatchEvent(new CustomEvent("prewise-threat-alarm",{detail:on}))};return <div ref={r} className="the-eye" aria-hidden><div className="eye-shell"><div className="iris-3d"><div className="iris-rings"/><div className="pupil-3d" onPointerEnter={()=>alarm(true)} onPointerLeave={()=>alarm(false)}><span>BUG<br/>FOUND</span></div></div><div className="eye-shine"/><svg className={`organic-lids blink-${blink}`} viewBox="0 0 720 380" preserveAspectRatio="none" aria-hidden><path className="organic-lid organic-upper" d="M0 190 Q180 35 360 28 Q540 35 720 190 L720 0 L0 0 Z"/><path className="organic-lid organic-lower" d="M0 190 Q180 345 360 352 Q540 345 720 190 L720 380 L0 380 Z"/><path className="blink-seam" d="M0 190 Q180 187 360 190 Q540 193 720 190"/></svg></div></div>}
-const suspiciousUrls=[<><span>secure.</span>paypa<strong>I</strong>-support[.]example/account/verify</>,<>account.microsoft.<strong>session-alert</strong>[.]example/re-auth</>,<>appleid.<strong>billing-update</strong>[.]example/confirm</>,<>authorize-wallet.<strong>connect-now</strong>[.]example/access</>,<>netflix.<strong>payment-review</strong>[.]example/account</>];
-export default function HomePage(){return <div className="witness"><a className="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a><ThreatReveal/><div className="threat-mask"/><HiddenBugs/><PhishFragments/><LandingHeader/><main id="main-content"><section className="cold-open"><div className="incoming">00:00:00 <b>● INCOMING SIGNAL</b></div><div className="eye-focus-zone" tabIndex={0} aria-label="Quan sát tín hiệu đáng ngờ; tập trung hoặc chạm để kích hoạt cảnh báo trực quan" onFocus={()=>dispatchEvent(new CustomEvent("prewise-threat-alarm",{detail:true}))} onBlur={()=>dispatchEvent(new CustomEvent("prewise-threat-alarm",{detail:false}))} onPointerDown={()=>dispatchEvent(new CustomEvent("prewise-threat-alarm",{detail:true}))} onPointerUp={()=>dispatchEvent(new CustomEvent("prewise-threat-alarm",{detail:false}))} onPointerCancel={()=>dispatchEvent(new CustomEvent("prewise-threat-alarm",{detail:false}))}><Eye/></div><div className="cold-copy"><span data-scan="PREWISE / THE DIGITAL WITNESS">PREWISE / THE DIGITAL WITNESS</span><h1 data-answer="CHƯA BAO GIỜ.">Bạn có chắc mình đang thấy <em>toàn bộ</em> sự thật?</h1><HeroSignalInput/></div></section>
-<section className="deception-act" id="case"><div className="deception-frame"><div className="deception-label"><span>ACT I / THE DECEPTION</span><b>00:03 — EVIDENCE STREAM</b></div><div className="deception-case"><article className="email-evidence"><header><span>INBOX / UNVERIFIED</span><b>•••</b></header><div className="sender"><i>P</i><div><strong>PayPal Security</strong><small>service@paypal.com</small></div><time>09:41</time></div><h2>Tài khoản của bạn đã bị hạn chế.</h2><p>Chúng tôi phát hiện hoạt động bất thường. Hãy xác minh trong vòng <mark>30 phút</mark> để tránh khóa tài khoản.</p><div className="phish-fake-cta" aria-label="Nút Xác minh ngay trong mẫu email lừa đảo; không tương tác">XÁC MINH NGAY ↗</div><footer><b>DESTINATION REVEALED</b><code>secure-paypaI-support.com/account/verify</code></footer></article><aside><span>MỌI THỨ ĐỀU CÓ VẺ ĐÚNG.</span><h3>Lừa đảo hiện đại không cần trông đáng ngờ.</h3><p>Nó mượn thiết kế quen thuộc, cái tên bạn tin tưởng và khoảnh khắc bạn thiếu thời gian để suy nghĩ.</p><ul><li><b>01</b><span><strong>SENDER MISMATCH</strong>Danh tính hiển thị không khớp nguồn gửi.</span></li><li><b>02</b><span><strong>FALSE URGENCY</strong>Thúc ép hành động trước khi kiểm chứng.</span></li><li><b>03</b><span><strong>CREDENTIAL HARVEST</strong>Yêu cầu mật khẩu, OTP hoặc thanh toán.</span></li></ul></aside></div><div className="url-ticker" aria-label="Các ví dụ URL giả mạo"><header><span>SUSPICIOUS URL STREAM</span><b>LIVE PATTERN DETECTION</b></header><div className="ticker-viewport"><div className="ticker-track">{[0,1].map(group=><div className="ticker-set" key={group} aria-hidden={group===1}>{suspiciousUrls.map((url,i)=><code key={`${group}-${i}`}><small>0{i+1}</small>{url}<em>{["HOMOGLYPH","FAKE DOMAIN","BILLING BAIT","ACCESS BAIT","PAYMENT BAIT"][i]}</em></code>)}</div>)}</div></div></div></div></section>
-<section className="product-act" id="product">
-  <header>
-    <span>ACT II / THE PREWISE SYSTEM</span>
-    <h2>Khi vẻ ngoài có thể bị sao chép,<br/><em>niềm tin cần bằng chứng.</em></h2>
-    <p>Prewise là lớp phân tích an toàn giúp phát hiện, giải thích và đánh giá tín hiệu đáng ngờ trước khi bạn quyết định tin tưởng.</p>
-  </header>
-  <div className="product-suite-kicker">
-    <span>MỘT HỆ THỐNG · NHIỀU CÁCH SỬ DỤNG</span>
-    <p>Scanner, trợ lý, bảo vệ trong trình duyệt, sandbox và tích hợp cho AI — cùng dùng chung một lớp đánh giá.</p>
-  </div>
-  <div className="product-grid">
-    <article className="product-card product-suite-card">
-      <span>01 / ANALYZE · EXPLAIN</span>
-      <strong>Phân tích và hiểu rõ.</strong>
-      <p>Kiểm tra tín hiệu, giải thích bằng chứng và lưu lại kết quả để đối chiếu về sau.</p>
-      <ul className="product-capabilities" aria-label="Khả năng phân tích">
-        <li>URL &amp; website</li>
-        <li>Email · Gmail · EML</li>
-        <li>SMS &amp; văn bản</li>
-        <li>Tệp &amp; báo cáo</li>
-      </ul>
-      <div className="product-card-actions">
-        <Link className="primary" href="/analyze">MỞ SCANNER ↗</Link>
-        <Link href="/account/history">LỊCH SỬ ↗</Link>
+import Image from "next/image";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { LanguageSwitcher } from "@/components/PrewiseUI";
+import { useAuth } from "@/context/AuthContext";
+type PhishItem = {
+  id: number;
+  kind: "word" | "url";
+  label: string;
+  sub?: string;
+  x: number;
+  y: number;
+  duration: number;
+  delay: number;
+};
+function useHeavyLandingVisuals() {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") {
+      setEnabled(false);
+      return;
+    }
+    const viewport = window.matchMedia("(min-width: 801px)"),
+      motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setEnabled(viewport.matches && !motion.matches);
+    update();
+    viewport.addEventListener?.("change", update);
+    motion.addEventListener?.("change", update);
+    return () => {
+      viewport.removeEventListener?.("change", update);
+      motion.removeEventListener?.("change", update);
+    };
+  }, []);
+  return enabled;
+}
+const phishWords = [
+  ["VERIFY", "identity required"],
+  ["LOG_IN", "session expired"],
+  ["AUTH_RIZE", "grant access →"],
+  ["CONFIRM", "payment pending"],
+  ["UNL_CK", "account restricted"],
+  ["RE-AUTH", "session invalid"],
+  ["TRANSFER", "approval required"],
+  ["PAY NOW", "invoice overdue"],
+];
+const phishUrls = [
+  "secure-account-check[.]com/verify",
+  "paypaI-support[.]net/login",
+  "authorize-wallet[.]site/connect",
+  "billing-update[.]cloud/confirm",
+];
+type SafePoint = { x: number; y: number };
+function occupiedViewportRects(padding = 18) {
+  const caseTop =
+    document.querySelector("#case")?.getBoundingClientRect().top ?? innerHeight;
+  if (caseTop > innerHeight * 0.85) return [];
+  const selectors =
+    "main section:not(.cold-open) h1,main section:not(.cold-open) h2,main section:not(.cold-open) h3,main section:not(.cold-open) p,main section:not(.cold-open) article,main section:not(.cold-open) a,main section:not(.cold-open) button,main section:not(.cold-open) input,main section:not(.cold-open) header,main section:not(.cold-open) footer,.w-nav";
+  return Array.from(document.querySelectorAll<HTMLElement>(selectors))
+    .map((el) => el.getBoundingClientRect())
+    .filter(
+      (r) =>
+        r.width > 20 && r.height > 12 && r.bottom > 0 && r.top < innerHeight,
+    )
+    .map((r) => ({
+      left: r.left - padding,
+      right: r.right + padding,
+      top: r.top - padding,
+      bottom: r.bottom + padding,
+    }));
+}
+function safeRandomPoint(
+  rects: ReturnType<typeof occupiedViewportRects>,
+  margin = 4,
+  attempts = 45,
+): SafePoint {
+  for (let i = 0; i < attempts; i++) {
+    const x = margin + Math.random() * (100 - margin * 2),
+      y = margin + Math.random() * (100 - margin * 2),
+      px = (x / 100) * innerWidth,
+      py = (y / 100) * innerHeight;
+    if (
+      !rects.some(
+        (r) => px > r.left && px < r.right && py > r.top && py < r.bottom,
+      )
+    )
+      return { x, y };
+  }
+  const edges = [
+    {
+      x: margin + Math.random() * 8,
+      y: margin + Math.random() * (100 - margin * 2),
+    },
+    {
+      x: 88 + Math.random() * 8,
+      y: margin + Math.random() * (100 - margin * 2),
+    },
+    {
+      x: margin + Math.random() * (100 - margin * 2),
+      y: 88 + Math.random() * 8,
+    },
+  ];
+  return edges[Math.floor(Math.random() * edges.length)];
+}
+function PhishFragments() {
+  const enabled = useHeavyLandingVisuals(),
+    [items, setItems] = useState<PhishItem[]>([]),
+    [alarm, setAlarm] = useState(false);
+  useEffect(() => {
+    if (!enabled) {
+      setAlarm(false);
+      return;
+    }
+    const on = (e: Event) => setAlarm((e as CustomEvent<boolean>).detail);
+    addEventListener("prewise-threat-alarm", on);
+    return () => removeEventListener("prewise-threat-alarm", on);
+  }, [enabled]);
+  useEffect(() => {
+    if (!enabled) {
+      setItems([]);
+      return;
+    }
+    const generate = () => {
+      const count = alarm
+          ? 21 + Math.floor(Math.random() * 10)
+          : 8 + Math.floor(Math.random() * 5),
+        next: PhishItem[] = [];
+      let cells: number[] = [];
+      const cols = 4,
+        rows = 3,
+        rects = alarm ? [] : occupiedViewportRects(24);
+      if (!alarm) {
+        cells = Array.from({ length: cols * rows }, (_, i) => i);
+        for (let i = cells.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [cells[i], cells[j]] = [cells[j], cells[i]];
+        }
+      }
+      for (let i = 0; i < count; i++) {
+        const word = Math.random() > 0.35;
+        let x: number, y: number;
+        if (alarm) {
+          x = 3 + Math.random() * 86;
+          y = 6 + Math.random() * 86;
+          if (i < 8) {
+            x = 18 + Math.random() * 64;
+            y = 8 + Math.random() * 23;
+          }
+        } else {
+          const cell = cells[i % cells.length],
+            col = cell % cols,
+            row = Math.floor(cell / cols),
+            cellW = 90 / cols,
+            cellH = 82 / rows;
+          const preferred = {
+              x: 3 + col * cellW + Math.random() * Math.max(1, cellW - 10),
+              y: 7 + row * cellH + Math.random() * Math.max(1, cellH - 10),
+            },
+            px = (preferred.x / 100) * innerWidth,
+            py = (preferred.y / 100) * innerHeight,
+            safe = rects.some(
+              (r) => px > r.left && px < r.right && py > r.top && py < r.bottom,
+            )
+              ? safeRandomPoint(rects, 3)
+              : preferred;
+          x = safe.x;
+          y = safe.y;
+        }
+        if (word) {
+          const v = phishWords[Math.floor(Math.random() * phishWords.length)];
+          next.push({
+            id: Date.now() + i,
+            kind: "word",
+            label: v[0],
+            sub: v[1],
+            x,
+            y,
+            duration: alarm ? 0.34 : 6 + Math.random() * 7,
+            delay: alarm ? 0 : -Math.random() * 7,
+          });
+        } else
+          next.push({
+            id: Date.now() + i,
+            kind: "url",
+            label: phishUrls[Math.floor(Math.random() * phishUrls.length)],
+            x,
+            y,
+            duration: alarm ? 0.34 : 8 + Math.random() * 9,
+            delay: alarm ? 0 : -Math.random() * 8,
+          });
+      }
+      setItems(next);
+    };
+    generate();
+    const timer = setInterval(generate, alarm ? 260 : 14000);
+    return () => clearInterval(timer);
+  }, [alarm, enabled]);
+  if (!enabled) return null;
+  return (
+    <div className={`phish-field${alarm ? " alarm" : ""}`} aria-hidden>
+      {items.map((v) =>
+        v.kind === "word" ? (
+          <span
+            key={v.id}
+            className="phish-fragment"
+            style={{
+              left: `${v.x}%`,
+              top: `${v.y}%`,
+              animationDuration: `${v.duration}s`,
+              animationDelay: `${v.delay}s`,
+            }}
+          >
+            <b>{v.label}</b>
+            <small>{v.sub}</small>
+          </span>
+        ) : (
+          <code
+            key={v.id}
+            className="phish-url"
+            style={{
+              left: `${v.x}%`,
+              top: `${v.y}%`,
+              animationDuration: `${v.duration}s`,
+              animationDelay: `${v.delay}s`,
+            }}
+          >
+            {v.label}
+          </code>
+        ),
+      )}
+    </div>
+  );
+}
+type BugItem = {
+  id: number;
+  x: number;
+  y: number;
+  duration: number;
+  delay: number;
+  scale: number;
+  opacity: number;
+  alarmX: number;
+  alarmY: number;
+  alarmAngle: number;
+  points: Array<{ x: number; y: number; angle: number }>;
+};
+const alarmDirections = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+  [0.72, 0.72],
+  [-0.72, 0.72],
+  [0.72, -0.72],
+  [-0.72, -0.72],
+];
+function HiddenBugs() {
+  const enabled = useHeavyLandingVisuals(),
+    [bugs, setBugs] = useState<BugItem[]>([]);
+  useEffect(() => {
+    if (!enabled) {
+      setBugs([]);
+      return;
+    }
+    const generate = () => {
+      const count = 30 + Math.floor(Math.random() * 13),
+        rects = occupiedViewportRects(14);
+      setBugs(
+        Array.from({ length: count }, (_, i) => {
+          const start = safeRandomPoint(rects, 3),
+            startX = start.x,
+            startY = start.y;
+          let px = startX,
+            py = startY;
+          const routed = Array.from({ length: 8 }, () => {
+            let nx = px,
+              ny = py;
+            for (let attempt = 0; attempt < 28; attempt++) {
+              const angle = Math.random() * Math.PI * 2,
+                distance = 9 + Math.random() * 22,
+                cx = Math.max(2, Math.min(98, px + Math.cos(angle) * distance)),
+                cy = Math.max(3, Math.min(97, py + Math.sin(angle) * distance)),
+                screenX = (cx / 100) * innerWidth,
+                screenY = (cy / 100) * innerHeight;
+              if (
+                !rects.some(
+                  (r) =>
+                    screenX > r.left &&
+                    screenX < r.right &&
+                    screenY > r.top &&
+                    screenY < r.bottom,
+                )
+              ) {
+                nx = cx;
+                ny = cy;
+                break;
+              }
+            }
+            const point = {
+              x: nx - startX,
+              y: ny - startY,
+              angle: (Math.atan2(ny - py, nx - px) * 180) / Math.PI + 90,
+            };
+            px = nx;
+            py = ny;
+            return point;
+          });
+          const direction =
+              alarmDirections[
+                Math.floor(Math.random() * alarmDirections.length)
+              ],
+            alarmDistance = 55 + Math.random() * 45;
+          return {
+            id: Date.now() + i,
+            x: startX,
+            y: startY,
+            duration: 14 + Math.random() * 18,
+            delay: -Math.random() * 28,
+            scale: 0.7 + Math.random() * 0.28,
+            opacity: 0.48 + Math.random() * 0.32,
+            alarmX: direction[0] * alarmDistance,
+            alarmY: direction[1] * alarmDistance,
+            alarmAngle:
+              (Math.atan2(direction[1], direction[0]) * 180) / Math.PI + 90,
+            points: routed,
+          };
+        }),
+      );
+    };
+    generate();
+    const timer = setInterval(generate, 30000),
+      refresh = () => generate();
+    addEventListener("resize", refresh);
+    return () => {
+      clearInterval(timer);
+      removeEventListener("resize", refresh);
+    };
+  }, [enabled]);
+  if (!enabled) return null;
+  return (
+    <div className="bug-field" aria-hidden>
+      {bugs.map((bug, i) => (
+        <i
+          key={bug.id}
+          className={i >= Math.floor(bugs.length / 1.5) ? "alarm-bug" : ""}
+          style={
+            {
+              "--b": i,
+              "--bx": `${bug.x}vw`,
+              "--by": `${bug.y}vh`,
+              "--bug-duration": `${bug.duration}s`,
+              "--bug-delay": `${bug.delay}s`,
+              "--bug-scale": bug.scale,
+              "--bug-opacity": bug.opacity,
+              "--alarm-x": `${bug.alarmX}vw`,
+              "--alarm-y": `${bug.alarmY}vh`,
+              "--alarm-angle": `${bug.alarmAngle}deg`,
+              ...Object.fromEntries(
+                bug.points.flatMap((p, n) => [
+                  [`--p${n + 1}x`, `${p.x}vw`],
+                  [`--p${n + 1}y`, `${p.y}vh`],
+                  [`--a${n + 1}`, `${p.angle}deg`],
+                ]),
+              ),
+            } as React.CSSProperties
+          }
+        />
+      ))}
+    </div>
+  );
+}
+function HeroSignalInput() {
+  const router = useRouter(),
+    [value, setValue] = useState("");
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const signal = value.trim();
+    if (!signal) return;
+    router.push(`/analyze?signal=${encodeURIComponent(signal)}`);
+  }
+  return (
+    <form className="hero-quick-cta" onSubmit={submit}>
+      <label htmlFor="hero-signal">URL · EMAIL · SMS</label>
+      <input
+        id="hero-signal"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Dán tín hiệu cần kiểm tra…"
+        aria-label="Tín hiệu cần kiểm tra"
+      />
+      <button type="submit" disabled={!value.trim()} aria-label="Mở scanner">
+        →
+      </button>
+    </form>
+  );
+}
+function LandingHeader() {
+  const [alarm, setAlarm] = useState(false);
+  const { session } = useAuth();
+  useEffect(() => {
+    const on = (event: Event) =>
+      setAlarm((event as CustomEvent<boolean>).detail);
+    addEventListener("prewise-threat-alarm", on);
+    return () => removeEventListener("prewise-threat-alarm", on);
+  }, []);
+  const authenticated = session !== null;
+  return (
+    <header className={`w-nav${alarm ? " threat-active" : ""}`}>
+      <Link href="/" className="brand">
+        <Image
+          src="/brand-logo?v=3"
+          width={142}
+          height={48}
+          priority
+          unoptimized
+          alt="Prewise"
+        />
+      </Link>
+      <nav aria-label="Điều hướng câu chuyện">
+        <a href="#case">Vấn đề</a>
+        <a href="#product">Giải Pháp</a>
+        <a href="#ledger">Lý Do</a>
+        <a href="#scan">Hành Động</a>
+      </nav>
+      <div className="landing-header-tools">
+        <LanguageSwitcher />
+        <Link
+          href={authenticated ? "/analyze" : "/auth"}
+          className="landing-header-cta"
+        >
+          {authenticated ? "PHÂN TÍCH TÍN HIỆU ↗" : "ĐĂNG NHẬP"}
+        </Link>
       </div>
-    </article>
-    <article className="product-card product-suite-card">
-      <span>02 / ASSIST · PROTECT</span>
-      <strong>Hỗ trợ đúng ngữ cảnh.</strong>
-      <p>Hỏi đáp pháp luật và an ninh mạng, gọi lại kết quả bằng @ID hoặc nhận cảnh báo ngay tại nơi rủi ro xuất hiện.</p>
-      <ul className="product-capabilities" aria-label="Khả năng trợ lý và bảo vệ">
-        <li>Trợ lý pháp luật &amp; ANM</li>
-        <li>Ngữ cảnh @ID lịch sử</li>
-        <li>Browser extension</li>
-        <li>Cảnh báo Web &amp; Gmail</li>
-      </ul>
-      <div className="product-card-actions">
-        <Link className="primary" href="/chat">MỞ TRỢ LÝ ↗</Link>
-        <Link href="/downloads">TẢI TIỆN ÍCH ↗</Link>
+    </header>
+  );
+}
+function ThreatReveal() {
+  const enabled = useHeavyLandingVisuals(),
+    magnifier = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!enabled) {
+      document.documentElement.classList.remove(
+        "evidence-paper-visible",
+        "evidence-paper-hover",
+      );
+      return;
+    }
+    let raf = 0,
+      targetX = innerWidth / 2,
+      targetY = innerHeight / 2,
+      currentX = targetX,
+      currentY = targetY,
+      hovering = false;
+    const render = () => {
+      const ease = hovering ? 0.28 : 0.5;
+      currentX += (targetX - currentX) * ease;
+      currentY += (targetY - currentY) * ease;
+      if (magnifier.current)
+        magnifier.current.style.transform = `translate3d(${currentX}px,${currentY}px,0) translate(-50%,-50%)`;
+      raf = requestAnimationFrame(render);
+    };
+    const f = (e: PointerEvent) => {
+      targetX = e.clientX;
+      targetY = e.clientY;
+      document.documentElement.style.setProperty(
+        "--threat-x",
+        `${e.clientX}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--threat-y",
+        `${e.clientY}px`,
+      );
+      const paper = document.querySelector<HTMLElement>(".paper"),
+        overPaper = Boolean(paper && paper.contains(e.target as Node));
+      if (overPaper !== hovering) {
+        hovering = overPaper;
+        document.documentElement.classList.toggle(
+          "evidence-paper-hover",
+          overPaper,
+        );
+        if (overPaper) {
+          currentX = targetX;
+          currentY = targetY;
+        }
+      }
+    };
+    const protect = () => {
+      const paper = document
+          .querySelector<HTMLElement>(".paper")
+          ?.getBoundingClientRect(),
+        blocked = Boolean(paper && paper.bottom > 0 && paper.top < innerHeight);
+      document.documentElement.classList.toggle(
+        "evidence-paper-visible",
+        blocked,
+      );
+    };
+    render();
+    addEventListener("pointermove", f, { passive: true });
+    addEventListener("scroll", protect, { passive: true });
+    addEventListener("resize", protect);
+    protect();
+    return () => {
+      cancelAnimationFrame(raf);
+      removeEventListener("pointermove", f);
+      removeEventListener("scroll", protect);
+      removeEventListener("resize", protect);
+      document.documentElement.classList.remove(
+        "evidence-paper-visible",
+        "evidence-paper-hover",
+      );
+    };
+  }, [enabled]);
+  if (!enabled) return null;
+  return (
+    <span ref={magnifier} className="paper-magnifier" aria-hidden>
+      <i />
+    </span>
+  );
+}
+function Eye() {
+  const enabled = useHeavyLandingVisuals(),
+    r = useRef<HTMLDivElement>(null),
+    [blink, setBlink] = useState<"idle" | "closing" | "closed" | "opening">(
+      "idle",
+    );
+  useEffect(() => {
+    if (!enabled) return;
+    let raf = 0,
+      targetX = 0,
+      targetY = 0,
+      gazeX = 0,
+      gazeY = 0,
+      velocityX = 0,
+      velocityY = 0,
+      lastTargetX = 0,
+      lastTargetY = 0;
+    const render = () => {
+      const dx = targetX - gazeX,
+        dy = targetY - gazeY;
+      velocityX = velocityX * 0.58 + dx * 0.24;
+      velocityY = velocityY * 0.58 + dy * 0.24;
+      gazeX += velocityX;
+      gazeY += velocityY;
+      const edge = Math.hypot(gazeX, gazeY);
+      if (edge > 1.04) {
+        gazeX = (gazeX / edge) * 1.04;
+        gazeY = (gazeY / edge) * 1.04;
+        velocityX *= 0.28;
+        velocityY *= 0.28;
+      }
+      if (r.current) {
+        const focus = Math.min(1, Math.hypot(targetX, targetY));
+        r.current.style.setProperty("--ex", `${gazeX * 52}px`);
+        r.current.style.setProperty("--ey", `${gazeY * 22}px`);
+        r.current.style.setProperty("--px", `${gazeX * (6 + focus * 2)}px`);
+        r.current.style.setProperty("--py", `${gazeY * (4 + focus)}px`);
+        r.current.style.setProperty("--shine-x", `${gazeX * -6}px`);
+        r.current.style.setProperty("--shine-y", `${gazeY * -4}px`);
+        r.current.style.setProperty("--gaze-x", gazeX.toFixed(3));
+        r.current.style.setProperty("--gaze-y", gazeY.toFixed(3));
+      }
+      raf = requestAnimationFrame(render);
+    };
+    const f = (e: PointerEvent) => {
+      if (!r.current) return;
+      const b = r.current.getBoundingClientRect(),
+        dx = (e.clientX - (b.left + b.width / 2)) / (innerWidth * 0.34),
+        dy = (e.clientY - (b.top + b.height / 2)) / (innerHeight * 0.4);
+      let nx = Math.max(-1, Math.min(1, dx)),
+        ny = Math.max(-1, Math.min(1, dy));
+      const ellipse = Math.sqrt(nx * nx + ny * ny);
+      if (ellipse > 1) {
+        nx /= ellipse;
+        ny /= ellipse;
+      }
+      const jump = Math.hypot(nx - lastTargetX, ny - lastTargetY);
+      if (jump > 0.12) {
+        const overshoot = Math.min(0.1, jump * 0.055);
+        targetX = nx + Math.sign(nx - gazeX) * overshoot;
+        targetY = ny + Math.sign(ny - gazeY) * overshoot;
+      } else {
+        targetX = nx;
+        targetY = ny;
+      }
+      lastTargetX = nx;
+      lastTargetY = ny;
+    };
+    addEventListener("pointermove", f, { passive: true });
+    render();
+    return () => {
+      cancelAnimationFrame(raf);
+      removeEventListener("pointermove", f);
+    };
+  }, [enabled]);
+  useEffect(() => {
+    if (!enabled) {
+      setBlink("idle");
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>,
+      cancelled = false;
+    const later = (fn: () => void, ms: number) => {
+      timer = setTimeout(() => {
+        if (!cancelled) fn();
+      }, ms);
+    };
+    const schedule = () => later(run, 3000 + Math.random() * 5000);
+    const run = () => {
+      setBlink("closing");
+      later(() => {
+        setBlink("closed");
+        later(() => {
+          setBlink("opening");
+          later(() => {
+            setBlink("idle");
+            if (Math.random() < 0.09) later(run, 140 + Math.random() * 50);
+            else schedule();
+          }, 180);
+        }, 30);
+      }, 115);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [enabled]);
+  const alarm = (on: boolean) => {
+    if (enabled)
+      dispatchEvent(new CustomEvent("prewise-threat-alarm", { detail: on }));
+  };
+  return (
+    <div ref={r} className="the-eye" aria-hidden>
+      <div className="eye-shell">
+        <div className="iris-3d">
+          <div className="iris-rings" />
+          <div
+            className="pupil-3d"
+            onPointerEnter={() => alarm(true)}
+            onPointerLeave={() => alarm(false)}
+          >
+            <span>
+              BUG
+              <br />
+              FOUND
+            </span>
+          </div>
+        </div>
+        <div className="eye-shine" />
+        <svg
+          className={`organic-lids blink-${blink}`}
+          viewBox="0 0 720 380"
+          preserveAspectRatio="none"
+          aria-hidden
+        >
+          <path
+            className="organic-lid organic-upper"
+            d="M0 190 Q180 35 360 28 Q540 35 720 190 L720 0 L0 0 Z"
+          />
+          <path
+            className="organic-lid organic-lower"
+            d="M0 190 Q180 345 360 352 Q540 345 720 190 L720 380 L0 380 Z"
+          />
+          <path
+            className="blink-seam"
+            d="M0 190 Q180 187 360 190 Q540 193 720 190"
+          />
+        </svg>
       </div>
-    </article>
-    <article className="product-card product-suite-card">
-      <span>03 / SANDBOX · AUTOMATE</span>
-      <strong>Kiểm chứng và kết nối.</strong>
-      <p>Mở nội dung đáng ngờ trong môi trường cô lập, sau đó đưa lớp đánh giá Prewise vào AI agent và workflow.</p>
-      <ul className="product-capabilities" aria-label="Khả năng sandbox và tích hợp">
-        <li>Website sandbox</li>
-        <li>EXE quick scan</li>
-        <li>Windows Cloud Lab</li>
-        <li>MCP &amp; REST API</li>
-      </ul>
-      <div className="product-card-actions">
-        <Link className="primary" href="/sandbox">MỞ SANDBOX ↗</Link>
-        <Link href="/account/mcp-connect">KẾT NỐI MCP ↗</Link>
-        <Link href="/account/api-key">API KEY ↗</Link>
+    </div>
+  );
+}
+const suspiciousUrls = [
+  <>
+    <span>secure.</span>paypa<strong>I</strong>-support[.]example/account/verify
+  </>,
+  <>
+    account.microsoft.<strong>session-alert</strong>[.]example/re-auth
+  </>,
+  <>
+    appleid.<strong>billing-update</strong>[.]example/confirm
+  </>,
+  <>
+    authorize-wallet.<strong>connect-now</strong>[.]example/access
+  </>,
+  <>
+    netflix.<strong>payment-review</strong>[.]example/account
+  </>,
+];
+export default function HomePage() {
+  return (
+    <div className="witness">
+      <a className="skip-link" href="#main-content">
+        Bỏ qua đến nội dung chính
+      </a>
+      <ThreatReveal />
+      <div className="threat-mask" />
+      <HiddenBugs />
+      <PhishFragments />
+      <LandingHeader />
+      <main id="main-content">
+        <section className="cold-open">
+          <div className="incoming">
+            00:00:00 <b>● INCOMING SIGNAL</b>
+          </div>
+          <div
+            className="eye-focus-zone"
+            tabIndex={0}
+            aria-label="Quan sát tín hiệu đáng ngờ; tập trung hoặc chạm để kích hoạt cảnh báo trực quan"
+            onFocus={() =>
+              dispatchEvent(
+                new CustomEvent("prewise-threat-alarm", { detail: true }),
+              )
+            }
+            onBlur={() =>
+              dispatchEvent(
+                new CustomEvent("prewise-threat-alarm", { detail: false }),
+              )
+            }
+            onPointerDown={() =>
+              dispatchEvent(
+                new CustomEvent("prewise-threat-alarm", { detail: true }),
+              )
+            }
+            onPointerUp={() =>
+              dispatchEvent(
+                new CustomEvent("prewise-threat-alarm", { detail: false }),
+              )
+            }
+            onPointerCancel={() =>
+              dispatchEvent(
+                new CustomEvent("prewise-threat-alarm", { detail: false }),
+              )
+            }
+          >
+            <Eye />
+          </div>
+          <div className="cold-copy">
+            <span data-scan="PREWISE / THE DIGITAL WITNESS">
+              PREWISE / THE DIGITAL WITNESS
+            </span>
+            <h1 data-answer="CHƯA BAO GIỜ.">
+              Bạn có chắc mình đang thấy <em>toàn bộ</em> sự thật?
+            </h1>
+            <HeroSignalInput />
+          </div>
+        </section>
+        <section className="deception-act" id="case">
+          <div className="deception-frame">
+            <div className="deception-label">
+              <span>ACT I / THE DECEPTION</span>
+              <b>00:03 — EVIDENCE STREAM</b>
+            </div>
+            <div className="deception-case">
+              <article className="email-evidence">
+                <header>
+                  <span>INBOX / UNVERIFIED</span>
+                  <b>•••</b>
+                </header>
+                <div className="sender">
+                  <i>P</i>
+                  <div>
+                    <strong>PayPal Security</strong>
+                    <small>service@paypal.com</small>
+                  </div>
+                  <time>09:41</time>
+                </div>
+                <h2>Tài khoản của bạn đã bị hạn chế.</h2>
+                <p>
+                  Chúng tôi phát hiện hoạt động bất thường. Hãy xác minh trong
+                  vòng <mark>30 phút</mark> để tránh khóa tài khoản.
+                </p>
+                <div
+                  className="phish-fake-cta"
+                  aria-label="Nút Xác minh ngay trong mẫu email lừa đảo; không tương tác"
+                >
+                  XÁC MINH NGAY ↗
+                </div>
+                <footer>
+                  <b>DESTINATION REVEALED</b>
+                  <code>secure-paypaI-support.com/account/verify</code>
+                </footer>
+              </article>
+              <aside>
+                <span>MỌI THỨ ĐỀU CÓ VẺ ĐÚNG.</span>
+                <h3>Lừa đảo hiện đại không cần trông đáng ngờ.</h3>
+                <p>
+                  Nó mượn thiết kế quen thuộc, cái tên bạn tin tưởng và khoảnh
+                  khắc bạn thiếu thời gian để suy nghĩ.
+                </p>
+                <ul>
+                  <li>
+                    <b>01</b>
+                    <span>
+                      <strong>SENDER MISMATCH</strong>Danh tính hiển thị không
+                      khớp nguồn gửi.
+                    </span>
+                  </li>
+                  <li>
+                    <b>02</b>
+                    <span>
+                      <strong>FALSE URGENCY</strong>Thúc ép hành động trước khi
+                      kiểm chứng.
+                    </span>
+                  </li>
+                  <li>
+                    <b>03</b>
+                    <span>
+                      <strong>CREDENTIAL HARVEST</strong>Yêu cầu mật khẩu, OTP
+                      hoặc thanh toán.
+                    </span>
+                  </li>
+                </ul>
+              </aside>
+            </div>
+            <div className="url-ticker" aria-label="Các ví dụ URL giả mạo">
+              <header>
+                <span>SUSPICIOUS URL STREAM</span>
+                <b>LIVE PATTERN DETECTION</b>
+              </header>
+              <div className="ticker-viewport">
+                <div className="ticker-track">
+                  {[0, 1].map((group) => (
+                    <div
+                      className="ticker-set"
+                      key={group}
+                      aria-hidden={group === 1}
+                    >
+                      {suspiciousUrls.map((url, i) => (
+                        <code key={`${group}-${i}`}>
+                          <small>0{i + 1}</small>
+                          {url}
+                          <em>
+                            {
+                              [
+                                "HOMOGLYPH",
+                                "FAKE DOMAIN",
+                                "BILLING BAIT",
+                                "ACCESS BAIT",
+                                "PAYMENT BAIT",
+                              ][i]
+                            }
+                          </em>
+                        </code>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section className="product-act" id="product">
+          <header>
+            <span>ACT II / THE PREWISE SYSTEM</span>
+            <h2>
+              Khi vẻ ngoài có thể bị sao chép,
+              <br />
+              <em>niềm tin cần bằng chứng.</em>
+            </h2>
+            <p>
+              Prewise là lớp phân tích an toàn giúp phát hiện, giải thích và
+              đánh giá tín hiệu đáng ngờ trước khi bạn quyết định tin tưởng.
+            </p>
+          </header>
+          <div className="product-suite-kicker">
+            <span>MỘT HỆ THỐNG · NHIỀU CÁCH SỬ DỤNG</span>
+            <p>
+              Scanner, trợ lý, bảo vệ trong trình duyệt, sandbox và tích hợp cho
+              AI — cùng dùng chung một lớp đánh giá.
+            </p>
+          </div>
+          <div className="product-grid">
+            <article className="product-card product-suite-card">
+              <span>01 / ANALYZE · EXPLAIN</span>
+              <strong>Phân tích và hiểu rõ.</strong>
+              <p>
+                Kiểm tra tín hiệu, giải thích bằng chứng và lưu lại kết quả để
+                đối chiếu về sau.
+              </p>
+              <ul
+                className="product-capabilities"
+                aria-label="Khả năng phân tích"
+              >
+                <li>URL &amp; website</li>
+                <li>Email · Gmail · EML</li>
+                <li>SMS &amp; văn bản</li>
+                <li>Tệp &amp; báo cáo</li>
+              </ul>
+              <div className="product-card-actions">
+                <Link className="primary" href="/analyze">
+                  MỞ SCANNER ↗
+                </Link>
+                <Link href="/account/history">LỊCH SỬ ↗</Link>
+              </div>
+            </article>
+            <article className="product-card product-suite-card">
+              <span>02 / ASSIST · PROTECT</span>
+              <strong>Hỗ trợ đúng ngữ cảnh.</strong>
+              <p>
+                Hỏi đáp pháp luật và an ninh mạng, gọi lại kết quả bằng @ID hoặc
+                nhận cảnh báo ngay tại nơi rủi ro xuất hiện.
+              </p>
+              <ul
+                className="product-capabilities"
+                aria-label="Khả năng trợ lý và bảo vệ"
+              >
+                <li>Trợ lý pháp luật &amp; ANM</li>
+                <li>Ngữ cảnh @ID lịch sử</li>
+                <li>Browser extension</li>
+                <li>Cảnh báo Web &amp; Gmail</li>
+              </ul>
+              <div className="product-card-actions">
+                <Link className="primary" href="/chat">
+                  MỞ TRỢ LÝ ↗
+                </Link>
+                <Link href="/downloads">TẢI TIỆN ÍCH ↗</Link>
+              </div>
+            </article>
+            <article className="product-card product-suite-card">
+              <span>03 / SANDBOX · AUTOMATE</span>
+              <strong>Kiểm chứng và kết nối.</strong>
+              <p>
+                Mở nội dung đáng ngờ trong môi trường cô lập, sau đó đưa lớp
+                đánh giá Prewise vào AI agent và workflow.
+              </p>
+              <ul
+                className="product-capabilities"
+                aria-label="Khả năng sandbox và tích hợp"
+              >
+                <li>Website sandbox</li>
+                <li>EXE quick scan</li>
+                <li>Windows Cloud Lab</li>
+                <li>MCP &amp; REST API</li>
+              </ul>
+              <div className="product-card-actions">
+                <Link className="primary" href="/sandbox">
+                  MỞ SANDBOX ↗
+                </Link>
+                <Link href="/account/mcp-connect">KẾT NỐI MCP ↗</Link>
+                <Link href="/account/api-key">API KEY ↗</Link>
+              </div>
+            </article>
+          </div>
+          <div className="report-intro">
+            <span>PRODUCT EVIDENCE / 01</span>
+            <h3>Đây là những gì Prewise trả về.</h3>
+          </div>
+          <div className="report-preview">
+            <header>
+              <div>
+                <span>PREWISE / ANALYSIS REPORT</span>
+                <code>secure-paypaI-support[.]example</code>
+              </div>
+              <b>DEMO ANALYSIS · SCAN COMPLETE · 00:01.84</b>
+            </header>
+            <div className="report-preview-body">
+              <div className="preview-score">
+                <div>
+                  <strong>⛔</strong>
+                </div>
+                <small>RỦI RO CAO</small>
+              </div>
+              <dl>
+                <div>
+                  <dt>DECISION</dt>
+                  <dd className="blocked">BLOCK</dd>
+                </div>
+                <div>
+                  <dt>CONFIDENCE</dt>
+                  <dd>92%</dd>
+                </div>
+                <div className="detected">
+                  <dt>DETECTED</dt>
+                  <dd>
+                    <span>Domain giả mạo</span>
+                    <span>Ngôn ngữ thúc ép</span>
+                    <span>Yêu cầu mật khẩu + OTP</span>
+                  </dd>
+                </div>
+              </dl>
+              <Link href="/analyze" className="report-link">
+                <span>
+                  <small>3 tín hiệu được đối chiếu</small>
+                  <strong>Xem giải thích và hành động đề xuất</strong>
+                </span>
+                <b>→</b>
+              </Link>
+            </div>
+          </div>
+          <footer>
+            <span>ONE INTELLIGENCE LAYER</span>
+            <p>
+              Kiểm tra chủ động · Bảo vệ trong trình duyệt · Tích hợp vào AI
+            </p>
+          </footer>
+        </section>
+        <section className="ledger" id="ledger">
+          <div className="ledger-copy">
+            <span>ACT III / CONSEQUENCE ARCHIVE</span>
+            <h2>
+              Đây không phải
+              <br />
+              mối đe dọa giả định.
+            </h2>
+            <p>
+              Những tín hiệu nhỏ bị bỏ qua đã trở thành tổn thất thật — được ghi
+              nhận trong báo cáo công khai.
+            </p>
+          </div>
+          <div className="paper-wrap">
+            <article className="paper">
+              <header>
+                <span>VOL. 01 — DIGITAL FRAUD</span>
+                <h2>
+                  THE FRAUD
+                  <br />
+                  LEDGER
+                </h2>
+                <time>FIELD EDITION / PREWISE ARCHIVE</time>
+              </header>
+              <div className="paper-rule">
+                <b>THE HUMAN COST BEHIND A SINGLE CLICK</b>
+                <span>VERIFIED PUBLIC REPORT</span>
+              </div>
+              <div className="paper-grid">
+                <section>
+                  <div className="halftone">
+                    <strong>$</strong>
+                    <span>EVIDENCE / MONEY TRAIL</span>
+                  </div>
+                  <h3>
+                    EMAIL TRÔNG HOÀN TOÀN BÌNH THƯỜNG. TỔN THẤT THÌ KHÔNG.
+                  </h3>
+                  <p>
+                    Chỉ một email giả mạo đúng người, đúng thời điểm cũng có thể
+                    khiến khoản thanh toán bị chuyển vào tài khoản của kẻ lừa
+                    đảo.
+                  </p>
+                </section>
+                <section className="stats">
+                  <div>
+                    <strong>$2.9B</strong>
+                    <h3>Thiệt hại do email doanh nghiệp giả mạo</h3>
+                    <small>FBI IC3 · 2023 · UNITED STATES</small>
+                  </div>
+                  <div>
+                    <strong>$4.6B</strong>
+                    <h3>Thiệt hại do lừa đảo đầu tư</h3>
+                    <small>FBI IC3 · 2023 · UNITED STATES</small>
+                  </div>
+                  <div>
+                    <strong>21,489</strong>
+                    <h3>Đơn trình báo về lừa đảo hỗ trợ kỹ thuật</h3>
+                    <small>FBI IC3 · 2023 · UNITED STATES</small>
+                  </div>
+                </section>
+                <aside>
+                  <b>DẤU HIỆU CHUNG</b>
+                  <p>Mạo danh người gửi</p>
+                  <p>Tạo áp lực thời gian</p>
+                  <p>Thay đổi tài khoản nhận tiền</p>
+                  <p>Đánh cắp thông tin xác thực</p>
+                  <blockquote>
+                    Những thông điệp nguy hiểm nhất thường trông giống những gì
+                    chúng ta đã quen tin tưởng.
+                  </blockquote>
+                </aside>
+              </div>
+              <footer>
+                <span>
+                  Nguồn dữ liệu: FBI Internet Crime Complaint Center (IC3),
+                  Internet Crime Report 2023.
+                </span>
+                <a
+                  href="https://www.ic3.gov/AnnualReport/Reports/2023_IC3Report.pdf"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  XEM BÁO CÁO GỐC ↗
+                </a>
+              </footer>
+            </article>
+          </div>
+        </section>
+        <section className="decision">
+          <div className="decision-orbit">
+            <i />
+          </div>
+          <div>
+            <span>ACT IV / RECLAIM THE DECISION</span>
+            <h2>
+              Đừng để sự khẩn cấp
+              <br />
+              quyết định thay bạn.
+            </h2>
+            {[
+              ["01", "DỪNG TRƯỚC KHI CLICK", "PAUSE"],
+              ["02", "KIỂM TRA NGUỒN GỬI", "TRACE"],
+              ["03", "TỰ NHẬP TÊN MIỀN", "VERIFY"],
+              ["04", "KHÔNG CHIA SẺ OTP", "PROTECT"],
+            ].map((x) => (
+              <p key={x[0]}>
+                <i>{x[0]}</i>
+                {x[1]} <b>{x[2]}</b>
+              </p>
+            ))}
+          </div>
+        </section>
+        <section className="landing-scanner" id="scan">
+          <span>THE LANDING ENDS. THE INSPECTION BEGINS.</span>
+          <h2>Nhìn kỹ trước khi tin.</h2>
+          <p>
+            Dán tín hiệu đáng ngờ. Prewise sẽ bóc tách điều đang ẩn phía sau.
+          </p>
+          <Link href="/analyze" className="scan-input">
+            <i>
+              <b />
+            </i>
+            <div>
+              <span>URL · EMAIL · SMS</span>
+              <p>Dán nội dung cần kiểm tra…</p>
+            </div>
+            <strong>BẮT ĐẦU PHÂN TÍCH →</strong>
+          </Link>
+          <footer>
+            <span>NO CAMERA</span>
+            <span>NO MICROPHONE</span>
+            <span>DEMO · LOCAL HISTORY</span>
+            <span>HUMAN IN CONTROL</span>
+          </footer>
+        </section>
+      </main>
+      <div className="perimeter" aria-hidden>
+        <svg viewBox="0 0 1440 44" preserveAspectRatio="none">
+          <defs>
+            <linearGradient
+              id="perimeter-current"
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1="0"
+              x2="1440"
+              y2="0"
+            >
+              <stop offset="0" stopColor="#38504d" />
+              <stop offset=".42" stopColor="#38504d" />
+              <stop offset=".48" stopColor="#78f6e3" />
+              <stop offset=".51" stopColor="#d5fff8" />
+              <stop offset=".54" stopColor="#78f6e3" />
+              <stop offset=".6" stopColor="#38504d" />
+              <stop offset="1" stopColor="#38504d" />
+              <animateTransform
+                attributeName="gradientTransform"
+                type="translate"
+                from="-900 0"
+                to="900 0"
+                dur="4.8s"
+                repeatCount="indefinite"
+              />
+            </linearGradient>
+          </defs>
+          <path d="M0 40 L30 4 H94 L124 40 H188 L218 4 H282 L312 40 H376 L406 4 H470 L500 40 H564 L594 4 H658 L688 40 H752 L782 4 H846 L876 40 H940 L970 4 H1034 L1064 40 H1128 L1158 4 H1222 L1252 40 H1316 L1346 4 H1410 L1440 40" />
+        </svg>
       </div>
-    </article>
-  </div>
-  <div className="report-intro"><span>PRODUCT EVIDENCE / 01</span><h3>Đây là những gì Prewise trả về.</h3></div><div className="report-preview"><header><div><span>PREWISE / ANALYSIS REPORT</span><code>secure-paypaI-support[.]example</code></div><b>DEMO ANALYSIS · SCAN COMPLETE · 00:01.84</b></header><div className="report-preview-body"><div className="preview-score"><div><strong>87</strong><span>/ 100</span></div><small>RISK SCORE · CRITICAL</small></div><dl><div><dt>DECISION</dt><dd className="blocked">BLOCK</dd></div><div><dt>CONFIDENCE</dt><dd>92%</dd></div><div className="detected"><dt>DETECTED</dt><dd><span>Domain giả mạo</span><span>Ngôn ngữ thúc ép</span><span>Yêu cầu mật khẩu + OTP</span></dd></div></dl><Link href="/analyze" className="report-link"><span><small>3 tín hiệu được đối chiếu</small><strong>Xem giải thích và hành động đề xuất</strong></span><b>→</b></Link></div></div><footer><span>ONE INTELLIGENCE LAYER</span><p>Kiểm tra chủ động · Bảo vệ trong trình duyệt · Tích hợp vào AI</p></footer>
-</section>
-<section className="ledger" id="ledger"><div className="ledger-copy"><span>ACT III / CONSEQUENCE ARCHIVE</span><h2>Đây không phải<br/>mối đe dọa giả định.</h2><p>Những tín hiệu nhỏ bị bỏ qua đã trở thành tổn thất thật — được ghi nhận trong báo cáo công khai.</p></div><div className="paper-wrap"><article className="paper"><header><span>VOL. 01 — DIGITAL FRAUD</span><h2>THE FRAUD<br/>LEDGER</h2><time>FIELD EDITION / PREWISE ARCHIVE</time></header><div className="paper-rule"><b>THE HUMAN COST BEHIND A SINGLE CLICK</b><span>VERIFIED PUBLIC REPORT</span></div><div className="paper-grid"><section><div className="halftone"><strong>$</strong><span>EVIDENCE / MONEY TRAIL</span></div><h3>EMAIL TRÔNG HOÀN TOÀN BÌNH THƯỜNG. TỔN THẤT THÌ KHÔNG.</h3><p>Chỉ một email giả mạo đúng người, đúng thời điểm cũng có thể khiến khoản thanh toán bị chuyển vào tài khoản của kẻ lừa đảo.</p></section><section className="stats"><div><strong>$2.9B</strong><h3>Thiệt hại do email doanh nghiệp giả mạo</h3><small>FBI IC3 · 2023 · UNITED STATES</small></div><div><strong>$4.6B</strong><h3>Thiệt hại do lừa đảo đầu tư</h3><small>FBI IC3 · 2023 · UNITED STATES</small></div><div><strong>21,489</strong><h3>Đơn trình báo về lừa đảo hỗ trợ kỹ thuật</h3><small>FBI IC3 · 2023 · UNITED STATES</small></div></section><aside><b>DẤU HIỆU CHUNG</b><p>Mạo danh người gửi</p><p>Tạo áp lực thời gian</p><p>Thay đổi tài khoản nhận tiền</p><p>Đánh cắp thông tin xác thực</p><blockquote>Những thông điệp nguy hiểm nhất thường trông giống những gì chúng ta đã quen tin tưởng.</blockquote></aside></div><footer><span>Nguồn dữ liệu: FBI Internet Crime Complaint Center (IC3), Internet Crime Report 2023.</span><a href="https://www.ic3.gov/AnnualReport/Reports/2023_IC3Report.pdf" target="_blank" rel="noreferrer">XEM BÁO CÁO GỐC ↗</a></footer></article></div></section>
-<section className="decision"><div className="decision-orbit"><i/></div><div><span>ACT IV / RECLAIM THE DECISION</span><h2>Đừng để sự khẩn cấp<br/>quyết định thay bạn.</h2>{[["01","DỪNG TRƯỚC KHI CLICK","PAUSE"],["02","KIỂM TRA NGUỒN GỬI","TRACE"],["03","TỰ NHẬP TÊN MIỀN","VERIFY"],["04","KHÔNG CHIA SẺ OTP","PROTECT"]].map(x=><p key={x[0]}><i>{x[0]}</i>{x[1]} <b>{x[2]}</b></p>)}</div></section>
-<section className="landing-scanner" id="scan"><span>THE LANDING ENDS. THE INSPECTION BEGINS.</span><h2>Nhìn kỹ trước khi tin.</h2><p>Dán tín hiệu đáng ngờ. Prewise sẽ bóc tách điều đang ẩn phía sau.</p><Link href="/analyze" className="scan-input"><i><b/></i><div><span>URL · EMAIL · SMS</span><p>Dán nội dung cần kiểm tra…</p></div><strong>BẮT ĐẦU PHÂN TÍCH →</strong></Link><footer><span>NO CAMERA</span><span>NO MICROPHONE</span><span>DEMO · LOCAL HISTORY</span><span>HUMAN IN CONTROL</span></footer></section></main><div className="perimeter" aria-hidden><svg viewBox="0 0 1440 44" preserveAspectRatio="none"><defs><linearGradient id="perimeter-current" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1440" y2="0"><stop offset="0" stopColor="#38504d"/><stop offset=".42" stopColor="#38504d"/><stop offset=".48" stopColor="#78f6e3"/><stop offset=".51" stopColor="#d5fff8"/><stop offset=".54" stopColor="#78f6e3"/><stop offset=".6" stopColor="#38504d"/><stop offset="1" stopColor="#38504d"/><animateTransform attributeName="gradientTransform" type="translate" from="-900 0" to="900 0" dur="4.8s" repeatCount="indefinite"/></linearGradient></defs><path d="M0 40 L30 4 H94 L124 40 H188 L218 4 H282 L312 40 H376 L406 4 H470 L500 40 H564 L594 4 H658 L688 40 H752 L782 4 H846 L876 40 H940 L970 4 H1034 L1064 40 H1128 L1158 4 H1222 L1252 40 H1316 L1346 4 H1410 L1440 40"/></svg></div><footer className="site-footer"><div className="footer-lead"><Link href="/" className="footer-brand"><Image src="/brand-logo?v=3" width={170} height={62} alt="Prewise" unoptimized/></Link><h2>Nhìn ra điều lừa đảo<br/>cố che giấu.</h2><p>Kiểm chứng trước khi tin. Quyết định vẫn luôn thuộc về bạn.</p></div><div className="footer-links"><div><b>SẢN PHẨM</b><Link href="/analyze">Phân tích</Link><Link href="/history">Lịch sử</Link><Link href="/analyze">Báo cáo tín hiệu</Link></div><div><b>TIN CẬY</b><Link href="/methodology">Phương pháp</Link><Link href="/settings">Quyền riêng tư</Link><Link href="/methodology">Giới hạn AI</Link></div><div><b>THÔNG TIN</b><a href="mailto:hello@prewise.site">Liên hệ</a><Link href="/methodology">Điều khoản</Link><a href="https://prewise.site">Prewise.site</a></div></div><section className="demo-hub"><div className="demo-hub-grid"><div className="demo-video"><Link href="/analyze" className="demo-video-media" aria-label="Mở trình phân tích Prewise"><object data="/prewise-demo-walkthrough.svg" type="image/svg+xml" aria-label="Product walkthrough Prewise"><Image src="/hero-demo-fallback.png" width={960} height={540} alt="Ảnh dự phòng product walkthrough Prewise" unoptimized/></object><span>MỞ PHÂN TÍCH ↗</span></Link></div><aside className="demo-connect"><div><Link href="/analyze"><small>01</small><b>Dùng thử Scanner</b><i>↗</i></Link><Link href="/methodology"><small>02</small><b>Phương pháp phân tích</b><i>↗</i></Link><a href="https://prewise.site" target="_blank" rel="noreferrer"><small>03</small><b>Prewise.site</b><i>↗</i></a><a href="mailto:hello@prewise.site"><small>04</small><b>Liên hệ đội ngũ</b><i>↗</i></a></div></aside></div></section><div className="footer-bottom"><span>© 2026 PREWISE</span><span>NGUYỄN DUY THUẬN · TRẦN ĐÌNH BẢO KHANG</span><span>STATUS: <i>DEMO</i></span></div></footer></div>}
+      <footer className="site-footer">
+        <div className="footer-lead">
+          <Link href="/" className="footer-brand">
+            <Image
+              src="/brand-logo?v=3"
+              width={170}
+              height={62}
+              alt="Prewise"
+              unoptimized
+            />
+          </Link>
+          <h2>
+            Nhìn ra điều lừa đảo
+            <br />
+            cố che giấu.
+          </h2>
+          <p>Kiểm chứng trước khi tin. Quyết định vẫn luôn thuộc về bạn.</p>
+        </div>
+        <div className="footer-links">
+          <div>
+            <b>SẢN PHẨM</b>
+            <Link href="/analyze">Phân tích</Link>
+            <Link href="/history">Lịch sử</Link>
+            <Link href="/analyze">Báo cáo tín hiệu</Link>
+          </div>
+          <div>
+            <b>TIN CẬY</b>
+            <Link href="/methodology">Phương pháp</Link>
+            <Link href="/settings">Quyền riêng tư</Link>
+            <Link href="/methodology">Giới hạn AI</Link>
+          </div>
+          <div>
+            <b>THÔNG TIN</b>
+            <a href="mailto:hello@prewise.site">Liên hệ</a>
+            <Link href="/methodology">Điều khoản</Link>
+            <a href="https://prewise.site">Prewise.site</a>
+          </div>
+        </div>
+        <section className="demo-hub">
+          <div className="demo-hub-grid">
+            <div className="demo-video">
+              <Link
+                href="/analyze"
+                className="demo-video-media"
+                aria-label="Mở trình phân tích Prewise"
+              >
+                <object
+                  data="/prewise-demo-walkthrough.svg"
+                  type="image/svg+xml"
+                  aria-label="Product walkthrough Prewise"
+                >
+                  <Image
+                    src="/hero-demo-fallback.png"
+                    width={960}
+                    height={540}
+                    alt="Ảnh dự phòng product walkthrough Prewise"
+                    unoptimized
+                  />
+                </object>
+                <span>MỞ PHÂN TÍCH ↗</span>
+              </Link>
+            </div>
+            <aside className="demo-connect">
+              <div>
+                <Link href="/analyze">
+                  <small>01</small>
+                  <b>Dùng thử Scanner</b>
+                  <i>↗</i>
+                </Link>
+                <Link href="/methodology">
+                  <small>02</small>
+                  <b>Phương pháp phân tích</b>
+                  <i>↗</i>
+                </Link>
+                <a href="https://prewise.site" target="_blank" rel="noreferrer">
+                  <small>03</small>
+                  <b>Prewise.site</b>
+                  <i>↗</i>
+                </a>
+                <a href="mailto:hello@prewise.site">
+                  <small>04</small>
+                  <b>Liên hệ đội ngũ</b>
+                  <i>↗</i>
+                </a>
+              </div>
+            </aside>
+          </div>
+        </section>
+        <div className="footer-bottom">
+          <span>© 2026 PREWISE</span>
+          <span>NGUYỄN DUY THUẬN · TRẦN ĐÌNH BẢO KHANG</span>
+          <span>
+            STATUS: <i>DEMO</i>
+          </span>
+        </div>
+      </footer>
+    </div>
+  );
+}
