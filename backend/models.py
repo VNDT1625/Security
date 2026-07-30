@@ -68,6 +68,13 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(1000))
+    organization_name: Mapped[str | None] = mapped_column(String(200))
+    job_title: Mapped[str | None] = mapped_column(String(160))
+    country_code: Mapped[str] = mapped_column(String(2), default="VN", nullable=False)
+    preferred_locale: Mapped[str] = mapped_column(String(10), default="vi", nullable=False)
+    timezone: Mapped[str] = mapped_column(
+        String(64), default="Asia/Ho_Chi_Minh", nullable=False
+    )
     password_salt: Mapped[str] = mapped_column(String(64), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
     password_algorithm: Mapped[str] = mapped_column(String(32), default="pbkdf2_sha256")

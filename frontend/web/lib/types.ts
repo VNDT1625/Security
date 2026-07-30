@@ -361,6 +361,25 @@ export interface UserProfile {
     displayName: string;
     avatarUrl?: string;
     role?: "user" | "admin";
+    organizationName?: string | null;
+    jobTitle?: string | null;
+    countryCode?: string;
+    locale?: "vi" | "en";
+    timezone?: string;
+    emailVerified?: boolean;
+    status?: string;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+    lastLoginAt?: string | null;
+}
+
+export interface ProfileUpdateInput {
+    displayName: string;
+    organizationName: string | null;
+    jobTitle: string | null;
+    countryCode: string;
+    locale: "vi" | "en";
+    timezone: string;
 }
 
 export interface PasswordChangeInput {

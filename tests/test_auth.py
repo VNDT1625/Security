@@ -13,6 +13,7 @@ from backend.models import (
     ScanEvidence,
     SessionRecord,
     Subscription,
+    User,
     UserFeedback,
 )
 from backend.routers import auth
@@ -300,10 +301,52 @@ def test_profile_update_and_password_change() -> None:
     profile = client.patch(
         "/v1/account/profile",
         headers=headers,
-        json={"displayName": "  After   Name  "},
+        json={
+            "displayName": "  After   Name  ",
+            "organizationName": "  Prewise   Security  ",
+            "jobTitle": "  Security   Analyst ",
+            "countryCode": "VN",
+            "locale": "vi",
+            "timezone": "Asia/Ho_Chi_Minh",
+        },
     )
     assert profile.status_code == 200
-    assert profile.json()["displayName"] == "After Name"
+    body = profile.json()
+    assert body["displayName"] == "After Name"
+    assert body["organizationName"] == "Prewise Security"
+    assert body["jobTitle"] == "Security Analyst"
+    assert body["countryCode"] == "VN"
+    assert body["locale"] == "vi"
+    assert body["timezone"] == "Asia/Ho_Chi_Minh"
+    assert body["emailVerified"] is False
+    assert body["status"] == "active"
+    assert body["createdAt"]
+    assert body["updatedAt"]
+    assert body["lastLoginAt"]
+
+    persisted = client.get("/v1/account/profile", headers=headers)
+    assert persisted.status_code == 200
+    assert persisted.json() == body
+    with SessionLocal() as db:
+        account = db.execute(select(User).where(User.email == email)).scalar_one()
+        assert account.organization_name == "Prewise Security"
+        assert account.job_title == "Security Analyst"
+        assert account.country_code == "VN"
+        assert account.preferred_locale == "vi"
+        assert account.timezone == "Asia/Ho_Chi_Minh"
+
+    invalid = client.patch(
+        "/v1/account/profile",
+        headers=headers,
+        json={**{
+            "displayName": "After Name",
+            "organizationName": None,
+            "jobTitle": None,
+            "countryCode": "VN",
+            "locale": "vi",
+        }, "timezone": "Invalid/Zone"},
+    )
+    assert invalid.status_code == 422
 
     wrong = client.post(
         "/v1/account/password",

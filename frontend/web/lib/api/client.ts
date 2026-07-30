@@ -36,6 +36,7 @@ import type {
     GmailStatus,
     PasswordChangeInput,
     PasswordResetRequestResult,
+    ProfileUpdateInput,
     RegisterInput,
     SandboxResult,
     ScanRecord,
@@ -100,8 +101,11 @@ export interface ApiClient {
     /** Đăng xuất; xóa phiên hiện tại. */
     logout(): Promise<void>;
 
-    /** Cập nhật tên hiển thị của tài khoản hiện tại. */
-    updateProfile(displayName: string): Promise<UserProfile>;
+    /** Lấy hồ sơ mới nhất trực tiếp từ cơ sở dữ liệu. */
+    getProfile(): Promise<UserProfile>;
+
+    /** Cập nhật hồ sơ và tùy chọn vùng của tài khoản hiện tại. */
+    updateProfile(input: ProfileUpdateInput): Promise<UserProfile>;
 
     /** Đổi mật khẩu sau khi xác minh mật khẩu hiện tại. */
     changePassword(input: PasswordChangeInput): Promise<void>;

@@ -55,6 +55,7 @@ import type {
     GmailStatus,
     PasswordChangeInput,
     PasswordResetRequestResult,
+    ProfileUpdateInput,
     RegisterInput,
     SandboxResult,
     ScanRecord,
@@ -767,12 +768,19 @@ export class RealApiClient implements ApiClient {
         );
     }
 
-    async updateProfile(displayName: string): Promise<UserProfile> {
+    async getProfile(): Promise<UserProfile> {
+        return requestJson<UserProfile>(
+            "/v1/account/profile",
+            withAuthentication({ method: "GET" }),
+        );
+    }
+
+    async updateProfile(input: ProfileUpdateInput): Promise<UserProfile> {
         return requestJson<UserProfile>(
             "/v1/account/profile",
             withAuthentication({
                 method: "PATCH",
-                body: JSON.stringify({ displayName }),
+                body: JSON.stringify(input),
             }),
         );
     }

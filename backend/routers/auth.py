@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, Literal, NoReturn
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -107,6 +107,19 @@ class PasswordResetConfirm(BaseModel):
 
 class ProfileUpdate(BaseModel):
     displayName: str = Field(min_length=1, max_length=200)
+    organizationName: str | None = Field(default=None, max_length=200)
+    jobTitle: str | None = Field(default=None, max_length=160)
+    countryCode: str = Field(default="VN", pattern=r"^[A-Z]{2}$")
+    locale: Literal["vi", "en"] = "vi"
+    timezone: Literal[
+        "Asia/Ho_Chi_Minh",
+        "Asia/Singapore",
+        "Asia/Tokyo",
+        "Asia/Seoul",
+        "Europe/London",
+        "America/New_York",
+        "UTC",
+    ] = "Asia/Ho_Chi_Minh"
 
     @field_validator("displayName")
     @classmethod
@@ -115,6 +128,12 @@ class ProfileUpdate(BaseModel):
         if not normalized:
             raise ValueError("Tên hiển thị không được để trống.")
         return normalized
+
+    @field_validator("organizationName", "jobTitle")
+    @classmethod
+    def normalize_optional_text(cls, value: str | None) -> str | None:
+        normalized = " ".join(value.split()) if value is not None else ""
+        return normalized or None
 
 
 class PasswordChange(BaseModel):
@@ -144,6 +163,16 @@ class UserProfile(BaseModel):
     displayName: str
     avatarUrl: str | None = None
     role: str = "user"
+    organizationName: str | None = None
+    jobTitle: str | None = None
+    countryCode: str = "VN"
+    locale: str = "vi"
+    timezone: str = "Asia/Ho_Chi_Minh"
+    emailVerified: bool = False
+    status: str = "active"
+    createdAt: str | None = None
+    updatedAt: str | None = None
+    lastLoginAt: str | None = None
 
 
 class PlanInfo(BaseModel):
@@ -162,6 +191,31 @@ class Session(BaseModel):
     token: str
     user: UserProfile
     plan: PlanInfo
+
+
+def _user_profile(user: User) -> UserProfile:
+    """Map the persisted account record to the public profile contract."""
+
+    def iso(value: object | None) -> str | None:
+        return value.isoformat() if value is not None and hasattr(value, "isoformat") else None
+
+    return UserProfile(
+        id=user.id,
+        email=user.email,
+        displayName=user.display_name,
+        avatarUrl=user.avatar_url,
+        role=user.role,
+        organizationName=user.organization_name,
+        jobTitle=user.job_title,
+        countryCode=user.country_code,
+        locale=user.preferred_locale,
+        timezone=user.timezone,
+        emailVerified=user.email_verified_at is not None,
+        status=user.status,
+        createdAt=iso(user.created_at),
+        updatedAt=iso(user.updated_at),
+        lastLoginAt=iso(user.last_login_at),
+    )
 
 
 class ScanRecordEvidence(BaseModel):
@@ -478,7 +532,7 @@ def build_session(db: DbSession, user: User, request: Request | None = None) -> 
     db.commit()
     return Session(
         token=token,
-        user=UserProfile(id=user.id, email=user.email, displayName=user.display_name, role=user.role),
+        user=_user_profile(user),
         plan=build_plan_info(db, user.id),
     )
 
@@ -618,7 +672,7 @@ def verify_extension_key(
     remaining = max(0, limit - used) if limit < 999_999 else 999_999
     return ExtensionActivation(
         valid=True,
-        user=UserProfile(id=actor.user.id, email=actor.user.email, displayName=actor.user.display_name, role=actor.user.role),
+        user=_user_profile(actor.user),
         plan=plan,
         quota=QuotaInfo(
             usageDay=today.isoformat(),
@@ -737,13 +791,7 @@ def get_profile(auth: CurrentSession) -> UserProfile:
     Desktop clients persist a session locally, so roles must be refreshed from
     the database rather than trusting the role saved at the time of login.
     """
-    return UserProfile(
-        id=auth.user.id,
-        email=auth.user.email,
-        displayName=auth.user.display_name,
-        avatarUrl=auth.user.avatar_url,
-        role=auth.user.role,
-    )
+    return _user_profile(auth.user)
 
 
 @router.post("/account/subscription/cancel", response_model=PlanInfo)
@@ -765,15 +813,14 @@ def update_profile(
     db: DbSession = Depends(get_db),
 ) -> UserProfile:
     auth.user.display_name = payload.displayName
+    auth.user.organization_name = payload.organizationName
+    auth.user.job_title = payload.jobTitle
+    auth.user.country_code = payload.countryCode
+    auth.user.preferred_locale = payload.locale
+    auth.user.timezone = payload.timezone
     db.commit()
     db.refresh(auth.user)
-    return UserProfile(
-        id=auth.user.id,
-        email=auth.user.email,
-        displayName=auth.user.display_name,
-        avatarUrl=auth.user.avatar_url,
-        role=auth.user.role,
-    )
+    return _user_profile(auth.user)
 
 
 @router.post("/account/password")

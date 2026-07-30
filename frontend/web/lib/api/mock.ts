@@ -41,6 +41,7 @@ import type {
     Credentials,
     Evidence,
     PlanInfo,
+    ProfileUpdateInput,
     PublicReportShare,
     PlanTier,
     RegisterInput,
@@ -494,6 +495,14 @@ function buildSession(email: string): Session {
         id: generateId(),
         email,
         displayName: displayNameFromEmail(email),
+        countryCode: "VN",
+        locale: "vi",
+        timezone: "Asia/Ho_Chi_Minh",
+        emailVerified: false,
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
     };
     return {
         token: `mock-jwt.${btoaSafe(email)}.${generateId()}`,
@@ -761,11 +770,23 @@ export class MockApiClient implements ApiClient {
         }
     }
 
-    async updateProfile(displayName: string): Promise<Session["user"]> {
+    async getProfile(): Promise<Session["user"]> {
+        if (!this.session) throw new Error("Bạn cần đăng nhập.");
+        return this.session.user;
+    }
+
+    async updateProfile(input: ProfileUpdateInput): Promise<Session["user"]> {
         if (!this.session) throw new Error("Bạn cần đăng nhập.");
         this.session = {
             ...this.session,
-            user: { ...this.session.user, displayName: displayName.trim() },
+            user: {
+                ...this.session.user,
+                ...input,
+                displayName: input.displayName.trim(),
+                organizationName: input.organizationName?.trim() || null,
+                jobTitle: input.jobTitle?.trim() || null,
+                updatedAt: new Date().toISOString(),
+            },
         };
         writeStored(MOCK_SESSION_KEY, this.session);
         return this.session.user;
