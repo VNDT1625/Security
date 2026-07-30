@@ -30,6 +30,7 @@ import type {
     ExeProviderResult,
     ExeSandboxResult,
 } from "@/lib/types";
+import { WebIsolationReport } from "./WebIsolationReport";
 import {
     REMOTE_IFRAME_SANDBOX_POLICY,
     buildSessionCreatePayload,
@@ -885,14 +886,7 @@ export default function SandboxPage() {
                                 </button>
                             </form>
                             {web && (
-                                <div className="sandbox-report">
-                                    <strong>
-                                        {web.canary.exfiltration_blocked
-                                            ? "PHÁT HIỆN RÒ RỈ"
-                                            : "HOÀN TẤT"}
-                                    </strong>
-                                    <p>{web.page_title || web.final_url}</p>
-                                </div>
+                                <WebIsolationReport result={web} />
                             )}
                         </article>
 
