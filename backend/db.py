@@ -312,6 +312,12 @@ def check_database() -> bool:
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return True
+            plan_count = conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM plans "
+                    "WHERE tier IN ('free', 'pro', 'team', 'enterprise')"
+                )
+            ).scalar_one()
+        return plan_count == 4
     except Exception:
         return False
