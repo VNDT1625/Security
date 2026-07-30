@@ -280,6 +280,10 @@ class Settings(BaseSettings):
     risk_threshold_block: float = 0.85
     risk_threshold_warn: float = 0.50
     risk_threshold_allow: float = 0.15
+    # Safe migration for the evidence-based action core. ``shadow`` records the
+    # new result but preserves the established production decision.
+    security_core_mode: Literal["legacy", "shadow", "new_engine"] = "shadow"
+    action_lightgbm_model_path: str = ""
 
     # Official product origins plus local development origins.
     cors_allow_origins: list[str] = [

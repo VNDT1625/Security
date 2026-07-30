@@ -1,0 +1,42 @@
+[
+  {
+    "id": "confirmed-credential-exfiltration",
+    "expected_dangerous": true,
+    "expected_critical": true,
+    "input": {
+      "action_type": "submit_form",
+      "target_url": "https://collector.example/login",
+      "data_types": ["password"],
+      "user_intent": "Gửi biểu mẫu đăng nhập",
+      "planned_action": "submit form",
+      "permission_level": "denied"
+    }
+  },
+  {
+    "id": "test-document-password-word",
+    "expected_dangerous": false,
+    "expected_critical": false,
+    "input": {
+      "action_type": "open_file",
+      "target_url": null,
+      "data_types": ["test_document"],
+      "user_intent": "Đọc tài liệu kiểm thử chứa chữ password",
+      "planned_action": "open file",
+      "permission_level": "user"
+    }
+  },
+  {
+    "id": "sensitive-upload-missing-destination",
+    "expected_dangerous": false,
+    "expected_critical": false,
+    "expected_unknown": true,
+    "input": {
+      "action_type": "upload_file",
+      "target_url": null,
+      "data_types": ["personal_data"],
+      "user_intent": "Tải dữ liệu lên",
+      "planned_action": "upload file",
+      "permission_level": "user"
+    }
+  }
+]

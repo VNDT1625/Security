@@ -22,6 +22,7 @@ from backend.routers.auth import (
     resolve_actor,
 )
 from backend.services.inference_service import InferenceService
+from backend.services.action_audit_service import log_action_assessment
 from backend.services.quota_service import (
     refund_ai_credits,
     reserve_ai_credits,
@@ -115,6 +116,7 @@ def _agent_response(result: AssessResponse | AgentRiskResponse) -> dict[str, Any
         "evidence": evidence,
         "requires_user_confirmation": decision == "ASK_USER_CONFIRMATION",
         "recommended_agent_behavior": behavior,
+        "security_core": getattr(result, "security_core", None),
         "enforcement": {
             "proceed": decision in {"ALLOW", "WARN"},
             "ask_user": decision == "ASK_USER_CONFIRMATION",
@@ -232,4 +234,13 @@ def check_action(
     svc = get_user_inference_service(db, actor.user.id if actor.user else None)
     target_url = payload.target if payload.target.startswith(("http://", "https://")) else None
     context = payload.agent_context.model_copy(update={"data_types_involved": payload.data_types})
-    return _agent_response(svc.assess_action(payload.action_type, target_url, payload.data_types, context))
+    result = svc.assess_action(payload.action_type, target_url, payload.data_types, context)
+    log_action_assessment(
+        db,
+        result=result,
+        actor=actor,
+        request=request,
+        action_type=payload.action_type,
+        target=target_url,
+    )
+    return _agent_response(result)

@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from backend.db import SessionLocal
 from backend.main import app
-from backend.models import ScanEvent
+from backend.models import AuditLog, ScanEvent
 
 client = TestClient(app)
 
@@ -227,8 +227,21 @@ def test_action_block_credential_exfil():
         },
     )
     assert r.status_code == 200
-    assert r.json()["decision"] == "BLOCK"
-    assert r.json()["requires_user_confirmation"] is False
+    body = r.json()
+    assert body["decision"] == "BLOCK"
+    assert body["requires_user_confirmation"] is False
+    assert body["security_core"]["mode"] == "shadow"
+    assert body["security_core"]["audit"]["evidence_before_dedup"]
+    with SessionLocal() as db:
+        audit = db.scalar(
+            select(AuditLog).where(
+                AuditLog.action == "security.action.assessed",
+                AuditLog.resource_id == body["request_id"],
+            )
+        )
+    assert audit is not None
+    assert "vietc0mbank-verify.xyz" not in str(audit.extra_metadata)
+    assert audit.extra_metadata["target_sha256"]
 
 
 def test_prompt_benign_not_blocked():

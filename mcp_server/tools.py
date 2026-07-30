@@ -401,6 +401,7 @@ class MCPTools:
             "legal_rag_status": result.legal_rag_status,
             "legal_review_required": result.legal_review_required,
             "legal_references": result.legal_references,
+            "security_core": result.security_core,
             "enforcement": {
                 "proceed": result.decision in {Decision.ALLOW, Decision.WARN},
                 "ask_user": result.requires_user_confirmation,

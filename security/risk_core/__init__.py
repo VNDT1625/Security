@@ -1,6 +1,20 @@
 """Deterministic CoreGuide v2 Risk and Policy Engine public API."""
 
 from .config import CriterionConfig, RiskConfig, SourceConfig, default_config
+from .action_config import ActionRiskConfig, default_action_risk_config
+from .action_engine import EvidenceBasedActionRiskEngine
+from .action_lightgbm import LightGBMRiskAdapter
+from .action_session import SessionRiskTracker
+from .action_types import (
+    ActionPolicyDecision,
+    ActionRiskInput,
+    ActionRiskLevel,
+    ActionRiskResult,
+    EvidenceCategory,
+    EvidenceRelationship,
+    EvidenceSource,
+    SecurityEvidence,
+)
 from .detectors import (
     ScanObservations,
     add_browser_sandbox,
@@ -60,14 +74,24 @@ class RiskEngineV2:
 
 
 __all__ = [
+    "ActionPolicyDecision",
+    "ActionRiskConfig",
+    "ActionRiskInput",
+    "ActionRiskLevel",
+    "ActionRiskResult",
     "AdapterStatus",
     "ConfidenceComponents",
     "CriterionConfig",
     "CriterionResult",
     "CriterionStatus",
     "EvidenceV2",
+    "EvidenceBasedActionRiskEngine",
+    "EvidenceCategory",
+    "EvidenceRelationship",
+    "EvidenceSource",
     "ExternalAward",
     "MatchedSubject",
+    "LightGBMRiskAdapter",
     "NextAction",
     "OverrideResult",
     "OverrideRule",
@@ -79,6 +103,8 @@ __all__ = [
     "RiskConfig",
     "RiskEngineV2",
     "RiskResultV2",
+    "SecurityEvidence",
+    "SessionRiskTracker",
     "ScanObservations",
     "SourceConfig",
     "SubjectKeys",
@@ -91,6 +117,7 @@ __all__ = [
     "add_structured_observations",
     "build_criteria_evidence",
     "default_config",
+    "default_action_risk_config",
     "default_risk_config",
     "make_finding_key",
     "make_incident_key",
