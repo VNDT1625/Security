@@ -40,7 +40,7 @@ def test_production_image_uses_runtime_only_dependencies_and_fail_closed_health(
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in dockerfile
     assert "--only-shell chromium" in dockerfile
     assert 'chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}"' in dockerfile
-    assert "executable.is_file()" in dockerfile
+    assert "chromium.launch(headless=True)" in dockerfile
     assert "http://localhost:8000/v1/ready" in dockerfile
     assert "frontend" in backend_ignore.splitlines()
     assert not (ROOT / ".dockerignore").exists()

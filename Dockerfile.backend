@@ -39,9 +39,9 @@ COPY alembic.ini ./alembic.ini
 RUN useradd -m armor && mkdir -p /app/.aisec-data && chown -R armor /app
 USER armor
 
-# Fail the image build if the non-root runtime user cannot resolve the exact
-# Chromium revision installed alongside the current Playwright package.
-RUN python -c "from pathlib import Path; from playwright.sync_api import sync_playwright; p = sync_playwright().start(); executable = Path(p.chromium.executable_path); assert executable.is_file(), executable; p.stop()"
+# Fail the image build if the non-root runtime user cannot launch the exact
+# headless-shell revision installed alongside the current Playwright package.
+RUN python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); browser = p.chromium.launch(headless=True); browser.close(); p.stop()"
 
 EXPOSE 8000
 
