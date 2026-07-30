@@ -12,6 +12,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .brand_content import assess_brand_content
+from .business_content import (
+    BusinessAssessment,
+    assess_business_address,
+    assess_business_email,
+    assess_coercive_content,
+    assess_content_quality,
+    assess_legal_identity,
+    assess_privacy_policy,
+    assess_promotion_claim,
+    assess_terms_refund,
+)
 from .config import RiskConfig
 from .contact_information import assess_contact_information
 from .domain_lifecycle import evaluate_domain_lifecycle
@@ -58,6 +69,32 @@ class ScanObservations:
 
     def clean(self, *criterion_ids: int) -> None:
         self.completed.update(criterion_ids)
+
+
+def _replace_assessment(
+    obs: ScanObservations,
+    criterion_id: int,
+    assessment: BusinessAssessment,
+    *,
+    source: str,
+) -> None:
+    obs.findings.pop(criterion_id, None)
+    obs.completed.discard(criterion_id)
+    obs.not_applicable.pop(criterion_id, None)
+    if assessment.status == "not_applicable":
+        obs.not_applicable[criterion_id] = assessment.summary
+    elif assessment.status == "clean":
+        obs.clean(criterion_id)
+    else:
+        obs.risk(
+            criterion_id,
+            assessment.finding_type or "business_content_risk",
+            assessment.severity,
+            assessment.quality,
+            assessment.summary,
+            source=source,
+            metadata=assessment.metadata,
+        )
 
 
 def build_criteria_evidence(observations: ScanObservations, config: RiskConfig) -> list[EvidenceV2]:
@@ -545,10 +582,93 @@ def add_http_sandbox(obs: ScanObservations, report: Any) -> None:
             source="http_sandbox",
             metadata=contact.metadata,
         )
-    if commercial and not signals.get("emails"):
-        obs.not_applicable[21] = "No business email was published on the rendered page."
-    if commercial and not signals.get("prices"):
-        obs.not_applicable[27] = "No public price was present for an outlier check."
+    _replace_assessment(
+        obs,
+        21,
+        assess_business_email(
+            str(getattr(report, "final_url", "") or getattr(report, "url", "") or obs.url),
+            commercial=commercial,
+            emails=signals.get("emails", ()) or (),
+        ),
+        source="http_sandbox",
+    )
+    _replace_assessment(
+        obs,
+        22,
+        assess_business_address(
+            commercial=commercial,
+            addresses=signals.get("addresses", ()) or (),
+        ),
+        source="http_sandbox",
+    )
+    _replace_assessment(
+        obs,
+        23,
+        assess_legal_identity(
+            commercial=commercial,
+            legal_names=signals.get("legal_names", ()) or (),
+            business_ids=signals.get("business_ids", ()) or (),
+        ),
+        source="http_sandbox",
+    )
+    _replace_assessment(
+        obs,
+        24,
+        assess_privacy_policy(
+            collects_sensitive_data=bool(signals.get("collects_sensitive_data")),
+            privacy_links=signals.get("privacy_policy_links", ()) or (),
+        ),
+        source="http_sandbox",
+    )
+    _replace_assessment(
+        obs,
+        25,
+        assess_terms_refund(
+            commercial=commercial,
+            terms_links=signals.get("terms_links", ()) or (),
+            refund_links=signals.get("refund_links", ()) or (),
+        ),
+        source="http_sandbox",
+    )
+    _replace_assessment(
+        obs,
+        26,
+        assess_content_quality(
+            word_count=int(signals.get("word_count") or 0),
+            unique_word_ratio=(
+                float(signals["unique_word_ratio"])
+                if signals.get("unique_word_ratio") is not None
+                else None
+            ),
+            placeholder_hits=signals.get("placeholder_hits", ()) or (),
+        ),
+        source="http_sandbox",
+    )
+    _replace_assessment(
+        obs,
+        27,
+        assess_promotion_claim(
+            int(signals["max_discount_percent"])
+            if signals.get("max_discount_percent") is not None
+            else None
+        ),
+        source="http_sandbox",
+    )
+    _replace_assessment(
+        obs,
+        28,
+        assess_coercive_content(
+            urgency_hits=signals.get("urgency_hits", ()) or (),
+            sensitive_context=bool(signals.get("collects_sensitive_data")),
+            transaction_context=bool(
+                signals.get("payment_methods")
+                or signals.get("payment_recipient_hints")
+                or signals.get("prices")
+            ),
+            external_form=bool(signals.get("external_form_actions")),
+        ),
+        source="http_sandbox",
+    )
     if commercial and not signals.get("payment_methods"):
         obs.not_applicable[31] = "No payment method was presented on this page."
     if commercial and not signals.get("payment_recipient_hints"):
@@ -566,16 +686,7 @@ def add_http_sandbox(obs: ScanObservations, report: Any) -> None:
     issue_map = {
         "tls_certificate_error": 10,
         "meta_refresh": 16,
-        "urgency_language": 28,
-        "external_form_action": 30,
         "external_iframe": 36,
-        "business_email_mismatch": 21,
-        "missing_business_address": 22,
-        "missing_legal_identity": 23,
-        "missing_privacy_policy": 24,
-        "missing_terms_refund": 25,
-        "scam_template_content": 26,
-        "extreme_price_discount": 27,
         "irreversible_payment_method": 31,
         "unverified_payment_recipient": 32,
         "metadata_identity_mismatch": 46,
@@ -584,15 +695,52 @@ def add_http_sandbox(obs: ScanObservations, report: Any) -> None:
         "review_manipulation_pattern": 49,
     }
     issue_codes = {issue.code for issue in report.issues}
-    # A password field is normal on legitimate login pages. It becomes a
-    # credential-theft finding only when the form sends data off-origin.
-    if {"password_form", "external_form_action"} <= issue_codes:
+    legacy_external_sensitive_form = (
+        "external_form_action" in issue_codes
+        and "password_form" in issue_codes
+    )
+    if (
+        "urgency_language" in issue_codes
+        and (
+            "external_form_action" in issue_codes
+            or "password_form" in issue_codes
+            or commercial
+        )
+    ):
+        obs.risk(
+            28,
+            "coercive_action_context",
+            0.7,
+            0.9,
+            "Urgency language is coupled with a transaction, password, or external-form action.",
+            source="http_sandbox",
+        )
+    if "secret_recovery_request" in issue_codes:
         obs.risk(
             29,
-            "credential_form_with_external_destination",
+            "high_risk_secret_request",
+            1.0,
+            1.0,
+            "The page requests a wallet recovery phrase or private key.",
+            source="http_sandbox",
+        )
+    # Password, OTP and card fields are common on legitimate sites. They become
+    # an actionable finding when submitted to a different origin.
+    if "external_sensitive_form_action" in issue_codes or legacy_external_sensitive_form:
+        obs.risk(
+            29,
+            "sensitive_form_with_external_destination",
             0.95,
             1.0,
-            "A password form submits credentials to a different origin.",
+            "A sensitive form submits credentials or payment identifiers to a different origin.",
+            source="http_sandbox",
+        )
+        obs.risk(
+            30,
+            "untrusted_sensitive_form_destination",
+            1.0,
+            1.0,
+            "A sensitive form submits data to a different origin.",
             source="http_sandbox",
         )
     for issue in report.issues:
@@ -679,7 +827,6 @@ def add_browser_sandbox(obs: ScanObservations, report: Any) -> None:
     if not identity.get("site_name") and not getattr(report, "page_title", ""):
         obs.not_applicable[46] = "No rendered title or site identity metadata was present."
     issue_map = {
-        "cross_origin_form_action": 30,
         "canary_exfiltration_blocked": 35,
         "private_network_request_blocked": 35,
         "websocket_request_blocked": 35,
@@ -693,7 +840,7 @@ def add_browser_sandbox(obs: ScanObservations, report: Any) -> None:
     issue_codes = {issue.code for issue in report.issues}
     credential_field = bool(
         {"otp_input_detected", "password_input_detected"} & issue_codes
-    )
+    ) or bool(identity.get("sensitive_fields"))
     credential_exposure = bool(
         {
             "cross_origin_form_action",
@@ -709,6 +856,15 @@ def add_browser_sandbox(obs: ScanObservations, report: Any) -> None:
             0.95,
             1.0,
             "A password or OTP field is correlated with impersonation or cross-origin data exposure.",
+            source="browser_sandbox",
+        )
+    if credential_field and "cross_origin_form_action" in issue_codes:
+        obs.risk(
+            30,
+            "untrusted_sensitive_form_destination",
+            1.0,
+            1.0,
+            "A rendered sensitive form submits to a different origin.",
             source="browser_sandbox",
         )
     for issue in report.issues:

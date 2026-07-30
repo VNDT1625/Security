@@ -44,7 +44,7 @@ def test_worker_reports_live_html_signals(monkeypatch) -> None:
     assert result["status_code"] == 200
     assert result["page_title"] == "Secure account verification"
     assert result["page_signals"]["password_inputs"] == 1
-    assert {"password_form", "external_form_action", "external_iframe"} <= codes
+    assert {"password_form", "external_sensitive_form_action", "external_iframe"} <= codes
     html_step = next(step for step in result["scan_steps"] if step["key"] == "inspect_html")
     assert html_step["status"] == "failed"
 
@@ -63,10 +63,59 @@ def test_worker_reports_business_policy_and_content_findings(monkeypatch) -> Non
     })
     result = sandbox_worker.run({"url": "https://shop.example.test"})
     codes = {issue["code"] for issue in result["issues"]}
-    assert {"business_email_mismatch", "missing_privacy_policy",
-            "missing_terms_refund", "scam_template_content", "urgency_language"} <= codes
+    assert {"missing_privacy_policy", "missing_terms_refund",
+            "scam_template_content", "coercive_action_context"} <= codes
     assert "missing_contact_information" not in codes
     assert result["page_signals"]["has_contact_channel"] is True
+
+
+def test_worker_requires_real_policy_links_and_structured_business_facts(monkeypatch) -> None:
+    html = b"""
+      <html><head><title>Store</title></head><body>
+      <p>Address and privacy are important words, but they are not evidence.</p>
+      <p>Contact support@gmail.com</p>
+      <p>Buy now - giam 95%</p>
+      <form action="https://forms.example/news"><input name="email"></form>
+      </body></html>
+    """
+    monkeypatch.setattr(sandbox_worker, "_request_once", lambda *args: {
+        "status": 200, "reason": "OK", "headers": {"content-type": "text/html"},
+        "body": html, "truncated": False, "resolved_ip": "93.184.216.34", "tls": {},
+    })
+
+    result = sandbox_worker.run({"url": "https://shop.example.test"})
+    codes = {issue["code"] for issue in result["issues"]}
+
+    assert "missing_business_address" in codes
+    assert "missing_privacy_policy" not in codes
+    assert "external_sensitive_form_action" not in codes
+    assert "extreme_price_discount" in codes
+    assert result["page_signals"]["max_discount_percent"] == 95
+
+
+def test_worker_accepts_dedicated_policy_links_and_complete_identity(monkeypatch) -> None:
+    html = b"""
+      <html><head><title>Example Store</title></head><body>
+      <p>Buy now for 100 USD. Example Trading Company Ltd.</p>
+      <p>Tax ID: VN123456789</p>
+      <p>Address: 12 Nguyen Hue Street, District 1, Ho Chi Minh City</p>
+      <a href="/privacy-policy">Privacy policy</a>
+      <a href="/terms">Terms</a>
+      <form><input type="password" name="password"></form>
+      </body></html>
+    """
+    monkeypatch.setattr(sandbox_worker, "_request_once", lambda *args: {
+        "status": 200, "reason": "OK", "headers": {"content-type": "text/html"},
+        "body": html, "truncated": False, "resolved_ip": "93.184.216.34", "tls": {},
+    })
+
+    result = sandbox_worker.run({"url": "https://shop.example.test"})
+    codes = {issue["code"] for issue in result["issues"]}
+
+    assert "missing_business_address" not in codes
+    assert "missing_legal_identity" not in codes
+    assert "missing_privacy_policy" not in codes
+    assert "missing_terms_refund" not in codes
 
 
 def test_payment_recipient_makes_page_commercial_without_shop_words(monkeypatch) -> None:

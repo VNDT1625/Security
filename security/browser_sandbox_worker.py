@@ -1189,6 +1189,9 @@ def run(payload: dict) -> dict:
                             const socialHosts = ['facebook.com', 'instagram.com', 'linkedin.com', 'tiktok.com', 'youtube.com', 'x.com', 'twitter.com', 'zalo.me'];
                             const social_links = hrefs.filter((item) => socialHosts.some((host) => item.href.toLowerCase().includes(host))).slice(0, 12);
                             const support_links = hrefs.filter((item) => /^(mailto:|tel:)/i.test(item.href) || /contact|support|help|lien he|ho tro|hotline/i.test(item.label + ' ' + item.href)).slice(0, 12);
+                            const privacy_policy_links = hrefs.filter((item) => /privacy|quyen-rieng-tu|chinh-sach-bao-mat/i.test(item.label + ' ' + item.href)).slice(0, 12);
+                            const terms_links = hrefs.filter((item) => /terms|terms-of-use|terms-and-conditions|dieu-khoan/i.test(item.label + ' ' + item.href)).slice(0, 12);
+                            const refund_links = hrefs.filter((item) => /refund|return-policy|returns|hoan-tien|doi-tra/i.test(item.label + ' ' + item.href)).slice(0, 12);
                             const paymentTerms = ['bank transfer', 'wire transfer', 'crypto', 'bitcoin', 'usdt', 'gift card', 'credit card', 'debit card', 'cash on delivery', 'cod', 'chuyen khoan', 'thanh toan'];
                             const payment_methods = paymentTerms.filter((term) => folded.includes(term));
                             const prices = (text.match(/(?:[$€£¥]|vnd|usd|eur|đ|dong)\\s?\\d[\\d.,]*|\\d[\\d.,]*\\s?(?:vnd|usd|eur|đ|dong)/gi) || []).slice(0, 20);
@@ -1231,10 +1234,14 @@ def run(payload: dict) -> dict:
                                 emails,
                                 forms: document.forms.length,
                                 password_fields: document.querySelectorAll('input[type="password"]').length,
+                                sensitive_fields: document.querySelectorAll('input[type="password"], input[name*="otp" i], input[id*="otp" i], input[name*="cvv" i], input[id*="cvv" i], input[name*="card" i], input[id*="card" i], input[name*="cccd" i], input[id*="cccd" i], input[name*="seed" i], input[id*="seed" i], input[name*="private_key" i], input[id*="private_key" i]').length,
                                 legal_names: Array.from(new Set(legal_names)).slice(0, 8),
                                 addresses: Array.from(new Set(addresses.filter(Boolean))).slice(0, 8),
                                 social_links,
                                 support_links,
+                                privacy_policy_links,
+                                terms_links,
+                                refund_links,
                                 is_commercial: commercial,
                                 prices,
                                 payment_methods,

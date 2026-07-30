@@ -35,7 +35,9 @@ def test_http_sandbox_report_is_scored_by_risk_core():
     trace = InferenceService().assess_sandbox_report(report.url, report)
     by_id = {item["criterion_id"]: item for item in trace.criteria}
     assert by_id[28]["status"] in {CriterionStatus.SUSPICIOUS, CriterionStatus.MALICIOUS}
-    assert by_id[30]["status"] == CriterionStatus.MALICIOUS
+    # A cross-origin action alone may be an ordinary newsletter/payment
+    # provider. Criterion 30 now requires a sensitive field on that form.
+    assert by_id[30]["status"] == CriterionStatus.CLEAN
     assert trace.internal_score > 0
 
 

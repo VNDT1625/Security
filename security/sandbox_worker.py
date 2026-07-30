@@ -143,8 +143,18 @@ class PageInspector(HTMLParser):
             name = f"{values.get('name', '')} {values.get('id', '')}".lower()
             if input_type == "password":
                 self.password_inputs += 1
-            if input_type in {"password", "tel"} or any(
-                token in name for token in ("otp", "card", "cccd", "cvv", "pin")
+            if input_type == "password" or any(
+                token in name
+                for token in (
+                    "otp",
+                    "card",
+                    "cccd",
+                    "cvv",
+                    "pin",
+                    "seed",
+                    "recovery",
+                    "private_key",
+                )
             ):
                 self.sensitive_inputs += 1
         elif tag == "script" and values.get("src"):
@@ -381,10 +391,27 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     urgency_hits = [keyword for keyword in SUSPICIOUS_TEXT if keyword in page_text]
     commercial_terms = ("buy now", "add to cart", "checkout", "mua ngay", "giỏ hàng", "thanh toán")
     data_terms = ("password", "otp", "cvv", "pin", "mật khẩu", "cccd", "seed phrase")
-    privacy_terms = ("privacy", "chính sách bảo mật", "quyền riêng tư")
-    terms_terms = ("refund", "return policy", "terms", "hoàn tiền", "đổi trả", "điều khoản")
     scam_template_terms = ("virus detected", "you have won", "trúng thưởng", "technical support", "đầu tư lợi nhuận")
-    link_text = " ".join(f"{href} {label}" for href, label in parser.links).lower()
+    policy_links = [
+        (href, f"{href} {label}".lower())
+        for href, label in parser.links
+        if href and not href.lower().startswith(("javascript:", "#"))
+    ]
+    privacy_links = [
+        urljoin(url, href)
+        for href, value in policy_links
+        if re.search(r"\b(?:privacy|quyen-rieng-tu|chinh-sach-bao-mat)\b", value)
+    ][:12]
+    terms_links = [
+        urljoin(url, href)
+        for href, value in policy_links
+        if re.search(r"\b(?:terms|terms-of-use|terms-and-conditions|dieu-khoan)\b", value)
+    ][:12]
+    refund_links = [
+        urljoin(url, href)
+        for href, value in policy_links
+        if re.search(r"\b(?:refund|returns?|return-policy|hoan-tien|doi-tra)\b", value)
+    ][:12]
     emails = sorted(set(__import__("re").findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", page_text)))
     phones = sorted(
         set(
@@ -408,15 +435,35 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
         or re.search(r"/(?:contact|support|help)(?:[/#?]|$)", href.lower())
         or re.search(r"\b(?:contact|support|help|lien he|ho tro|hotline)\b", label.lower())
     ][:20]
-    page_host = (urlsplit(url).hostname or "").lower()
-    mismatched_emails = [email for email in emails if email.rsplit("@", 1)[-1].lower() != page_host
-                         and not email.lower().endswith(("@gmail.com", "@outlook.com", "@yahoo.com"))]
     is_commercial = any(term in page_text for term in commercial_terms)
     collects_data = parser.sensitive_inputs > 0 or any(term in page_text for term in data_terms)
-    address_terms = ("address", "registered office", "head office", "dia chi")
-    legal_terms = (
-        "company", "corporation", "limited", "ltd", "llc", "copyright", "cong ty", "doanh nghiep"
-    )
+    addresses = re.findall(
+        (
+            r"(?:address|registered office|head office|dia chi|địa chỉ)"
+            r"\s*[:=-]\s*([^\n|]{10,240})"
+        ),
+        page_text,
+        flags=re.IGNORECASE,
+    )[:12]
+    legal_names = re.findall(
+        (
+            r"\b((?:[a-z0-9&.'-]+\s+){0,8}"
+            r"(?:company|corporation|limited|ltd|llc|inc|"
+            r"công ty|cong ty|doanh nghiệp|doanh nghiep)"
+            r"(?:\s+[a-z0-9&.'-]+){0,8})\b"
+        ),
+        page_text,
+        flags=re.IGNORECASE,
+    )[:12]
+    business_ids = re.findall(
+        (
+            r"(?:tax\s*id|vat\s*(?:id|number)?|business\s*registration|"
+            r"mã\s*số\s*thuế|ma\s*so\s*thue|đăng\s*ký\s*kinh\s*doanh)"
+            r"\s*[:#-]?\s*([a-z0-9.-]{5,24})"
+        ),
+        page_text,
+        flags=re.IGNORECASE,
+    )[:12]
     payment_terms = {
         "bank_transfer": ("bank transfer", "wire transfer", "chuyen khoan"),
         "crypto": ("bitcoin", "crypto", "usdt", "ethereum"),
@@ -430,9 +477,16 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
         flags=re.IGNORECASE,
     )[:20]
     discount_values = [
-        int(value)
-        for value in re.findall(r"\b(\d{1,2})\s*%\s*(?:off|discount|sale|giam)", page_text)
-        if int(value) <= 99
+        int(before or after)
+        for before, after in re.findall(
+            (
+                r"\b(?:(\d{1,2})\s*%\s*(?:off|discount|sale|giam|giảm)"
+                r"|(?:off|discount|sale|giam|giảm)\s*(\d{1,2})\s*%)"
+            ),
+            page_text,
+            flags=re.IGNORECASE,
+        )
+        if int(before or after) <= 99
     ]
     recipient_hints = re.findall(
         r"(?:account|stk|so tai khoan|wallet|vi)\s*(?:number|no|:|-)?\s*[a-z0-9]{8,34}",
@@ -463,8 +517,25 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     title_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", parser.title.lower())}
     site_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", site_name.lower())}
     has_contact = bool(emails or phones or support_links)
-    has_address = any(term in page_text for term in address_terms)
-    has_legal_identity = any(term in page_text for term in legal_terms)
+    visible_words = re.findall(r"[^\W_]{2,}", page_text, flags=re.UNICODE)
+    unique_word_ratio = (
+        round(len(set(visible_words)) / len(visible_words), 4) if visible_words else None
+    )
+    placeholder_hits = [
+        term
+        for term in (
+            "lorem ipsum",
+            "your company name",
+            "example product",
+            "insert text here",
+            "coming soon",
+            "nội dung mẫu",
+            "noi dung mau",
+        )
+        if term in page_text
+    ]
+    has_address = bool(addresses)
+    has_legal_identity = bool(legal_names or business_ids)
     detected_payments = [
         method for method, values in payment_terms.items() if any(value in page_text for value in values)
     ]
@@ -476,20 +547,18 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
 
     if not has_contact and is_commercial:
         issues.append(_issue("missing_contact_information", "medium", "content", "Trang thương mại không có thông tin liên hệ rõ ràng."))
-    if mismatched_emails:
-        issues.append(_issue("business_email_mismatch", "high", "content", "Email doanh nghiệp không khớp tên miền website.", ", ".join(mismatched_emails[:3])))
-    if collects_data and not any(term in page_text or term in link_text for term in privacy_terms):
-        issues.append(_issue("missing_privacy_policy", "medium", "content", "Trang thu thập dữ liệu nhưng không thấy chính sách bảo mật."))
-    if is_commercial and not any(term in page_text or term in link_text for term in terms_terms):
-        issues.append(_issue("missing_terms_refund", "medium", "content", "Trang giao dịch không thấy điều khoản hoặc chính sách hoàn tiền."))
+    if collects_data and not privacy_links:
+        issues.append(_issue("missing_privacy_policy", "medium", "content", "Trang thu thập dữ liệu nhưng không có liên kết chính sách bảo mật."))
+    if is_commercial and not (terms_links or refund_links):
+        issues.append(_issue("missing_terms_refund", "medium", "content", "Trang giao dịch không có liên kết điều khoản, đổi trả hoặc hoàn tiền."))
     if is_commercial and not has_address:
-        issues.append(_issue("missing_business_address", "medium", "content", "Commercial page has no public business address."))
+        issues.append(_issue("missing_business_address", "medium", "content", "Commercial page has no complete published business address."))
     if is_commercial and not has_legal_identity:
-        issues.append(_issue("missing_legal_identity", "high", "content", "Commercial page has no public legal business identity."))
+        issues.append(_issue("missing_legal_identity", "medium", "content", "Commercial page has no published legal name or business identifier."))
     if is_commercial and not has_contact:
         issues.append(_issue("invalid_support_channel", "medium", "content", "Commercial page has no public support channel."))
     if discount_values and max(discount_values) >= 90:
-        issues.append(_issue("extreme_price_discount", "high", "content", "The page advertises a discount of at least 90 percent.", f"Max={max(discount_values)}%"))
+        issues.append(_issue("extreme_price_discount", "low", "content", "The page explicitly claims a discount of at least 90 percent; sale legitimacy was not inferred.", f"Max={max(discount_values)}%"))
     irreversible = sorted(set(detected_payments) & {"bank_transfer", "crypto", "gift_card"})
     if irreversible and urgency_hits:
         issues.append(_issue("irreversible_payment_method", "high", "content", "An irreversible payment method is coupled with urgency language.", ", ".join(irreversible)))
@@ -508,12 +577,23 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
 
     if parser.password_inputs:
         issues.append(_issue("password_form", "high", "content", "Trang có ô nhập mật khẩu.", f"Số ô: {parser.password_inputs}"))
-    if external_forms:
-        issues.append(_issue("external_form_action", "critical", "content", "Biểu mẫu gửi dữ liệu sang tên miền khác.", ", ".join(external_forms[:3])))
+    high_risk_secret_hits = [
+        term
+        for term in ("seed phrase", "recovery phrase", "private key", "cụm từ khôi phục")
+        if term in page_text
+    ]
+    if high_risk_secret_hits:
+        issues.append(_issue("secret_recovery_request", "critical", "content", "Trang yêu cầu bí mật khôi phục hoặc khóa riêng.", ", ".join(high_risk_secret_hits)))
+    if external_forms and parser.sensitive_inputs:
+        issues.append(_issue("external_sensitive_form_action", "critical", "content", "Biểu mẫu nhạy cảm gửi dữ liệu sang tên miền khác.", ", ".join(external_forms[:3])))
     if external_iframes:
         issues.append(_issue("external_iframe", "medium", "content", "Trang nhúng iframe từ tên miền khác.", ", ".join(external_iframes[:3])))
-    if urgency_hits:
-        issues.append(_issue("urgency_language", "medium", "content", "Trang có ngôn ngữ thúc ép hoặc đe dọa.", ", ".join(urgency_hits[:5])))
+    coercive_context = bool(
+        urgency_hits
+        and (collects_data or detected_payments or recipient_hints or external_forms)
+    )
+    if coercive_context:
+        issues.append(_issue("coercive_action_context", "high", "content", "Ngôn ngữ thúc ép đi kèm thu thập dữ liệu, thanh toán hoặc form ngoài miền.", ", ".join(urgency_hits[:5])))
     if parser.meta_refresh:
         issues.append(_issue("meta_refresh", "medium", "content", "Trang sử dụng chuyển hướng bằng meta refresh.", ", ".join(parser.meta_refresh[:3])))
 
@@ -522,6 +602,7 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
         "password_inputs": parser.password_inputs,
         "sensitive_inputs": parser.sensitive_inputs,
         "external_form_actions": len(external_forms),
+        "external_sensitive_form_actions": len(external_forms) if parser.sensitive_inputs else 0,
         "scripts": len(parser.scripts),
         "external_scripts": len(external_scripts),
         "iframes": len(parser.iframes),
@@ -531,15 +612,26 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
         "collects_sensitive_data": collects_data,
         "emails": emails[:20],
         "links": len(parser.links),
-        "has_privacy_policy": any(term in page_text or term in link_text for term in privacy_terms),
-        "has_terms_refund": any(term in page_text or term in link_text for term in terms_terms),
+        "privacy_policy_links": privacy_links,
+        "terms_links": terms_links,
+        "refund_links": refund_links,
+        "has_privacy_policy": bool(privacy_links),
+        "has_terms_refund": bool(terms_links or refund_links),
         "has_contact_channel": has_contact,
         "phones": phones,
         "support_links": support_links,
         "has_business_address": has_address,
+        "addresses": addresses,
         "has_legal_identity": has_legal_identity,
+        "legal_names": legal_names,
+        "business_ids": business_ids,
+        "word_count": len(visible_words),
+        "unique_word_ratio": unique_word_ratio,
+        "placeholder_hits": placeholder_hits,
         "prices": prices,
         "max_discount_percent": max(discount_values) if discount_values else None,
+        "high_risk_secret_hits": high_risk_secret_hits,
+        "coercive_context": coercive_context,
         "payment_methods": detected_payments,
         "payment_recipient_hints": recipient_hints,
         "social_links": social_links,

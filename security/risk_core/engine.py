@@ -17,6 +17,8 @@ _IMMEDIATE_DANGER_FINDINGS = frozenset(
         "public_malicious_listing",
         "credential_exfiltration",
         "credential_form_with_external_destination",
+        "sensitive_form_with_external_destination",
+        "untrusted_sensitive_form_destination",
         "credential_field_with_deception_or_exfiltration",
         "cross_origin_form_action",
         "external_form_action",
