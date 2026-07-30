@@ -120,7 +120,7 @@ class LLMProviderSetting(Base):
     model: Mapped[str] = mapped_column(String(300), nullable=False, default="")
     api_key_ciphertext: Mapped[str] = mapped_column(Text, nullable=False, default="")
     allowed_user_providers: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=lambda: ["auto", "adapter", "local", "endpoint"]
+        JSON, nullable=False, default=lambda: ["adapter", "local", "endpoint"]
     )
     allowed_user_models: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     updated_by_user_id: Mapped[str | None] = mapped_column(

@@ -799,11 +799,11 @@ export class MockApiClient implements ApiClient {
     async getAISettings(): Promise<import("@/lib/types").UserAISettings> {
         if (!this.session) throw new Error("Bạn cần đăng nhập.");
         return readStored<import("@/lib/types").UserAISettings>("prewise-mock-ai-settings") ?? {
-            provider: "auto", baseUrl: "", model: "", apiKeyConfigured: false,
+            provider: "adapter", baseUrl: "", model: "", apiKeyConfigured: false,
             configured: false, source: "account", percent: 0, minPercent: 0,
             maxPercent: 40, weightPercent: 0,
             weightEligible: this.session.plan.tier !== "free", weightSource: "global",
-            allowedProviders: ["auto", "adapter", "local", "endpoint"], allowedModels: [],
+            allowedProviders: ["adapter", "endpoint"], allowedModels: [],
         };
     }
 
@@ -816,7 +816,7 @@ export class MockApiClient implements ApiClient {
             weightPercent: input.weightPercent ?? 0,
             weightEligible: this.session.plan.tier !== "free",
             weightSource: input.weightPercent == null ? "global" : "account",
-            allowedProviders: ["auto", "adapter", "local", "endpoint"], allowedModels: [],
+            allowedProviders: ["adapter", "endpoint"], allowedModels: [],
         };
         writeStored("prewise-mock-ai-settings", value);
         return value;
