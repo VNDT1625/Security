@@ -112,7 +112,7 @@ class LLMProviderSettingsRequest(BaseModel):
     model: str = Field(default="", max_length=300)
     apiKey: str | None = Field(default=None, max_length=2000)
     clearApiKey: bool = False
-    allowedProviders: list[Literal["auto", "adapter", "local", "endpoint"]] | None = None
+    allowedProviders: list[Literal["adapter", "local", "endpoint"]] | None = None
     allowedModels: list[str] | None = Field(default=None, max_length=100)
 
 

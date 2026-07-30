@@ -6,10 +6,14 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
     Activity,
+    Bot,
     CheckCircle2,
     Clock3,
     Cloud,
+    Download,
+    ExternalLink,
     FileWarning,
+    Hand,
     Globe2,
     Maximize2,
     Minimize2,
@@ -95,11 +99,20 @@ type FreeBrowserEvent = {
         | "form_submission_attempt"
         | "canary_submission"
         | "download_blocked"
-        | "private_network_blocked";
+        | "download_discovered"
+        | "form_destination_discovered"
+        | "private_network_blocked"
+        | "auto_action"
+        | "auto_complete";
     severity: "info" | "medium" | "high";
     title: string;
     message: string;
+    createdAt?: string;
     destination?: string | null;
+    url?: string | null;
+    method?: string;
+    fieldTypes?: string[];
+    crossDomain?: boolean;
     filename?: string;
     replacement?: string;
     blocked?: boolean;
@@ -116,6 +129,17 @@ type FreeBrowser = {
         downloadBlockingEnabled: boolean;
         submissionsObserved: number;
         downloadsBlocked: number;
+    };
+    investigation: {
+        automationStatus: "idle" | "running" | "completed";
+        autoRuns: number;
+        riskScore: number;
+        verdict: "low" | "medium" | "high";
+        summary: string;
+        reasons: string[];
+        visitedUrls: string[];
+        forms: FreeBrowserEvent[];
+        downloads: FreeBrowserEvent[];
     };
     events: FreeBrowserEvent[];
     lastEvent: FreeBrowserEvent | null;
@@ -212,6 +236,34 @@ const INTERACTIVE_TIMELINE: TimelineItem[] = [
         id: "completed",
         label: "Thu bằng chứng & hủy",
         detail: "Khóa input, lưu báo cáo rồi tiêu hủy môi trường.",
+    },
+];
+
+const BROWSER_TIMELINE: TimelineItem[] = [
+    {
+        id: "browser_ready",
+        label: "Khởi tạo Chromium",
+        detail: "Tạo profile tạm thời, không dùng cookie hay dữ liệu trên máy của bạn.",
+    },
+    {
+        id: "browser_protected",
+        label: "Bật cô lập & canary",
+        detail: "Chặn mạng nội bộ, tải tệp và thay dữ liệu nhập bằng thông tin thử nghiệm.",
+    },
+    {
+        id: "browser_explore",
+        label: "Agent khám phá trang",
+        detail: "Dò form, trường nhập và liên kết đáng chú ý; người dùng vẫn có thể điều khiển.",
+    },
+    {
+        id: "browser_observe",
+        label: "Theo dõi luồng dữ liệu",
+        detail: "Ghi endpoint nhận form, request chứa canary, redirect và hành vi tải tệp.",
+    },
+    {
+        id: "browser_report",
+        label: "Báo cáo bằng chứng",
+        detail: "Tổng hợp đích đến, mức rủi ro và những hành vi đã chặn hoặc quan sát.",
     },
 ];
 
@@ -375,6 +427,7 @@ export default function SandboxPage() {
     const [freeUrl, setFreeUrl] = useState("https://example.com");
     const [sandboxText, setSandboxText] = useState("");
     const [expanded, setExpanded] = useState(false);
+    const [browserInteractionMode, setBrowserInteractionMode] = useState<"auto" | "manual">("manual");
     const [cloudExeFile, setCloudExeFile] = useState<File | null>(null);
     const [cloudExeConsent, setCloudExeConsent] = useState(false);
     const [cloudExeUploading, setCloudExeUploading] = useState(false);
@@ -388,12 +441,17 @@ export default function SandboxPage() {
         try {
             const value = await cloudRequest<CloudStatus>("/status");
             setCloud(value);
+            setError("");
             if (value.session) {
                 setSelected(value.session.tier);
                 setLabMode(resolveSandboxMode(value.session));
                 if (value.session.leaseMinutes === 5 || value.session.leaseMinutes === 10) {
                     setLeaseMinutes(value.session.leaseMinutes);
                 }
+            }
+            if (!value.session && value.accountTier === "free") {
+                setSelected("free");
+                setLabMode("auto");
             }
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : String(caught));
@@ -528,6 +586,16 @@ export default function SandboxPage() {
     );
     const timeline = sessionMode === "interactive" ? INTERACTIVE_TIMELINE : AUTO_TIMELINE;
     const timelineIndex = phaseTimelineIndex(sessionPhase, sessionMode, Boolean(remoteUrl));
+    const browserTimelineIndex = freeBrowser
+        ? freeBrowser.investigation.automationStatus === "completed"
+            ? 4
+            : freeBrowser.events.length > 0
+              ? 3
+              : 1
+        : 0;
+    const displayedTimeline = session?.tier === "free" ? BROWSER_TIMELINE : timeline;
+    const displayedTimelineIndex =
+        session?.tier === "free" ? browserTimelineIndex : timelineIndex;
     const selectedTierInfo = cloud?.availableTiers.find((item) => item.tier === selected);
     const selectedCreditCost = selectedTierInfo?.creditCost ?? 0;
     const lacksCredits = selected !== "free" && (cloud?.credits ?? 0) < selectedCreditCost;
@@ -545,6 +613,8 @@ export default function SandboxPage() {
         network: reportArrayLength(report, ["network_events", "network_connections"]),
     };
     const labActions = labActionState(webBusy, exeBusy);
+    const hasPaidAccess =
+        cloud?.accountTier === "pro" || cloud?.accountTier === "max";
 
     useEffect(() => {
         setRemoteAccess(null);
@@ -582,6 +652,7 @@ export default function SandboxPage() {
             setBusy(true);
             setError("");
             try {
+                if (path === "auto-explore") setBrowserInteractionMode("auto");
                 setFreeBrowser(
                     await cloudRequest<FreeBrowser>(
                         `/sessions/${activeSession.id}/browser/${path}`,
@@ -606,6 +677,7 @@ export default function SandboxPage() {
             await cloudRequest(`/sessions/${cloud.session.id}`, { method: "DELETE" });
             setExpanded(false);
             setFreeBrowser(null);
+            setBrowserInteractionMode("manual");
             setRemoteAccess(null);
             setRemoteError("");
             await refresh();
@@ -833,7 +905,7 @@ export default function SandboxPage() {
                         <b>
                             {view === "lab"
                                 ? "Quick Scan & Browser Lab"
-                                : "Windows Cloud Lab · Auto + Interactive"}
+                                : "Isolation Lab · Browser + Auto + Interactive"}
                         </b>
                     </div>
                     <div className="sandbox-status">
@@ -861,12 +933,12 @@ export default function SandboxPage() {
                     >
                         <ShieldCheck />1. Lab<small>Tự động kiểm tra</small>
                     </button>
-                    <button
-                        className={view === "sandbox" ? "active" : ""}
-                        onClick={() => setView("sandbox")}
-                    >
-                        <MonitorPlay />2. Windows Cloud<small>Tự động + điều khiển có thời hạn</small>
-                    </button>
+                                    <button
+                                        className={view === "sandbox" ? "active" : ""}
+                                        onClick={() => setView("sandbox")}
+                                    >
+                                        <MonitorPlay />2. Isolation Lab<small>Browser FREE + Windows Cloud</small>
+                                    </button>
                 </nav>
 
                 {view === "lab" ? (
@@ -961,8 +1033,8 @@ export default function SandboxPage() {
                                             setCloudExeFile(exeFile);
                                             setCloudExeConsent(false);
                                         }
-                                        setSelected("pro");
-                                        setLabMode("auto");
+                                        setSelected(hasPaidAccess ? "pro" : "free");
+                                        if (hasPaidAccess) setLabMode("auto");
                                         setView("sandbox");
                                     }}
                                 >
@@ -977,11 +1049,11 @@ export default function SandboxPage() {
                             <section className="cloud-lab-command" id="cloud-lab-setup">
                                 <header>
                                     <div>
-                                        <small>WINDOWS CLOUD LAB / DUAL MODE</small>
-                                        <h1>Chọn cách điều tra file đáng ngờ</h1>
+                                        <small>ISOLATION LAB / THREE DISTINCT WORKFLOWS</small>
+                                        <h1>Chọn đúng môi trường điều tra</h1>
                                         <p>
-                                            Cùng một Windows VM dùng một lần, cùng Risk Core và cùng
-                                            báo cáo bằng chứng. Chỉ khác ai điều khiển phiên phân tích.
+                                            Browser chỉ kiểm tra URL. Auto Analyze tự chạy file Windows.
+                                            Interactive trao cho bạn toàn quyền điều khiển desktop cô lập.
                                         </p>
                                     </div>
                                     <div className="cloud-lab-safety">
@@ -992,31 +1064,65 @@ export default function SandboxPage() {
                                         </span>
                                     </div>
                                 </header>
-                                <div className="lab-mode-grid" role="radiogroup" aria-label="Chế độ Windows Cloud Lab">
+                                <div className="lab-mode-grid" role="radiogroup" aria-label="Môi trường Isolation Lab">
                                     <button
                                         type="button"
                                         role="radio"
-                                        aria-checked={labMode === "auto"}
-                                        className={labMode === "auto" ? "selected" : ""}
-                                        onClick={() => setLabMode("auto")}
+                                        aria-checked={selected === "free"}
+                                        className={selected === "free" ? "selected" : ""}
+                                        onClick={() => {
+                                            setSelected("free");
+                                            setLabMode("auto");
+                                        }}
+                                    >
+                                        <Globe2 />
+                                        <span>
+                                            <small>BROWSER ISOLATION / WEB-ONLY</small>
+                                            <strong>Browser Isolation</strong>
+                                            <p>
+                                                Bạn điều khiển Chromium cô lập để kiểm tra URL. Không
+                                                mở desktop Windows và không chạy EXE.
+                                            </p>
+                                        </span>
+                                        <em>FREE</em>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={selected !== "free" && labMode === "auto"}
+                                        aria-disabled={!hasPaidAccess}
+                                        disabled={!hasPaidAccess}
+                                        className={`${selected !== "free" && labMode === "auto" ? "selected" : ""} ${
+                                            !hasPaidAccess ? "locked" : ""
+                                        }`}
+                                        onClick={() => {
+                                            if (!hasPaidAccess) return;
+                                            setLabMode("auto");
+                                            if (selected === "free") setSelected("pro");
+                                        }}
                                     >
                                         <Zap />
                                         <span>
                                             <small>AUTO / AGENT-DRIVEN</small>
                                             <strong>Auto Analyze</strong>
                                             <p>
-                                                Agent tự đưa mẫu vào VM, chạy có giám sát, thu telemetry
-                                                và trả báo cáo nhanh.
+                                                Agent tự chạy file trong Windows VM, thu telemetry và
+                                                trả báo cáo. Không cấp quyền điều khiển desktop.
                                             </p>
                                         </span>
-                                        <em>Mặc định</em>
+                                        <em>{hasPaidAccess ? "PRO / MAX" : "CẦN PRO"}</em>
                                     </button>
                                     <button
                                         type="button"
                                         role="radio"
-                                        aria-checked={labMode === "interactive"}
-                                        className={labMode === "interactive" ? "selected" : ""}
+                                        aria-checked={selected !== "free" && labMode === "interactive"}
+                                        aria-disabled={!hasPaidAccess}
+                                        disabled={!hasPaidAccess}
+                                        className={`${selected !== "free" && labMode === "interactive" ? "selected" : ""} ${
+                                            !hasPaidAccess ? "locked" : ""
+                                        }`}
                                         onClick={() => {
+                                            if (!hasPaidAccess) return;
                                             setLabMode("interactive");
                                             if (selected === "free") setSelected("pro");
                                         }}
@@ -1026,11 +1132,11 @@ export default function SandboxPage() {
                                             <small>INTERACTIVE / HUMAN-IN-THE-LOOP</small>
                                             <strong>Interactive Investigate</strong>
                                             <p>
-                                                Điều khiển desktop cô lập qua remote gateway trong đúng
-                                                lượt 5 hoặc 10 phút.
+                                                Bạn trực tiếp điều khiển desktop Windows qua remote
+                                                gateway trong đúng lượt 5 hoặc 10 phút.
                                             </p>
                                         </span>
-                                        <em>PRO / MAX</em>
+                                        <em>{hasPaidAccess ? "PRO / MAX" : "CẦN PRO"}</em>
                                     </button>
                                 </div>
                                 {labMode === "interactive" && (
@@ -1143,9 +1249,9 @@ export default function SandboxPage() {
                             </section>
                         )}
 
-                        {!activeSession && (
-                            <section className="sandbox-tier-grid">
-                                {cloud?.availableTiers.map((item) => (
+                        {!activeSession && selected !== "free" && (
+                            <section className="sandbox-tier-grid cloud-tier-grid">
+                                {cloud?.availableTiers.filter((item) => item.tier !== "free").map((item) => (
                                     <button
                                         key={item.tier}
                                         disabled={!item.allowed || !item.configured}
@@ -1154,14 +1260,11 @@ export default function SandboxPage() {
                                         }`}
                                         onClick={() => {
                                             setSelected(item.tier);
-                                            if (item.tier === "free") setLabMode("auto");
                                         }}
                                     >
                                         <b>{item.tier.toUpperCase()}</b>
                                         <strong>
-                                            {item.tier === "free"
-                                                ? "Browser tương tác"
-                                                : item.tier === "pro"
+                                            {item.tier === "pro"
                                                   ? labMode === "interactive"
                                                       ? "Windows desktop"
                                                       : "EXE chuyên dụng"
@@ -1171,7 +1274,7 @@ export default function SandboxPage() {
                                         </strong>
                                         <span>
                                             {item.minutes} phút ·{` `}
-                                            {item.provider === "local" ? "Local" : "Cloud"}
+                                            Cloud
                                             {item.creditCost > 0 ? ` · ${item.creditCost} credit` : ""}
                                         </span>
                                         <ul>
@@ -1210,9 +1313,11 @@ export default function SandboxPage() {
                                 >
                                     {busy
                                         ? "Đang tạo phiên…"
-                                        : labMode === "interactive"
-                                          ? `Tạo desktop ${leaseMinutes} phút`
-                                          : `Bắt đầu Auto Analyze ${selected.toUpperCase()}`}
+                                        : selected === "free"
+                                          ? "Mở Browser Isolation miễn phí"
+                                          : labMode === "interactive"
+                                            ? `Tạo desktop ${leaseMinutes} phút`
+                                            : `Bắt đầu Auto Analyze ${selected.toUpperCase()}`}
                                 </button>
                             </section>
                         )}
@@ -1336,15 +1441,21 @@ export default function SandboxPage() {
                                         <h2>
                                             {showingRecentSession
                                                 ? "Kết quả lượt phân tích gần nhất"
+                                                : session.tier === "free"
+                                                  ? "Browser investigation pipeline"
                                                 : sessionMode === "auto"
-                                                ? "Automated investigation pipeline"
-                                                : "Interactive investigation lease"}
+                                                  ? "Automated investigation pipeline"
+                                                  : "Interactive investigation lease"}
                                         </h2>
                                     </div>
                                     <div className="session-kpis">
                                         <span>
                                             <small>PHASE</small>
-                                            <b>{sessionPhase.replaceAll("_", " ")}</b>
+                                            <b>
+                                                {session.tier === "free"
+                                                    ? "PROTECTED"
+                                                    : sessionPhase.replaceAll("_", " ")}
+                                            </b>
                                         </span>
                                         <span className={
                                             sessionMode === "interactive" &&
@@ -1356,6 +1467,8 @@ export default function SandboxPage() {
                                             <small>
                                                 {showingRecentSession
                                                     ? "TRẠNG THÁI PHIÊN"
+                                                    : session.tier === "free"
+                                                      ? "BẰNG CHỨNG"
                                                     : sessionMode === "auto"
                                                       ? "CHẾ ĐỘ PHÂN TÍCH"
                                                     : cleanupPending
@@ -1367,6 +1480,8 @@ export default function SandboxPage() {
                                             <b>
                                                 {showingRecentSession
                                                     ? "ĐÃ KẾT THÚC"
+                                                    : session.tier === "free"
+                                                      ? `${freeBrowser?.events.length ?? 0} SỰ KIỆN`
                                                     : sessionMode === "auto"
                                                       ? "TỰ ĐỘNG"
                                                     : cleanupPending
@@ -1384,7 +1499,11 @@ export default function SandboxPage() {
                                                 onClick={() => void stopSession()}
                                             >
                                                 <X />
-                                                {cleanupPending ? "Đang hủy VM…" : "Dừng & hủy VM"}
+                                                {cleanupPending
+                                                    ? "Đang kết thúc…"
+                                                    : session.tier === "free"
+                                                      ? "Kết thúc Browser"
+                                                      : "Dừng & hủy VM"}
                                             </button>
                                         ) : (
                                             <button
@@ -1403,9 +1522,12 @@ export default function SandboxPage() {
                                         )}
                                     </div>
                                 </header>
-                                <div className="session-timeline" aria-label="Tiến trình phiên Windows Cloud Lab">
-                                    {timeline.map((item, index) => {
-                                        const state = timelineState(index, timelineIndex, sessionPhase);
+                                <div
+                                    className="session-timeline"
+                                    aria-label={session.tier === "free" ? "Tiến trình Browser Investigation" : "Tiến trình phiên Windows Cloud Lab"}
+                                >
+                                    {displayedTimeline.map((item, index) => {
+                                        const state = timelineState(index, displayedTimelineIndex, sessionPhase);
                                         return (
                                             <article className={state} key={item.id}>
                                                 <i>
@@ -1457,8 +1579,8 @@ export default function SandboxPage() {
                                     <MonitorPlay />
                                     <span>
                                         <b>
-                                            {session?.tier === "free"
-                                                ? "SAFE BROWSER SESSION"
+                                            {(session?.tier ?? selected) === "free"
+                                                ? "BROWSER ISOLATION CONSOLE"
                                                 : showingRecentSession
                                                   ? "RECENT SANDBOX REPORT"
                                                 : (session ? sessionMode : labMode) === "interactive"
@@ -1497,6 +1619,40 @@ export default function SandboxPage() {
 
                             {activeSession?.tier === "free" && freeBrowser ? (
                                 <div className="free-browser">
+                                    <div className="browser-investigation-controls">
+                                        <span>
+                                            <Bot />
+                                            <span>
+                                                <b>AGENT + HUMAN-IN-THE-LOOP</b>
+                                                <small>
+                                                    Agent dùng canary để khám phá; bạn vẫn có thể click và điều khiển thủ công.
+                                                </small>
+                                            </span>
+                                        </span>
+                                        <div>
+                                            <button
+                                                type="button"
+                                                className={browserInteractionMode === "auto" ? "selected" : ""}
+                                                disabled={busy}
+                                                onClick={() => void freeAction("auto-explore", {})}
+                                            >
+                                                <Bot />
+                                                {busy && browserInteractionMode === "auto"
+                                                    ? "Agent đang khám phá…"
+                                                    : freeBrowser.investigation.autoRuns > 0
+                                                      ? "Chạy Auto Explore lại"
+                                                      : "Bắt đầu Auto Explore"}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className={browserInteractionMode === "manual" ? "selected" : ""}
+                                                disabled={busy}
+                                                onClick={() => setBrowserInteractionMode("manual")}
+                                            >
+                                                <Hand /> Điều khiển thủ công
+                                            </button>
+                                        </div>
+                                    </div>
                                     <form
                                         className="sandbox-address-bar"
                                         onSubmit={(event) => {
@@ -1621,7 +1777,7 @@ export default function SandboxPage() {
                                             disabled={busy}
                                             onClick={() => void stopSession()}
                                         >
-                                            Kết thúc
+                                            Kết thúc Browser
                                         </button>
                                     </footer>
                                 </div>
@@ -1783,11 +1939,11 @@ export default function SandboxPage() {
                                 <div className="sandbox-unavailable">
                                     <MonitorPlay />
                                     <h2>
-                                        {selected === "free" ? "Safe Browser tương tác" : labMode === "interactive" ? "Interactive Investigate" : "Auto Analyze"}
+                                        {selected === "free" ? "Browser Isolation" : labMode === "interactive" ? "Interactive Investigate" : "Auto Analyze"}
                                     </h2>
                                     <p>
                                         {selected === "free"
-                                            ? `Môi trường local chỉ mở web, tối đa ${selectedTierInfo?.minutes ?? 10} phút mỗi phiên.`
+                                            ? `Chromium cô lập chỉ mở web, tối đa ${selectedTierInfo?.minutes ?? 10} phút mỗi phiên; không phải desktop Windows.`
                                             : labMode === "interactive"
                                               ? `Windows desktop điều khiển trong ${leaseMinutes} phút sau khi ready. Chỉ khả dụng khi remote broker được cấu hình.`
                                               : "Windows VM agent-only tự chạy mẫu, thu telemetry và trả báo cáo mà không cần remote desktop."}
@@ -1820,12 +1976,112 @@ export default function SandboxPage() {
                                             }
                                             onClick={() => void startSession()}
                                         >
-                                            {labMode === "interactive" ? `Tạo desktop ${leaseMinutes} phút` : `Bắt đầu Auto Analyze ${selected.toUpperCase()}`}
+                                            {selected === "free"
+                                                ? "Mở Browser Isolation miễn phí"
+                                                : labMode === "interactive"
+                                                  ? `Tạo desktop ${leaseMinutes} phút`
+                                                  : `Bắt đầu Auto Analyze ${selected.toUpperCase()}`}
                                         </button>
                                     ) : null}
                                 </div>
                             )}
                         </section>
+
+                        {activeSession?.tier === "free" && freeBrowser && (
+                            <section
+                                className={`browser-evidence-report verdict-${freeBrowser.investigation.verdict}`}
+                                aria-label="Báo cáo Browser Investigation"
+                            >
+                                <header>
+                                    <div>
+                                        <small>BROWSER INVESTIGATION / EVIDENCE REPORT</small>
+                                        <h2>Báo cáo hành vi website</h2>
+                                        <p>{freeBrowser.investigation.summary}</p>
+                                    </div>
+                                    <div className="browser-risk-score">
+                                        <small>RISK SCORE</small>
+                                        <b>{freeBrowser.investigation.riskScore}/100</b>
+                                        <span>{freeBrowser.investigation.verdict.toUpperCase()}</span>
+                                    </div>
+                                </header>
+                                <div className="browser-evidence-metrics">
+                                    <span><small>FORM / ENDPOINT</small><b>{freeBrowser.investigation.forms.length}</b></span>
+                                    <span><small>DOWNLOAD</small><b>{freeBrowser.investigation.downloads.length}</b></span>
+                                    <span><small>URL ĐÃ ĐI QUA</small><b>{freeBrowser.investigation.visitedUrls.length}</b></span>
+                                    <span><small>DỮ LIỆU THẬT ĐÃ GỬI</small><b>0</b></span>
+                                </div>
+                                <div className="browser-evidence-columns">
+                                    <section>
+                                        <h3><ExternalLink /> Form thực sự gửi dữ liệu đi đâu?</h3>
+                                        {freeBrowser.investigation.forms.length > 0 ? (
+                                            <div className="browser-evidence-list">
+                                                {freeBrowser.investigation.forms.map((item) => (
+                                                    <article key={item.id} className={`severity-${item.severity}`}>
+                                                        <span>
+                                                            <b>{item.method || "GET"}</b>
+                                                            <em>{item.crossDomain ? "KHÁC DOMAIN" : "CÙNG DOMAIN"}</em>
+                                                        </span>
+                                                        <code>{item.url || item.destination || "Endpoint chưa xác định"}</code>
+                                                        <p>
+                                                            Trường dữ liệu: {item.fieldTypes?.join(", ") || "chưa phân loại"}.
+                                                            {item.type === "canary_submission"
+                                                                ? " Request chứa canary đã được quan sát."
+                                                                : item.blocked
+                                                                  ? " Agent chỉ xác định endpoint và không tự gửi."
+                                                                  : " Form chuẩn bị được gửi bằng canary."}
+                                                        </p>
+                                                    </article>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="browser-empty-evidence">
+                                                Chưa thấy form gửi dữ liệu. Chạy Auto Explore hoặc thao tác trên form để kiểm tra.
+                                            </p>
+                                        )}
+                                    </section>
+                                    <section>
+                                        <h3><Download /> Website có tải file không?</h3>
+                                        {freeBrowser.investigation.downloads.length > 0 ? (
+                                            <div className="browser-evidence-list">
+                                                {freeBrowser.investigation.downloads.map((item) => (
+                                                    <article key={item.id} className={`severity-${item.severity}`}>
+                                                        <span>
+                                                            <b>{item.blocked ? "ĐÃ CHẶN" : "ĐÃ PHÁT HIỆN"}</b>
+                                                            <em>{item.destination || "UNKNOWN"}</em>
+                                                        </span>
+                                                        <code>{item.filename || item.url || "Tệp chưa rõ tên"}</code>
+                                                        <p>{item.message}</p>
+                                                    </article>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="browser-empty-evidence">
+                                                Chưa quan sát thấy website kích hoạt hoặc công khai liên kết tải tệp.
+                                            </p>
+                                        )}
+                                    </section>
+                                </div>
+                                <section className="browser-event-timeline">
+                                    <h3>Nhật ký bằng chứng</h3>
+                                    {freeBrowser.events.length > 0 ? (
+                                        <ol>
+                                            {freeBrowser.events.map((item) => (
+                                                <li key={item.id} className={`severity-${item.severity}`}>
+                                                    <i />
+                                                    <span>
+                                                        <b>{item.title}</b>
+                                                        <small>{item.message}</small>
+                                                    </span>
+                                                    <time>{item.createdAt ? new Date(item.createdAt).toLocaleTimeString("vi-VN") : "LIVE"}</time>
+                                                </li>
+                                            ))}
+                                        </ol>
+                                    ) : (
+                                        <p className="browser-empty-evidence">Chưa có sự kiện. Agent và thao tác thủ công đều sẽ được ghi ở đây.</p>
+                                    )}
+                                </section>
+                            </section>
+                        )}
                     </>
                 )}
 

@@ -227,8 +227,33 @@ export interface LLMProviderSettings {
   apiKeyConfigured: boolean;
   configured: boolean;
   source: "environment" | "database";
-  allowedProviders: Array<"auto" | "adapter" | "local" | "endpoint">;
+  allowedProviders: Array<"adapter" | "local" | "endpoint">;
   allowedModels: string[];
+}
+export type UserAIProvider = "adapter" | "local" | "endpoint";
+export interface UserAISettings {
+  provider: "auto" | UserAIProvider;
+  baseUrl: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  configured: boolean;
+  source: "environment" | "database" | "account";
+  allowedProviders: UserAIProvider[];
+  allowedModels: string[];
+  percent: number;
+  minPercent: number;
+  maxPercent: number;
+  weightPercent: number;
+  weightEligible: boolean;
+  weightSource: "global" | "account";
+}
+export interface UserAISettingsInput {
+  provider: UserAIProvider;
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  weightPercent?: number;
 }
 export interface URLCacheSettings {
   enabled: boolean;
@@ -395,6 +420,17 @@ export const register = (displayName: string, email: string, password: string) =
   request<UserSession>("/v1/auth/register", { displayName, email, password });
 export const logout = () => request<{ ok: boolean }>("/v1/auth/logout");
 export const getProfile = () => request<UserProfile>("/v1/account/profile", undefined, "GET");
+export const getUserAISettings = () =>
+  request<UserAISettings>("/v1/account/ai-settings", undefined, "GET");
+export const saveUserAISettings = (payload: UserAISettingsInput) =>
+  request<UserAISettings>("/v1/account/ai-settings", payload, "PUT");
+export const testUserAISettings = () =>
+  request<{ ok: boolean; modelAvailable: boolean; modelsCount: number }>(
+    "/v1/account/ai-settings/test",
+    undefined,
+    "POST",
+    120_000,
+  );
 export const submitFeedback = (payload: FeedbackInput) =>
   request<FeedbackReceipt>("/v1/feedback", payload, "POST");
 export const checkHealth = () => request<{ status: string }>("/v1/health", undefined, "GET");

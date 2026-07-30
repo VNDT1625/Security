@@ -323,3 +323,81 @@ def test_observation_failure_does_not_fail_page_request(monkeypatch: pytest.Monk
     manager._guard_request(session, route, request)
 
     assert actions == ["continue"]
+
+
+def test_auto_explore_fills_canary_and_reports_form_destination() -> None:
+    manager = FreeWebSandboxManager()
+    session_id = "auto-explore-session"
+    applied: list[dict[str, str]] = []
+    submitted: list[int] = []
+
+    def evaluate(script: str, argument: object = None) -> object:
+        if "const visible" in script:
+            return {
+                "forms": [
+                    {
+                        "formId": "prewise-auto-form-0",
+                        "formIndex": 0,
+                        "formAction": "https://collector.example/login",
+                        "formMethod": "POST",
+                        "fields": [
+                            {
+                                "fieldId": "email-field",
+                                "tag": "input",
+                                "type": "email",
+                                "name": "email",
+                                "autocomplete": "email",
+                                "placeholder": "Email",
+                                "ariaLabel": "",
+                                "inputMode": "",
+                            },
+                            {
+                                "fieldId": "password-field",
+                                "tag": "input",
+                                "type": "password",
+                                "name": "password",
+                                "autocomplete": "current-password",
+                                "placeholder": "Password",
+                                "ariaLabel": "",
+                                "inputMode": "",
+                            },
+                        ],
+                    }
+                ],
+                "downloads": [
+                    {
+                        "url": "https://files.example/setup.exe",
+                        "filename": "setup.exe",
+                        "text": "Download",
+                    }
+                ],
+            }
+        assert isinstance(argument, dict)
+        if "fieldId" in argument:
+            applied.append(argument)
+            return True
+        if "formIndex" in argument:
+            submitted.append(int(argument["formIndex"]))
+            return True
+        return False
+
+    page = SimpleNamespace(
+        evaluate=evaluate,
+        wait_for_timeout=lambda _milliseconds: None,
+        url="https://bank.example/login",
+        title=lambda: "Login",
+        screenshot=lambda **kwargs: b"image",
+    )
+    session = make_session(page)
+    session.navigation_history.append(page.url)
+    manager._sessions[session_id] = session
+
+    state = manager.auto_explore(session_id)
+
+    assert len(applied) == 2
+    assert submitted == [0]
+    assert state["investigation"]["automationStatus"] == "completed"
+    assert state["investigation"]["forms"][0]["destination"] == "collector.example"
+    assert state["investigation"]["downloads"][0]["filename"] == "setup.exe"
+    assert state["investigation"]["riskScore"] >= 35
+    assert "REAL_SECRET" not in repr(applied)

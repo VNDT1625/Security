@@ -76,7 +76,7 @@ interface LLMProviderSettings {
     apiKeyConfigured: boolean;
     configured: boolean;
     source: 'environment' | 'database';
-    allowedProviders: Array<'auto' | 'adapter' | 'local' | 'endpoint'>;
+    allowedProviders: Array<'adapter' | 'local' | 'endpoint'>;
     allowedModels: string[];
 }
 
@@ -182,9 +182,9 @@ export default function AdminPage() {
     const [aiWeightNotice, setAiWeightNotice] = useState('');
     const [llmProvider, setLLMProvider] = useState<LLMProviderSettings>({
         provider: 'endpoint', baseUrl: '', model: '', apiKeyConfigured: false,
-        configured: false, source: 'environment', allowedProviders: ['auto', 'adapter', 'local', 'endpoint'], allowedModels: [],
+        configured: false, source: 'environment', allowedProviders: ['adapter', 'local', 'endpoint'], allowedModels: [],
     });
-    const [llmDraft, setLLMDraft] = useState({ provider: 'endpoint' as LLMProviderSettings['provider'], baseUrl: '', model: '', apiKey: '', allowedProviders: ['auto', 'adapter', 'local', 'endpoint'] as LLMProviderSettings['allowedProviders'], allowedModelsText: '' });
+    const [llmDraft, setLLMDraft] = useState({ provider: 'endpoint' as LLMProviderSettings['provider'], baseUrl: '', model: '', apiKey: '', allowedProviders: ['adapter', 'local', 'endpoint'] as LLMProviderSettings['allowedProviders'], allowedModelsText: '' });
     const [savingLLM, setSavingLLM] = useState(false);
     const [testingLLM, setTestingLLM] = useState(false);
     const [llmNotice, setLLMNotice] = useState('');
@@ -820,8 +820,9 @@ export default function AdminPage() {
                             <input className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-3 font-mono text-sm" type="password" value={llmDraft.apiKey} onChange={(event) => setLLMDraft({ ...llmDraft, apiKey: event.target.value })} placeholder={llmProvider.apiKeyConfigured ? 'Để trống để giữ nguyên khóa đang lưu' : 'Nhập API key'} autoComplete="new-password" spellCheck={false} />
                         </label>}
                         <div className="md:col-span-2 rounded-lg border border-slate-700 bg-slate-950/50 p-4">
-                            <span className="mb-3 block text-sm font-medium text-slate-200">Provider user được phép chọn</span>
-                            <div className="flex flex-wrap gap-4">{(['auto', 'adapter', 'local', 'endpoint'] as const).map(provider => <label key={provider} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={llmDraft.allowedProviders.includes(provider)} disabled={provider === 'auto'} onChange={event => setLLMDraft(current => ({ ...current, allowedProviders: event.target.checked ? [...current.allowedProviders, provider] : current.allowedProviders.filter(item => item !== provider) }))} />{provider}</label>)}</div>
+                            <span className="mb-1 block text-sm font-medium text-slate-200">Provider user được phép chọn</span>
+                            <p className="mb-3 text-xs text-slate-500">Web chỉ hiển thị adapter/endpoint. Local chỉ dành cho Desktop khi Core API và LLM cùng chạy trên máy người dùng.</p>
+                            <div className="flex flex-wrap gap-4">{(['adapter', 'local', 'endpoint'] as const).map(provider => <label key={provider} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={llmDraft.allowedProviders.includes(provider)} onChange={event => setLLMDraft(current => ({ ...current, allowedProviders: event.target.checked ? [...current.allowedProviders, provider] : current.allowedProviders.filter(item => item !== provider) }))} />{provider === 'local' ? 'local · Desktop/Core local' : provider}</label>)}</div>
                         </div>
                         <label className="block md:col-span-2">
                             <span className="mb-2 block text-sm font-medium text-slate-200">Model user được phép chọn</span>

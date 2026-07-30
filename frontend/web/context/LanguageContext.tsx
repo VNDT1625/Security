@@ -82,6 +82,27 @@ export const ENGLISH_TRANSLATIONS: Record<string, string> = {
   "Lựa chọn được lưu cho các phiên truy cập tiếp theo.": "Your choice is saved for future visits.",
   "Interface preference": "Interface preference",
   "English đã sẵn sàng. Phạm vi bản dịch được kiểm tra tự động trong mỗi bản build.": "English is ready. Translation coverage is checked automatically in every build.",
+  "Model AI": "AI model",
+  "Che mật khẩu, OTP và số thẻ trong bản xem trước, lịch sử và kết quả được lưu.": "Mask passwords, OTPs, and card numbers in previews, history, and saved results.",
+  "Trang Lịch sử trong workspace chỉ đọc dữ liệu trên trình duyệt này. Lịch sử tài khoản được tải riêng sau khi đăng nhập.": "Workspace History reads only data from this browser. Account history is loaded separately after sign-in.",
+  "Model AI của bạn": "Your AI model",
+  "Đăng nhập để chọn model/chế độ AI và đồng bộ lựa chọn riêng trên mọi thiết bị.": "Sign in to choose an AI model or mode and sync your selection across devices.",
+  "Đăng nhập để cấu hình": "Sign in to configure",
+  "Model và chế độ AI": "AI model and mode",
+  "Web hỗ trợ AI bảo mật Prewise hoặc API endpoint HTTPS. Admin chỉ quyết định chế độ và model nào được phép xuất hiện.": "The web app supports Prewise security AI or an HTTPS API endpoint. Admins only control which modes and models are available.",
+  "Đã cấu hình": "Configured",
+  "Chưa chọn riêng": "No personal selection",
+  "Chế độ AI": "AI mode",
+  "AI bảo mật Prewise": "Prewise security AI",
+  "Model local trên backend": "Local model on the backend",
+  "API endpoint · model riêng": "API endpoint · custom model",
+  "Hiện chưa có chế độ AI nào phù hợp với web được admin cho phép.": "No web-compatible AI mode is currently enabled by an admin.",
+  "Chọn model được phép": "Choose an allowed model",
+  "Lưu cho tài khoản của tôi": "Save for my account",
+  "Kiểm tra model": "Test model",
+  "Local LLM trên máy cá nhân không thể được web hosted truy cập an toàn. Tùy chọn này chỉ có trên Desktop khi Core API cũng chạy local. Endpoint từ xa bắt buộc HTTPS.": "A hosted web app cannot safely access a personal local LLM. This option is available only on Desktop when the Core API also runs locally. Remote endpoints require HTTPS.",
+  "Đang tải cài đặt tài khoản…": "Loading account settings…",
+  "Đang xử lý…": "Processing…",
   "Lịch sử phân tích": "Analysis history",
   "Các lần kiểm tra được lưu cục bộ trên thiết bị này để bạn có thể xem lại.": "Checks are stored locally on this device so you can review them.",
   "Tìm theo nội dung hoặc loại…": "Search by content or type…",
@@ -547,6 +568,16 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     setLanguageState(initial);
     document.documentElement.lang = initial;
     document.documentElement.dataset.language = initial;
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+      const motion = ["full", "balanced", "reduced"].includes(saved?.motion) ? saved.motion : "balanced";
+      const density = ["comfortable", "compact"].includes(saved?.density) ? saved.density : "comfortable";
+      document.documentElement.dataset.motion = motion;
+      document.documentElement.dataset.density = density;
+    } catch {
+      document.documentElement.dataset.motion = "balanced";
+      document.documentElement.dataset.density = "comfortable";
+    }
   }, []);
 
   useEffect(() => {

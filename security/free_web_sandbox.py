@@ -82,6 +82,9 @@ class FreeBrowserSession:
     seen_event_signatures: set[str] = field(default_factory=set)
     input_counter: int = 0
     event_counter: int = 0
+    navigation_history: list[str] = field(default_factory=list)
+    auto_status: str = "idle"
+    auto_runs: int = 0
 
 
 class FreeWebSandboxManager:
@@ -231,6 +234,76 @@ class FreeWebSandboxManager:
             }
             """
         )
+
+    @staticmethod
+    def _inspect_auto_targets(page: object) -> dict[str, object]:
+        return page.evaluate(
+            """
+            () => {
+              const visible = (element) => {
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden';
+              };
+              const forms = Array.from(document.forms).slice(0, 8).map((form, formIndex) => {
+                const fields = Array.from(form.querySelectorAll('input,textarea,[contenteditable="true"]'))
+                  .filter((element) => {
+                    const type = (element.getAttribute('type') || '').toLowerCase();
+                    return visible(element) && !['button','checkbox','file','hidden','radio','reset','submit'].includes(type);
+                  })
+                  .slice(0, 12)
+                  .map((element, fieldIndex) => {
+                    let fieldId = element.getAttribute('data-prewise-canary-id');
+                    if (!fieldId) {
+                      fieldId = `auto-${formIndex}-${fieldIndex}-${Date.now()}`;
+                      element.setAttribute('data-prewise-canary-id', fieldId);
+                    }
+                    return {
+                      fieldId,
+                      tag: element.tagName.toLowerCase(),
+                      type: (element.getAttribute('type') || '').toLowerCase(),
+                      name: element.getAttribute('name') || '',
+                      autocomplete: element.getAttribute('autocomplete') || '',
+                      placeholder: element.getAttribute('placeholder') || '',
+                      ariaLabel: element.getAttribute('aria-label') || '',
+                      inputMode: element.getAttribute('inputmode') || '',
+                    };
+                  });
+                return {
+                  formId: `prewise-auto-form-${formIndex}`,
+                  formIndex,
+                  formAction: form.action || location.href,
+                  formMethod: (form.method || 'GET').toUpperCase(),
+                  fields,
+                };
+              }).filter((form) => form.fields.length > 0);
+              const downloads = Array.from(document.querySelectorAll('a[href]'))
+                .map((anchor) => ({
+                  url: anchor.href || '',
+                  filename: anchor.getAttribute('download') || '',
+                  text: (anchor.textContent || '').trim().slice(0, 120),
+                }))
+                .filter((item) => /\\.(exe|msi|zip|rar|7z|apk|dmg|pkg|pdf|docm?|xlsm?|pptm?)(?:$|[?#])/i.test(item.url))
+                .slice(0, 12);
+              return { forms, downloads };
+            }
+            """
+        )
+
+    @staticmethod
+    def _submit_auto_form(page: object, form_index: int) -> bool:
+        return bool(page.evaluate(
+            """
+            ({ formIndex }) => {
+              const form = document.forms[formIndex];
+              if (!form) return false;
+              if (typeof form.requestSubmit === 'function') form.requestSubmit();
+              else form.submit();
+              return true;
+            }
+            """,
+            {"formIndex": form_index},
+        ))
 
     @staticmethod
     def _apply_canary_to_active_field(page: object, field_id: str, value: str) -> bool:
@@ -430,6 +503,31 @@ class FreeWebSandboxManager:
             blocked=True,
         )
 
+    def _record_download_candidate(
+        self,
+        session: FreeBrowserSession,
+        *,
+        url: str,
+        filename: str = "",
+    ) -> None:
+        safe_url = self._safe_event_url(url)
+        displayed_name = filename or urlsplit(url).path.rsplit("/", 1)[-1] or "tệp không rõ tên"
+        self._append_event(
+            session,
+            event_type="download_discovered",
+            severity="medium",
+            title="Phát hiện liên kết tải tệp",
+            message=(
+                f"Agent tìm thấy “{displayed_name}” từ {self._host(url) or 'domain chưa rõ'}. "
+                "Tệp chưa được tải; nếu website kích hoạt tải, Sandbox sẽ chặn."
+            ),
+            signature=f"download-candidate:{safe_url}:{displayed_name}",
+            destination=self._host(url) or None,
+            url=safe_url or None,
+            filename=displayed_name,
+            blocked=False,
+        )
+
     def _observe_canary_request(self, session: FreeBrowserSession, request: object) -> None:
         request_url = str(self._request_value(request, "url", "") or "")
         post_data = str(self._request_value(request, "post_data", "") or "")
@@ -596,6 +694,7 @@ class FreeWebSandboxManager:
             page.on("download", lambda download: self._handle_download(session, download))
             try:
                 page.goto("https://example.com", wait_until="domcontentloaded", timeout=15_000)
+                session.navigation_history.append(self._safe_event_url(page.url))
             except Exception:
                 self._close(session_id)
                 raise
@@ -620,6 +719,9 @@ class FreeWebSandboxManager:
             session = self._get(session_id)
             target = self.assert_public_url(url)
             session.page.goto(target, wait_until="domcontentloaded", timeout=15_000)
+            safe_url = self._safe_event_url(session.page.url)
+            if safe_url and (not session.navigation_history or session.navigation_history[-1] != safe_url):
+                session.navigation_history.append(safe_url)
             return self._state(session_id)
 
     def click(self, session_id: str, x: float, y: float) -> dict:
@@ -710,6 +812,183 @@ class FreeWebSandboxManager:
             )
             return self._state(session_id)
 
+    def auto_explore(self, session_id: str) -> dict:
+        return self._executor.submit(self._auto_explore, session_id).result()
+
+    def _auto_explore(self, session_id: str) -> dict:
+        with self._lock:
+            session = self._get(session_id)
+            session.auto_status = "running"
+            session.auto_runs += 1
+            self._append_event(
+                session,
+                event_type="auto_action",
+                severity="info",
+                title="Agent bắt đầu khám phá trang",
+                message="Agent đang tìm form, trường dữ liệu và liên kết tải xuống bằng canary.",
+            )
+            targets = self._inspect_auto_targets(session.page)
+            raw_downloads = targets.get("downloads")
+            downloads = raw_downloads if isinstance(raw_downloads, list) else []
+            for item in downloads:
+                if not isinstance(item, dict):
+                    continue
+                self._record_download_candidate(
+                    session,
+                    url=str(item.get("url") or ""),
+                    filename=str(item.get("filename") or ""),
+                )
+
+            submitted = False
+            raw_forms = targets.get("forms")
+            forms = raw_forms if isinstance(raw_forms, list) else []
+            for form in forms:
+                if not isinstance(form, dict):
+                    continue
+                raw_fields = form.get("fields")
+                fields = raw_fields if isinstance(raw_fields, list) else []
+                field_ids: list[str] = []
+                field_types: list[str] = []
+                for metadata in fields:
+                    if not isinstance(metadata, dict):
+                        continue
+                    field_id = str(metadata.get("fieldId") or "")
+                    if not field_id:
+                        continue
+                    kind = self._classify_field(metadata)
+                    canary = session.canary_fields.get(field_id)
+                    if canary is None:
+                        canary = CanaryField(kind=kind, value=self._generate_canary(session, kind))
+                        session.canary_fields[field_id] = canary
+                    if self._apply_canary_to_active_field(session.page, field_id, canary.value):
+                        field_ids.append(field_id)
+                        field_types.append(kind)
+                        self._append_event(
+                            session,
+                            event_type="input_substituted",
+                            severity="info",
+                            title=f"Agent đã điền canary cho trường {kind}",
+                            message="Không có dữ liệu thật nào được đưa vào website.",
+                            signature=f"auto-input:{field_id}:{canary.value}",
+                            fieldType=kind,
+                            replacement=canary.value,
+                            blocked=True,
+                            automated=True,
+                        )
+                if not field_ids:
+                    continue
+                target = {
+                    "fieldIds": field_ids,
+                    "formAction": form.get("formAction"),
+                    "formMethod": form.get("formMethod"),
+                }
+                action = str(form.get("formAction") or "").lower()
+                unsafe_action = any(
+                    word in action
+                    for word in ("checkout", "payment", "purchase", "order", "subscribe")
+                )
+                safe_field_set = set(field_types)
+                should_submit = (
+                    not submitted
+                    and not unsafe_action
+                    and not {"card", "otp"}.intersection(safe_field_set)
+                    and bool({"password", "username", "email", "search"}.intersection(safe_field_set))
+                )
+                if should_submit:
+                    self._record_form_attempt(session, target)
+                    submitted = self._submit_auto_form(
+                        session.page,
+                        int(form.get("formIndex") or 0),
+                    )
+                    if submitted:
+                        session.page.wait_for_timeout(900)
+                        safe_url = self._safe_event_url(session.page.url)
+                        if safe_url and (
+                            not session.navigation_history
+                            or session.navigation_history[-1] != safe_url
+                        ):
+                            session.navigation_history.append(safe_url)
+                else:
+                    safe_action = self._safe_event_url(str(form.get("formAction") or ""))
+                    self._append_event(
+                        session,
+                        event_type="form_destination_discovered",
+                        severity="medium" if unsafe_action else "info",
+                        title="Agent đã xác định đích đến của form",
+                        message=(
+                            f"Form khai báo {str(form.get('formMethod') or 'GET').upper()} tới "
+                            f"{self._host(str(form.get('formAction') or '')) or 'domain hiện tại'}. "
+                            "Agent không tự gửi form có khả năng tạo giao dịch."
+                        ),
+                        signature=f"form-discovered:{safe_action}:{','.join(sorted(safe_field_set))}",
+                        destination=self._host(str(form.get("formAction") or "")) or None,
+                        url=safe_action or None,
+                        method=str(form.get("formMethod") or "GET").upper(),
+                        fieldTypes=sorted(safe_field_set),
+                        crossDomain=(
+                            self._host(str(form.get("formAction") or ""))
+                            != self._host(str(getattr(session.page, "url", "") or ""))
+                        ),
+                        blocked=True,
+                    )
+
+            session.auto_status = "completed"
+            self._append_event(
+                session,
+                event_type="auto_complete",
+                severity="info",
+                title="Agent đã hoàn tất khám phá",
+                message=(
+                    f"Đã kiểm tra {len(forms)} form và {len(downloads)} liên kết tải tệp. "
+                    + ("Một form phù hợp đã được gửi bằng canary." if submitted else "Không tự gửi form có rủi ro tạo giao dịch.")
+                ),
+            )
+            return self._state(session_id)
+
+    def _investigation_report(self, session: FreeBrowserSession) -> dict[str, object]:
+        forms = [
+            event for event in session.events
+            if event.get("type") in {"form_destination_discovered", "form_submission_attempt", "canary_submission"}
+        ]
+        downloads = [
+            event for event in session.events
+            if event.get("type") in {"download_discovered", "download_blocked"}
+        ]
+        reasons: list[str] = []
+        score = 0
+        if any(bool(item.get("crossDomain")) for item in forms):
+            score += 35
+            reasons.append("Form gửi dữ liệu sang domain khác")
+        if any(item.get("type") == "canary_submission" for item in forms):
+            score += 20
+            reasons.append("Đã quan sát request chứa canary")
+        if any(item.get("type") == "download_blocked" for item in downloads):
+            score += 35
+            reasons.append("Website đã kích hoạt tải tệp")
+        if any(item.get("type") == "private_network_blocked" for item in session.events):
+            score += 45
+            reasons.append("Website cố truy cập mạng nội bộ")
+        score = min(score, 100)
+        verdict = "high" if score >= 60 else "medium" if score >= 30 else "low"
+        summary = (
+            "Phát hiện hành vi rủi ro cao; không nhập dữ liệu thật và không tải tệp."
+            if verdict == "high"
+            else "Có hành vi cần xem xét trước khi tiếp tục."
+            if verdict == "medium"
+            else "Chưa quan sát thấy hành vi rủi ro rõ ràng trong phạm vi phiên này."
+        )
+        return {
+            "automationStatus": session.auto_status,
+            "autoRuns": session.auto_runs,
+            "riskScore": score,
+            "verdict": verdict,
+            "summary": summary,
+            "reasons": reasons,
+            "visitedUrls": session.navigation_history[-12:],
+            "forms": forms[-12:],
+            "downloads": downloads[-12:],
+        }
+
     def state(self, session_id: str) -> dict:
         return self._executor.submit(self._state, session_id).result()
 
@@ -732,6 +1011,7 @@ class FreeWebSandboxManager:
                 "submissionsObserved": submissions,
                 "downloadsBlocked": downloads,
             },
+            "investigation": self._investigation_report(session),
             "events": events,
             "lastEvent": events[0] if events else None,
         }

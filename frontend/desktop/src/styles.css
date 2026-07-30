@@ -11,6 +11,17 @@
 @media(max-width:720px){.topbar nav button{font-size:0;padding:0 14px}.topbar nav button svg{width:20px}.browser-actions{display:none}.scan{padding:0 13px}.recent{flex-wrap:wrap;justify-content:center}.trust{gap:12px;flex-wrap:wrap;justify-content:center}.empty h1{font-size:30px}.mail-grid{grid-template-columns:1fr}.mail-grid aside{display:none}.result-grid{grid-template-columns:1fr}.score-card{border-right:0;border-bottom:1px solid var(--line)}.result-head{align-items:flex-start;gap:12px}.result-head h2{max-width:60vw}.settings-view{grid-template-columns:1fr}.settings-view>aside{display:none}.settings-view>article{padding:22px}.local-grid{grid-template-columns:1fr}.file-facts{grid-template-columns:1fr}.chatbar{padding:9px 12px}.chatbar .context,.send{font-size:0}.send{padding:11px}.actions{flex-wrap:wrap}.actions span{width:100%;margin-left:0}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 @media(forced-colors:active){button,input,select,.setting-group,.local-card,.file-report{border:1px solid CanvasText}.online i,.recent i,.risk-filter i{forced-color-adjust:none}}
+
+.desktop-ai-settings label>input:not([type="range"]){width:min(440px,52%);padding:9px 11px;border:1px solid #2a3945;background:#111c27;color:#dce8eb}
+.desktop-ai-settings label>input[type="range"]{width:min(320px,45%);accent-color:var(--cyan)}
+.desktop-ai-settings select{max-width:440px}
+.desktop-local-ai-note{display:flex;align-items:flex-start;gap:12px;margin:18px 0;padding:16px 18px;border:1px solid #553d31;background:#1b1310;color:#d5a27e}
+.desktop-local-ai-note.available{border-color:#28544f;background:#0b1c1b;color:#8ed8cb}
+.desktop-local-ai-note>svg{flex:none;margin-top:2px}.desktop-local-ai-note b{font-size:12px}.desktop-local-ai-note p{margin:6px 0 0;color:#83969d;font-size:11px;line-height:1.55;overflow-wrap:anywhere}
+.desktop-ai-actions{display:flex;align-items:center;gap:10px;margin-top:18px}
+.desktop-ai-actions button:not(.scan){height:42px;padding:0 18px;border:1px solid #2a3945;background:#101923;color:#9fb1ba;border-radius:7px}
+.desktop-ai-actions button:disabled{opacity:.42}
+@media(max-width:720px){.desktop-ai-settings label{align-items:stretch}.desktop-ai-settings label>input:not([type="range"]),.desktop-ai-settings label>input[type="range"],.desktop-ai-settings select{width:100%;max-width:none}.desktop-ai-actions{align-items:stretch;flex-direction:column}.desktop-ai-actions button{width:100%;justify-content:center}}
 .app-shell:has(.sms-guard){grid-template-rows:64px 1fr 24px}
 
 /* Complete desktop settings workspace */

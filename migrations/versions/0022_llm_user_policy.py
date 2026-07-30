@@ -25,7 +25,7 @@ def upgrade() -> None:
                 "allowed_user_providers",
                 sa.JSON(),
                 nullable=False,
-                server_default='["auto","adapter","local","endpoint"]',
+                server_default='["adapter","local","endpoint"]',
             ),
         )
     if "allowed_user_models" not in columns:

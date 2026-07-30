@@ -137,7 +137,7 @@ def _ensure_sqlite_development_columns() -> None:
             column["name"] for column in inspect(engine).get_columns("llm_provider_settings")
         }
         llm_additions = {
-            "allowed_user_providers": "JSON NOT NULL DEFAULT '[\"auto\",\"adapter\",\"local\",\"endpoint\"]'",
+            "allowed_user_providers": "JSON NOT NULL DEFAULT '[\"adapter\",\"local\",\"endpoint\"]'",
             "allowed_user_models": "JSON NOT NULL DEFAULT '[]'",
         }
         for name, definition in llm_additions.items():

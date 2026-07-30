@@ -1345,6 +1345,21 @@ def free_browser_type(payload: FreeTypeInput, session_id: str, auth: CurrentSess
         raise HTTPException(502, f"Không điền được canary vào website: {exc}") from exc
 
 
+@router.post("/sessions/{session_id}/browser/auto-explore")
+def free_browser_auto_explore(
+    session_id: str,
+    auth: CurrentSession,
+    db: DbSession = Depends(get_db),
+) -> dict:
+    require_free_session(db, session_id, auth.user.id)
+    try:
+        return free_web_sandbox.auto_explore(session_id)
+    except TimeoutError as exc:
+        raise HTTPException(410, "Phiên Free Sandbox đã hết hạn") from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Agent Browser không thể hoàn tất khám phá: {exc}") from exc
+
+
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: str,
