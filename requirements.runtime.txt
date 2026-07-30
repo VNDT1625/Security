@@ -20,3 +20,4 @@ alembic>=1.13.0
 psycopg[binary]>=3.2.0
 boto3>=1.35.0
 playwright>=1.48.0
+tldextract>=5.1.0
