@@ -18,6 +18,8 @@ services:
       - ADAPTER_API_KEY=${ADAPTER_API_KEY:-}
       - ADAPTER_TIMEOUT_SECONDS=${ADAPTER_TIMEOUT_SECONDS:-15}
       - ADAPTER_MAX_RISK_CONTRIBUTION=${ADAPTER_MAX_RISK_CONTRIBUTION:-0.25}
+      - SECURITY_CORE_MODE=${SECURITY_CORE_MODE:-shadow}
+      - ACTION_LIGHTGBM_MODEL_PATH=${ACTION_LIGHTGBM_MODEL_PATH:-}
       - PHONE_INTELLIGENCE_URL=${PHONE_INTELLIGENCE_URL:-}
     volumes:
       - ./server/models:/app/server/models:ro
@@ -74,6 +76,8 @@ services:
       - APP_ENV=development
       - DATABASE_URL=sqlite:////app/.aisec-data/armor.db
       - MCP_SANDBOX_DIR=/app/.mcp-sandbox
+      - SECURITY_CORE_MODE=${SECURITY_CORE_MODE:-shadow}
+      - ACTION_LIGHTGBM_MODEL_PATH=${ACTION_LIGHTGBM_MODEL_PATH:-}
     volumes:
       - ./data:/app/.mcp-sandbox:ro
       - armor-data:/app/.aisec-data
