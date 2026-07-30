@@ -449,7 +449,10 @@ class FreeWebSandboxManager:
         current_host = self._host(str(getattr(session.page, "url", "") or ""))
         cross_domain = bool(destination and current_host and destination != current_host)
         severe_fields = bool(SENSITIVE_FIELD_TYPES.intersection(field_types))
-        severity = "high" if cross_domain and severe_fields else "medium"
+        # An observed request containing a password, OTP, or payment field is
+        # high-impact even when the receiving endpoint is on the same host.
+        # Same-origin is a transport fact, not evidence that the site is trusted.
+        severity = "high" if severe_fields else "medium"
         title = (
             "Sắp gửi canary sang domain khác"
             if cross_domain
@@ -956,12 +959,37 @@ class FreeWebSandboxManager:
         ]
         reasons: list[str] = []
         score = 0
+        submissions = [item for item in forms if item.get("type") == "canary_submission"]
+        submitted_fields = {
+            str(field_type)
+            for item in submissions
+            for field_type in item.get("fieldTypes", [])
+            if isinstance(field_type, str)
+        }
+        has_password = "password" in submitted_fields
+        has_identity = bool({"email", "username", "phone"}.intersection(submitted_fields))
+        has_high_impact_secret = bool({"otp", "card"}.intersection(submitted_fields))
         if any(bool(item.get("crossDomain")) for item in forms):
             score += 35
             reasons.append("Form gửi dữ liệu sang domain khác")
-        if any(item.get("type") == "canary_submission" for item in forms):
+        if submissions:
             score += 20
             reasons.append("Đã quan sát request chứa canary")
+        if has_password and has_identity:
+            score += 45
+            reasons.append("Website đã gửi tổ hợp định danh và mật khẩu")
+        elif has_password:
+            score += 30
+            reasons.append("Website đã gửi trường mật khẩu")
+        if has_high_impact_secret:
+            score += 50
+            reasons.append("Website đã gửi mã xác minh hoặc dữ liệu thanh toán")
+        if (has_password or has_high_impact_secret) and any(
+            str(item.get("method") or "").upper() == "GET"
+            for item in submissions
+        ):
+            score += 15
+            reasons.append("Dữ liệu nhạy cảm xuất hiện trong request GET")
         if any(item.get("type") == "download_blocked" for item in downloads):
             score += 35
             reasons.append("Website đã kích hoạt tải tệp")
@@ -971,7 +999,12 @@ class FreeWebSandboxManager:
         score = min(score, 100)
         verdict = "high" if score >= 60 else "medium" if score >= 30 else "low"
         summary = (
-            "Phát hiện hành vi rủi ro cao; không nhập dữ liệu thật và không tải tệp."
+            (
+                "Đã quan sát website gửi dữ liệu đăng nhập hoặc dữ liệu nhạy cảm tới endpoint. "
+                "Đây là rủi ro cao nếu bạn không hoàn toàn tin cậy domain; tín hiệu này chưa tự nó chứng minh website độc hại."
+            )
+            if verdict == "high" and (has_password or has_high_impact_secret)
+            else "Phát hiện hành vi rủi ro cao; không nhập dữ liệu thật và không tải tệp."
             if verdict == "high"
             else "Có hành vi cần xem xét trước khi tiếp tục."
             if verdict == "medium"

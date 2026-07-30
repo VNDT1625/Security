@@ -128,7 +128,32 @@ def test_canary_submission_records_destination_without_original_input() -> None:
     assert event["destination"] == "collector.example"
     assert event["crossDomain"] is True
     assert event["fieldTypes"] == ["password"]
+    assert event["severity"] == "high"
     assert "real-password" not in repr(event)
+
+
+def test_same_domain_credential_submission_is_high_risk() -> None:
+    manager = FreeWebSandboxManager()
+    page = SimpleNamespace(url="https://untrusted.example/login")
+    session = make_session(page)
+    session.events.append(
+        {
+            "type": "canary_submission",
+            "severity": "high",
+            "destination": "untrusted.example",
+            "url": "https://untrusted.example/api/auth/login",
+            "method": "POST",
+            "fieldTypes": ["email", "password"],
+            "crossDomain": False,
+        }
+    )
+
+    report = manager._investigation_report(session)
+
+    assert report["riskScore"] == 65
+    assert report["verdict"] == "high"
+    assert any("định danh và mật khẩu" in reason for reason in report["reasons"])
+    assert "chưa tự nó chứng minh website độc hại" in report["summary"]
 
 
 def test_submit_click_is_observed_before_canary_form_is_sent() -> None:
