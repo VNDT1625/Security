@@ -26,6 +26,150 @@
   pointer-events: none;
 }
 
+.witness .product-suite-kicker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  margin-top: 68px;
+  padding: 15px 0;
+  border-block: 1px solid #29413f;
+}
+
+.witness .product-suite-kicker > span {
+  color: var(--cyan);
+  font: 8px ui-monospace, monospace;
+  letter-spacing: .16em;
+  white-space: nowrap;
+}
+
+.witness .product-suite-kicker > p {
+  max-width: 650px;
+  margin: 0;
+  color: #708489;
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: right;
+}
+
+.witness .product-suite-kicker + .product-grid {
+  margin-top: 18px;
+}
+
+.witness .product-suite-card {
+  min-height: 480px;
+  position: relative;
+  isolation: isolate;
+}
+
+.witness .product-suite-card::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -80px;
+  right: -80px;
+  width: 190px;
+  aspect-ratio: 1;
+  border: 1px solid #4de6e112;
+  border-radius: 50%;
+  box-shadow: 0 0 0 34px #4de6e108, 0 0 0 68px #4de6e105;
+  transition: border-color .25s, transform .35s;
+}
+
+.witness .product-suite-card:hover::after {
+  border-color: #4de6e13d;
+  transform: translate(-12px, 12px);
+}
+
+.witness .product-suite-card > strong {
+  margin-top: 58px;
+}
+
+.witness .product-suite-card > p {
+  min-height: 70px;
+  margin-bottom: 0;
+}
+
+.witness .product-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 24px 0 28px;
+  padding: 0;
+  list-style: none;
+}
+
+.witness .product-capabilities li {
+  padding: 7px 9px;
+  border: 1px solid #253f3d;
+  background: #0b1518;
+  color: #91a5a4;
+  font: 8px ui-monospace, monospace;
+  letter-spacing: .045em;
+}
+
+.witness .product-capabilities li::before {
+  content: "✓";
+  margin-right: 7px;
+  color: var(--cyan);
+}
+
+.witness .product-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 20px;
+  border-top: 1px solid #203533;
+}
+
+.witness .product-card-actions a {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 11px;
+  border: 1px solid #315751;
+  color: #83c9c0;
+  font: 8px ui-monospace, monospace;
+  letter-spacing: .08em;
+  transition: border-color .2s, background .2s, color .2s;
+}
+
+.witness .product-card-actions a:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.witness .product-card-actions a.primary {
+  border-color: var(--cyan);
+  background: var(--cyan);
+  color: #03110e;
+}
+
+.witness .product-card-actions a.primary:hover {
+  background: #b9fff4;
+  color: #03110e;
+}
+
+.witness .product-suite-card:last-child .product-card-actions a.primary {
+  flex-basis: 100%;
+}
+
+.witness .product-suite-card:last-child .product-card-actions a:not(.primary) {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
+@media (max-width: 1100px) {
+  .witness .product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .witness .product-suite-card:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
 /* Mobile landing: compact layout and avoid compositing-heavy decorative layers. */
 @media (max-width: 700px) {
   .witness {
@@ -189,6 +333,7 @@
 
   .witness .product-grid {
     margin-top: 42px;
+    grid-template-columns: 1fr;
   }
 
   .witness .product-card {
@@ -196,8 +341,44 @@
     padding: 20px;
   }
 
+  .witness .product-suite-kicker {
+    display: block;
+    margin-top: 42px;
+  }
+
+  .witness .product-suite-kicker > span {
+    white-space: normal;
+  }
+
+  .witness .product-suite-kicker > p {
+    margin-top: 9px;
+    text-align: left;
+  }
+
+  .witness .product-suite-kicker + .product-grid {
+    margin-top: 14px;
+  }
+
+  .witness .product-suite-card,
+  .witness .product-suite-card:last-child {
+    min-height: 410px;
+    grid-column: auto;
+  }
+
   .witness .product-card > strong {
     margin-top: 40px;
+  }
+
+  .witness .product-suite-card > p {
+    min-height: 0;
+  }
+
+  .witness .product-capabilities {
+    margin-block: 20px 24px;
+  }
+
+  .witness .product-card-actions a {
+    min-height: 42px;
   }
 
   .witness .report-intro {

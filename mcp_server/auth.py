@@ -41,6 +41,12 @@ current_mcp_identity: ContextVar[MCPIdentity | None] = ContextVar(
 
 _SAFE_AUDIT_ERROR_CODE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
 
+# Public OAuth endpoints that still cost database writes or answer a credential
+# probe, and therefore need an IP-keyed throttle even though they need no token.
+_PUBLIC_THROTTLED_PATHS = frozenset(
+    {"/register", "/authorize", "/token", "/revoke", "/oauth/consent"}
+)
+
 
 def authorize_mcp_tool(required_scope: str | None, *, external_share: bool = False) -> bool:
     """Apply tool-level least privilege for authenticated remote MCP calls.
@@ -50,11 +56,17 @@ def authorize_mcp_tool(required_scope: str | None, *, external_share: bool = Fal
     except that external sample sharing always requires its dedicated scope.
     """
     identity = current_mcp_identity.get()
-    if identity is None:
-        return True
-    granted = set(identity.scopes)
+    granted = set(identity.scopes) if identity is not None else set()
+    # Sending a user's sample to a third-party reputation provider is data
+    # egress and always requires its dedicated scope, on every transport. This
+    # check must precede the no-identity shortcut: otherwise any code path that
+    # reaches a tool without the API-key middleware installed (a future ASGI
+    # mount that forgets the wrapper) silently permits external sharing, with
+    # quota and audit logging skipped as well.
     if external_share:
         return "mcp:file:share_external" in granted
+    if identity is None:
+        return True
     if required_scope is None:
         return True
     assessment_scopes = {
@@ -160,6 +172,7 @@ class MCPApiKeyMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
         self._buckets: dict[str, deque[float]] = defaultdict(deque)
+        self._last_prune = time.monotonic()
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] == "lifespan":
@@ -170,9 +183,28 @@ class MCPApiKeyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # OAuth discovery, registration, authorization and token endpoints are public.
-        # Authentication is enforced only on the protected MCP resource.
-        if scope.get("path") != "/mcp":
+        path = scope.get("path", "")
+        # OAuth discovery, registration, authorization and token endpoints are
+        # public: authentication is enforced only on the protected MCP resource.
+        # They are not, however, free. /oauth/consent does an unauthenticated API
+        # key lookup and answers 401/403/303, which is a credential-validation
+        # oracle; /register and /authorize each write a database row per call.
+        # Throttle them by source IP instead of waving them through.
+        if path != "/mcp":
+            if path in _PUBLIC_THROTTLED_PATHS:
+                public_headers = Headers(scope=scope)
+                public_ip = scope.get("client", ("unknown", 0))[0]
+                if not self._consume(
+                    f"public:{path}:{hash_metadata(public_ip)}",
+                    settings.mcp_public_endpoint_rate_limit_per_min,
+                ):
+                    await self._reject(
+                        send,
+                        429,
+                        "rate_limited",
+                        public_headers.get("x-request-id", "")[:64],
+                    )
+                    return
             await self.app(scope, receive, send)
             return
 
@@ -324,6 +356,16 @@ class MCPApiKeyMiddleware:
 
     def _consume(self, identity: str, limit: int) -> bool:
         now = time.monotonic()
+        # Timestamps inside a bucket expire, but the bucket key never did, so a
+        # keyed-by-source-IP limiter grew one permanent dict entry per source
+        # address. Prune empty buckets on a slow cadence.
+        if now - self._last_prune >= 60:
+            for key, tracked in list(self._buckets.items()):
+                while tracked and now - tracked[0] >= 60:
+                    tracked.popleft()
+                if not tracked:
+                    self._buckets.pop(key, None)
+            self._last_prune = now
         bucket = self._buckets[identity]
         while bucket and now - bucket[0] >= 60:
             bucket.popleft()

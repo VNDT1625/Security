@@ -56,6 +56,11 @@ phase timestamps, evidence counts, bounded risk-signal IDs, and any truncated
 collections. A verdict is evidence-based and carefully scoped: timeout alone is
 reported as inconclusive rather than proof of malware.
 
+The final report also includes a machine-readable `analysis` object with risk
+score, telemetry-coverage confidence, available/missing evidence channels,
+risk-signal IDs, and execution state. A missing collector therefore cannot be
+rendered as "zero events" or mistaken for a clean result by the web UI.
+
 ## Required AMI controls
 
 - Use a single-use VM, encrypted temporary disk, and delete-on-termination.

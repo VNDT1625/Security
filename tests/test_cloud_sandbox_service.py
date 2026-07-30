@@ -90,6 +90,10 @@ def test_max_vm_bootstrap_has_agent_and_mandatory_self_termination(monkeypatch) 
     assert fake.run_params["InstanceType"] == settings.aws_sandbox_max_instance_type
     assert fake.run_params["InstanceInitiatedShutdownBehavior"] == "terminate"
     assert fake.run_params["ClientToken"] == "prewise-session-123"
+    tags = fake.run_params["TagSpecifications"][0]["Tags"]
+    assert {"Key": "ManagedBy", "Value": "PrewiseSandbox"} in tags
+    assert {"Key": "PrewiseSession", "Value": "session-123"} in tags
+    assert {"Key": "SandboxMode", "Value": "auto"} in tags
     network = fake.run_params["NetworkInterfaces"][0]
     assert network["AssociatePublicIpAddress"] is False
     assert network["Groups"] == ["sg-test"]

@@ -12,7 +12,6 @@ from uuid import uuid4
 
 from shared.schemas import AssessResponse, Decision, Evidence, Modality, RiskLevel, Severity
 
-
 TRUSTED_POPULAR_DOMAINS: tuple[str, ...] = (
     "google.com", "youtube.com", "facebook.com", "instagram.com", "x.com",
     "twitter.com", "wikipedia.org", "reddit.com", "amazon.com", "yahoo.com",
@@ -36,6 +35,43 @@ TRUSTED_POPULAR_DOMAINS: tuple[str, ...] = (
     "hp.com", "lenovo.com", "tiktokshop.com", "shopee.vn", "lazada.vn",
 )
 
+# Platforms that hand out subdomains to arbitrary users. The organisation is
+# trustworthy, but ``attacker.wordpress.com`` is not: it is attacker-controlled
+# content on a trusted parent. For these, only the apex and ``www`` skip the
+# engine; every other label is scanned normally.
+USER_CONTENT_PARENT_DOMAINS: frozenset[str] = frozenset(
+    {
+        "wordpress.com",
+        "blogger.com",
+        "blogspot.com",
+        "tumblr.com",
+        "medium.com",
+        "shopify.com",
+        "myshopify.com",
+        "notion.so",
+        "weebly.com",
+        "wixsite.com",
+        "github.io",
+        "pages.dev",
+        "web.app",
+        "firebaseapp.com",
+        "glitch.me",
+        "repl.co",
+        "vercel.app",
+        "netlify.app",
+    }
+)
+
+# Query parameters that carry a second URL. A trusted host used as an open
+# redirector (``google.com/url?q=...``) is a real phishing delivery path, so a
+# URL carrying a nested absolute URL is never short-circuited.
+_NESTED_URL_MARKERS = ("http://", "https://", "%3a%2f%2f")
+
+
+def _has_nested_url(parsed) -> bool:
+    haystack = f"{parsed.query}?{parsed.fragment}".lower()
+    return any(marker in haystack for marker in _NESTED_URL_MARKERS)
+
 
 def trusted_popular_domain(url: str) -> str | None:
     """Return the matching policy domain for an HTTP(S) URL, if any."""
@@ -48,14 +84,20 @@ def trusted_popular_domain(url: str) -> str | None:
     hostname = (parsed.hostname or "").lower().rstrip(".")
     if not hostname:
         return None
-    return next(
-        (
-            domain
-            for domain in TRUSTED_POPULAR_DOMAINS
-            if hostname == domain or hostname.endswith(f".{domain}")
-        ),
-        None,
-    )
+    if _has_nested_url(parsed):
+        return None
+    for domain in TRUSTED_POPULAR_DOMAINS:
+        if hostname == domain:
+            return domain
+        if not hostname.endswith(f".{domain}"):
+            continue
+        if domain in USER_CONTENT_PARENT_DOMAINS:
+            # Only "www" is the platform itself; anything else is user content.
+            if hostname == f"www.{domain}":
+                return domain
+            continue
+        return domain
+    return None
 
 
 def trusted_popular_assessment(url: str) -> AssessResponse | None:

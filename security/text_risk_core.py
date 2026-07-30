@@ -16,10 +16,35 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from ai.adapters.text_adapter import extract_message_urls, normalize_for_detection
-from ai.adapters.url_adapter import analyze_url_signals
+from ai.adapters.url_adapter import SHORTLINK_DOMAINS, analyze_url_signals
+from shared.constants import RISK_THRESHOLD_WARN
 from shared.schemas import Evidence, Severity
 
-_EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", re.I)
+# Highest score the classifier may produce with no corroborating deterministic
+# evidence. It sits inside the WARN band (>= 0.50) but below the HIGH display
+# level (0.70) and far below BLOCK (0.85). A model-only signal can therefore
+# raise a visible warning, but can never present as a confirmed threat and can
+# never trigger an automatic block. Because the decision boundary is WARN, every
+# ceiling >= 0.50 yields the identical flag/no-flag outcome; the value chosen
+# here controls only how loud a model-only warning is allowed to look.
+MODEL_ONLY_CEILING = round(RISK_THRESHOLD_WARN + 0.10, 2)
+
+# Minimum classifier probability before a model-only signal may enter the WARN
+# band at all. Chosen from measurement, not taste: the deployed TF-IDF text model
+# was trained mostly on English corpora and scores ordinary Vietnamese business
+# messages at 0.44-0.69, so a 0.50 gate raised a false alarm on half of a benign
+# Vietnamese sample. At 0.70 that sample is clean while the frozen holdout keeps
+# email recall at 0.66 (vs 0.008 before the model was reconnected at all) and
+# cuts email FPR from 4.17% to 1.32%.
+#
+# This gate applies ONLY where no deterministic rule fired. Vietnamese scam
+# patterns trigger the Vietnamese rules and are unaffected by it.
+MODEL_ONLY_WARN_MIN = 0.70
+
+# Where the model alone is not confident enough to warn, it stays below the WARN
+# threshold and behaves as supporting context only.
+MODEL_ONLY_QUIET_CEILING = 0.25
+
 _PUBLIC_MAIL = {"gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com"}
 _EXECUTABLE_EXTENSIONS = {
     ".apk", ".bat", ".cmd", ".com", ".exe", ".hta", ".iso", ".js", ".lnk",
@@ -126,8 +151,17 @@ def _sensitive_request(text: str) -> bool:
         r"(?:không|đừng|chớ|never|do not|don't|tuyệt đối không)\s+"
         r"(?:bao giờ\s+)?(?:gửi|cung cấp|chia sẻ|đọc|nhập|xác nhận|xác minh|yêu cầu)"
     )
+    folded_text = _fold_vietnamese(text)
     for pattern in _SENSITIVE_REQUEST:
-        candidates = ((text, pattern), (_fold_vietnamese(text), _fold_vietnamese(pattern)))
+        # The folded pass is what catches unaccented Vietnamese: the pattern
+        # carries accents ("xác minh") while the message often does not. Skip it
+        # only when folding changes neither side, in which case the second scan
+        # is byte-identical to the first. (The previous guard for this sat at the
+        # end of the loop body, where it could never take effect.)
+        folded_pattern = _fold_vietnamese(pattern)
+        candidates = [(text, pattern)]
+        if (folded_text, folded_pattern) != (text, pattern):
+            candidates.append((folded_text, folded_pattern))
         for candidate_text, candidate_pattern in candidates:
             for match in re.finditer(candidate_pattern, candidate_text, re.I | re.S):
                 context = candidate_text[
@@ -136,8 +170,6 @@ def _sensitive_request(text: str) -> bool:
                 if _search(negated_action, context):
                     continue
                 return True
-            if candidate_text == _fold_vietnamese(text):
-                continue
     return False
 
 
@@ -282,8 +314,7 @@ def _email_risk(text: str, raw_text: str, metadata: dict[str, Any]) -> tuple[flo
             score += 0.18
             evidence.append(_e("Một liên kết có domain gần giống hoặc không khớp thương hiệu.", Severity.HIGH, "E-WEB-01", 0.18))
             break
-    shorteners = {"bit.ly", "tinyurl.com", "t.co", "cutt.ly", "is.gd", "rb.gy", "shorturl.at"}
-    if any(_domain(url) in shorteners for url in urls):
+    if any(_domain(url) in SHORTLINK_DOMAINS for url in urls):
         score += 0.10
         evidence.append(_e("Email dùng liên kết rút gọn nên người nhận không thấy rõ trang đích.", Severity.HIGH, "E-WEB-shortlink", 0.10))
     if metadata.get("malicious_url_confirmed") or metadata.get("malicious_attachment_confirmed"):
@@ -334,6 +365,37 @@ def _email_risk(text: str, raw_text: str, metadata: dict[str, Any]) -> tuple[flo
     if metadata.get("gmail_spam_or_phishing"):
         score += 0.10
         evidence.append(_e("Nhà cung cấp hộp thư đã gắn nhãn Spam/Phishing.", Severity.HIGH, "E-CONTEXT-provider-label", 0.10))
+
+    # Scenario detectors that used to exist only for SMS. These scams arrive by
+    # email just as often, and without these an email demanding a remote-control
+    # app or a "delivery fee" produced no scenario signal at all.
+    if _matches(combined, _REMOTE_APP):
+        floor = max(floor, 0.85)
+        score += 0.20
+        evidence.append(_e(
+            "Email yêu cầu cài ứng dụng điều khiển từ xa hoặc APK ngoài kho chính thức.",
+            Severity.CRITICAL, "E-CONT-remote-app", 0.20))
+    if _matches(combined, _SMS_DELIVERY_DEBT) and urls and (payment or action):
+        score += 0.14
+        evidence.append(_e(
+            "Kịch bản bưu kiện/phí/phạt kèm liên kết và yêu cầu thanh toán.",
+            Severity.HIGH, "E-CONT-delivery-fee", 0.14))
+    if _matches(combined, _SMS_JOB) and payment:
+        floor = max(floor, 0.85)
+        score += 0.18
+        evidence.append(_e(
+            "Mời việc nhẹ/làm nhiệm vụ kèm yêu cầu nạp tiền là mẫu lừa đảo tuyển dụng.",
+            Severity.CRITICAL, "E-CONT-job-deposit", 0.18))
+    if _matches(combined, _SMS_INVESTMENT) and (payment or action):
+        score += 0.12
+        evidence.append(_e(
+            "Mời đầu tư lợi nhuận cao kèm yêu cầu chuyển tiền hoặc truy cập liên kết.",
+            Severity.HIGH, "E-CONT-investment-lure", 0.12))
+    if _matches(combined, _REWARD) and (urls or payment):
+        score += 0.08
+        evidence.append(_e(
+            "Thông báo trúng thưởng/hoàn tiền kèm liên kết hoặc yêu cầu thanh toán.",
+            Severity.MEDIUM, "E-CONT-reward-lure", 0.08))
     return score, floor, evidence
 
 
@@ -420,6 +482,10 @@ def _sms_risk(text: str, raw_text: str, metadata: dict[str, Any]) -> tuple[float
         evidence.append(_e("Kịch bản giao hàng/phạt/nợ yêu cầu mở link hoặc thanh toán bất ngờ.", Severity.HIGH, "S-CONT-01", 0.18))
     if brand_claim and urls and (payment or sensitive):
         floor = max(floor, 0.80)
+        # The declared contribution was never added to the score, so the evidence
+        # list and the score disagreed. The 0.80 floor masked it in the common
+        # case, but any explanation that sums contributions was wrong.
+        score += 0.16
         evidence.append(_e("Tự nhận tổ chức quen thuộc, kèm link và yêu cầu tiền/dữ liệu.", Severity.CRITICAL, "sms_brand_action_cluster", 0.16))
     if payment and _search(r"(?:gift card|thẻ quà|bitcoin|usdt|crypto|tài khoản an toàn)", text):
         floor = max(floor, 0.85)
@@ -460,6 +526,20 @@ def _sms_risk(text: str, raw_text: str, metadata: dict[str, Any]) -> tuple[float
     if urgency and (sensitive or payment or remote_app):
         score += 0.10
         evidence.append(_e("Thúc ép kết hợp yêu cầu tiền/dữ liệu/cài ứng dụng là mẫu lừa đảo mạnh.", Severity.CRITICAL, "sms_social_engineering_cluster", 0.10))
+    # BEC used to be email-only. "Sếp nhắn: đổi số tài khoản, chuyển gấp" over
+    # SMS or a chat app previously scored only the generic payment request (0.09)
+    # and resolved to ALLOW.
+    if _matches(text, _AUTHORITY) and _matches(text, _BEC_CHANGE) and payment:
+        floor = max(floor, 0.85)
+        score += 0.14
+        evidence.append(_e(
+            "Tự nhận lãnh đạo/đối tác, yêu cầu đổi tài khoản nhận tiền và chuyển khoản.",
+            Severity.CRITICAL, "S-BEC-01", 0.14))
+    elif _matches(text, _BEC_CHANGE) and payment:
+        score += 0.12
+        evidence.append(_e(
+            "Yêu cầu đổi tài khoản nhận tiền qua tin nhắn.",
+            Severity.HIGH, "S-BEC-02", 0.12))
     return score, floor, evidence
 
 
@@ -478,25 +558,53 @@ def assess_text_risk(
     if isinstance(conversation, list):
         conversation_text = "\n".join(str(item.get("text", "") if isinstance(item, dict) else item) for item in conversation[:50])
     normalized = normalize_for_detection("\n".join(item for item in (text or "", conversation_text) if item))
-    selected = "sms" if modality == "sms" else "email"
+    # Chat and call transcripts are conversational, not header-bearing mail. They
+    # used to fall through to the email rule set, so the scams that dominate those
+    # channels — wrong-number to investment, job-task deposit, remote-app install
+    # — went undetected in exactly the medium where they are most common.
+    selected = "sms" if modality in {"sms", "chat", "chat_message", "call_transcript"} else "email"
     if selected == "sms":
         rule_score, floor, evidence = _sms_risk(normalized, text, metadata)
     else:
         rule_score, floor, evidence = _email_risk(normalized, text, metadata)
 
-    # AI/ML is supporting evidence only: no independent rule signal means it cannot
-    # turn a normal message into a high-risk result. With evidence it may add at most
-    # ten points, matching the design's anti-false-positive constraint.
+    # AI/ML is supporting evidence: on its own it may raise a WARN, but it may
+    # never on its own reach the BLOCK band. The previous ceiling of 0.25 sat
+    # below RISK_THRESHOLD_WARN (0.50), which meant a confident classifier could
+    # not influence the verdict at all — measured on the frozen holdout, the
+    # deployed email path recalled 0.8% of phishing while the same classifier
+    # alone recalled 81.8%. The ceiling below keeps the anti-hallucination
+    # contract ("a model alone never blocks") while restoring the warning.
     raw_model = max(0.0, min(1.0, float(model_score or 0.0)))
     meaningful = any((item.contribution or 0) >= 0.05 for item in evidence)
     if technical_signal:
         combined = max(rule_score, raw_model)
-    elif meaningful:
-        combined = max(rule_score, min(raw_model, rule_score + 0.10))
     else:
-        combined = max(rule_score, min(raw_model, 0.25))
+        # The classifier ceiling must be monotonic in the rule evidence: finding
+        # an extra weak signal must never lower the verdict. Before this, an SMS
+        # whose only rule hit was "contains a link" (+0.07) capped the model at
+        # 0.17 and returned ALLOW, while the identical text without the link was
+        # capped at the model-only ceiling and returned WARN.
+        if meaningful:
+            ceiling = max(MODEL_ONLY_CEILING, rule_score + 0.10)
+        elif raw_model >= MODEL_ONLY_WARN_MIN:
+            ceiling = MODEL_ONLY_CEILING
+        else:
+            # Uncorroborated and not confident: supporting context only.
+            ceiling = MODEL_ONLY_QUIET_CEILING
+        combined = max(rule_score, min(raw_model, ceiling))
     final = min(1.0, max(combined, floor))
 
+    if raw_model >= MODEL_ONLY_WARN_MIN and not meaningful and not technical_signal:
+        evidence.append(
+            _e(
+                "Mô hình phân loại nhận diện mẫu ngôn ngữ giống lừa đảo/spam, "
+                "nhưng chưa có bằng chứng kỹ thuật độc lập. Hãy tự xác minh trước khi hành động.",
+                Severity.MEDIUM,
+                "model_only_signal",
+                round(min(raw_model, MODEL_ONLY_CEILING), 3),
+            )
+        )
     if not evidence and not technical_signal:
         evidence.append(_e("Chưa phát hiện tín hiệu lừa đảo rõ rệt trong dữ liệu đã cung cấp.", Severity.INFO, "no_text_signal", 0.0))
     return TextRiskAssessment(round(final, 4), evidence)

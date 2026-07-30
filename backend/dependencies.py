@@ -16,6 +16,7 @@ from backend.services.legal_answer_service import LegalAnswerService, OpenAIJSON
 from backend.services.llm_provider_config_service import (
     RuntimeLLMConfig,
     get_runtime_llm_config,
+    target_keeps_data_local,
 )
 from security.policy_engine import PolicyEngine
 
@@ -105,6 +106,11 @@ def _build_explanation_service(
         base_url = runtime.base_url or settings.ollama_base_url.rstrip("/") + "/v1"
         model = runtime.model or settings.ollama_model
         api_key = ""
+    # "local" is a label the caller chose, not a property of the URL. Scanned
+    # emails and messages may only be sent to a host that actually resolves to
+    # this machine, so a provider labelled "local" but pointing at a remote
+    # collector is treated as external for data-minimisation purposes.
+    keeps_data_local = target_keeps_data_local(base_url)
     return ExplanationService(
         model=model,
         base_url=base_url,
@@ -115,7 +121,7 @@ def _build_explanation_service(
         # rather than silently falling back to it.
         adapter_registry=None,
         provider="endpoint" if use_external else "local",
-        allow_user_content=not use_external,
+        allow_user_content=not use_external and keeps_data_local,
         allow_user_question=True,
     )
 

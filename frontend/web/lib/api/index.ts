@@ -2,8 +2,8 @@
  * Factory chọn hiện thực ApiClient theo môi trường.
  *
  * `getApiClient()` đọc biến môi trường `NEXT_PUBLIC_API_MODE`:
- *   - "real" => RealApiClient (gọi REST `/v1/assess/*` + WS `/v1/chat`)
- *   - "mock" (mặc định) => MockApiClient (demo standalone, in-memory)
+ *   - "real" (mặc định) => RealApiClient (gọi REST `/v1/assess/*` + WS `/v1/chat`)
+ *   - "mock" => MockApiClient (demo standalone, in-memory) — phải bật tường minh
  *
  * Trả về một singleton (cache instance) để toàn ứng dụng dùng chung một
  * client và một trạng thái. Nhờ interface chung, đổi `NEXT_PUBLIC_API_MODE`
@@ -21,7 +21,7 @@ export type { ApiClient, ApiMode } from "@/lib/api/client";
 /** Singleton cache — đảm bảo dùng chung một instance trên toàn ứng dụng. */
 let cachedClient: ApiClient | null = null;
 
-/** Chuẩn hóa giá trị env thành ApiMode; mặc định "mock". */
+/** Chuẩn hóa giá trị env thành ApiMode; mặc định "real". */
 function resolveApiMode(): ApiMode {
     return process.env.NEXT_PUBLIC_API_MODE === "mock" ? "mock" : "real";
 }

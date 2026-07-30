@@ -1,21 +1,164 @@
 {
   "artifact": "url_lgbm.onnx",
-  "architecture": "LightGBM over 15 explainable URL features",
-  "purpose": "phishing URL classification for portable gateway serving",
+  "architecture": "LightGBM LGBMClassifier over handcrafted URL features",
+  "runtime_input": "tensor(float) shape [N, 65]",
+  "runtime_outputs": [
+    "label",
+    "probabilities"
+  ],
+  "purpose": "real-data URL phishing classifier for gateway serving",
+  "trained_at_utc": "2026-07-26T23:40:43+00:00",
   "label_mapping": {
     "0": "benign",
     "1": "phishing"
   },
   "dataset": {
-    "rows": 874416,
-    "train_rows": 699532,
-    "test_rows": 174884
+    "path": "data/url_dataset.csv",
+    "rows": 11430,
+    "skipped_rows": 0,
+    "class_counts": {
+      "0": 5715,
+      "1": 5715
+    },
+    "test_size": 0.2,
+    "split": "domain",
+    "split_note": "domain-grouped: no registrable domain appears on both sides",
+    "train_rows": 9486,
+    "test_rows": 1944
+  },
+  "feature_names": [
+    "url_length",
+    "domain_entropy",
+    "subdomain_depth",
+    "tld_risk_score",
+    "has_ip_address",
+    "special_char_ratio",
+    "path_depth",
+    "query_param_count",
+    "has_https",
+    "homoglyph_score",
+    "is_shortlink",
+    "digit_ratio",
+    "vowel_consonant_ratio",
+    "url_path_entropy",
+    "has_suspicious_keywords",
+    "host_length",
+    "registrable_domain_length",
+    "path_length",
+    "query_length",
+    "fragment_length",
+    "url_entropy",
+    "host_entropy",
+    "query_entropy",
+    "hyphen_count",
+    "dot_count",
+    "slash_count",
+    "at_count",
+    "percent_count",
+    "equals_count",
+    "ampersand_count",
+    "underscore_count",
+    "digit_count",
+    "letter_count",
+    "non_ascii_count",
+    "punycode_label_count",
+    "subdomain_label_count",
+    "max_label_length",
+    "average_label_length",
+    "suspicious_keyword_count",
+    "brand_mention_count",
+    "brand_mismatch",
+    "brand_in_subdomain",
+    "deceptive_subdomain",
+    "excessive_dots",
+    "many_delimiters",
+    "percent_encoded",
+    "has_at_symbol",
+    "has_nonstandard_port",
+    "embedded_credentials",
+    "nested_url_count",
+    "redirect_param_count",
+    "dangerous_file_extension",
+    "disguised_download",
+    "archive_lure",
+    "shared_hosting",
+    "max_repeated_character_run",
+    "max_consecutive_digit_run",
+    "hex_token_count",
+    "base64_like_token_count",
+    "path_token_count",
+    "query_key_count",
+    "duplicate_query_key_count",
+    "parameter_value_entropy",
+    "scheme_is_http",
+    "scheme_was_missing"
+  ],
+  "context_feature_coverage": {
+    "dns_available": 0.0,
+    "dns_resolves": 0.0,
+    "dns_record_count": 0.0,
+    "rdap_available": 0.0,
+    "domain_age_days_normalized": 0.0,
+    "tls_available": 0.0,
+    "tls_present": 0.0,
+    "tls_hostname_match": 0.0,
+    "tls_days_remaining_normalized": 0.0,
+    "redirect_available": 0.0,
+    "redirect_count_normalized": 0.0,
+    "cross_domain_redirect_count": 0.0,
+    "final_domain_changed": 0.0,
+    "dom_available": 0.0,
+    "login_form_present": 0.0,
+    "password_form_present": 0.0,
+    "external_form_present": 0.0,
+    "hidden_iframe_present": 0.0,
+    "script_count_normalized": 0.0,
+    "visual_hash_available": 0.0,
+    "visual_brand_similarity": 0.0,
+    "local_feed_checked": 0.0,
+    "local_feed_hit": 0.0
+  },
+  "selected_context_features": [],
+  "minimum_context_coverage": 0.05,
+  "model_config": {
+    "n_estimators": 300,
+    "num_leaves": 48,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42
   },
   "metrics": {
     "test": {
-      "accuracy": 0.8375437432812607,
-      "f1": 0.842975023903876
+      "f1": 0.8450867052023121,
+      "classification_report": {
+        "0": {
+          "precision": 0.8653846153846154,
+          "recall": 0.8864915572232646,
+          "f1-score": 0.8758109360518999,
+          "support": 1066.0
+        },
+        "1": {
+          "precision": 0.857981220657277,
+          "recall": 0.8325740318906606,
+          "f1-score": 0.8450867052023121,
+          "support": 878.0
+        },
+        "accuracy": 0.8621399176954733,
+        "macro avg": {
+          "precision": 0.8616829180209462,
+          "recall": 0.8595327945569626,
+          "f1-score": 0.8604488206271059,
+          "support": 1944.0
+        },
+        "weighted avg": {
+          "precision": 0.8620409010993256,
+          "recall": 0.8621399176954733,
+          "f1-score": 0.8619344573039892,
+          "support": 1944.0
+        }
+      }
     }
   },
-  "sha256": "9e954fc286b4d1ee65a8aef9b1b48e4bd0b4077e997f1ff761a06df5e71150da"
+  "sha256": "4d9d70c931023a15d2ab1031be5bfad5bf3b0d0a92893f057e6c78c798962ed9"
 }

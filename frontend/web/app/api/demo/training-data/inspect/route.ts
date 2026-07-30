@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const BACKEND_URL =
     process.env.BACKEND_INTERNAL_URL ||
     process.env.NEXT_PUBLIC_BACKEND_URL ||
-    "http://localhost:8001";
+    "http://localhost:8000";
 
 export async function POST(request: NextRequest) {
     try {

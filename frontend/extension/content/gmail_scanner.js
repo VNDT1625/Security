@@ -173,21 +173,39 @@
     return "";
   }
 
+  // Only Google's own attachment endpoints may be fetched with the user's
+  // cookies. Without this an attacker-authored email could point the scanner at
+  // any https origin: the extension holds broad host permissions, so the fetch
+  // would be CORS-exempt, carry the victim's session, and stream any response
+  // beginning with "MZ" to the gateway.
+  const GMAIL_ATTACHMENT_HOSTS = new Set([
+    "mail.google.com",
+    "mail-attachment.googleusercontent.com",
+    "drive.google.com",
+  ]);
+
   function downloadUrlFrom(element) {
-    const holder = element.closest?.("[download_url]") || element.querySelector?.("[download_url]") || element;
-    const encoded = holder?.getAttribute?.("download_url") || element.getAttribute?.("download_url") || "";
+    // A real Gmail attachment always carries download_url on its chip. Anchors
+    // written by the message body do not, and must never be followed.
+    const holder = element.closest?.("[download_url]") || element.querySelector?.("[download_url]");
+    const encoded = holder?.getAttribute?.("download_url") || "";
     const urlIndex = encoded.search(/https?:\/\//i);
-    if (urlIndex >= 0) return encoded.slice(urlIndex);
-    const href = holder?.href || holder?.querySelector?.("a[href]")?.href || element.href || element.querySelector?.("a[href]")?.href;
-    if (!href) return "";
-    try { return new URL(href, location.href).href; } catch { return ""; }
+    if (urlIndex < 0) return "";
+    try {
+      const parsed = new URL(encoded.slice(urlIndex));
+      if (parsed.protocol !== "https:") return "";
+      if (!GMAIL_ATTACHMENT_HOSTS.has(parsed.hostname)) return "";
+      return parsed.href;
+    } catch {
+      return "";
+    }
   }
 
   function executableAttachments(root) {
     if (!root) return [];
     const records = [];
     const seen = new Set();
-    const candidates = root.querySelectorAll("[download_url], a[href], .aV3, [download$='.exe' i], [aria-label*='.exe' i], [title*='.exe' i]");
+    const candidates = root.querySelectorAll("[download_url], [download_url] .aV3, [download_url] [download$='.exe' i]");
     candidates.forEach((candidate) => {
       const filename = filenameFrom(candidate);
       if (!filename) return;
@@ -212,7 +230,18 @@
   }
 
   async function downloadExecutable(attachment) {
-    const response = await fetch(attachment.url, { credentials: "include", cache: "no-store" });
+    // Re-check at the point of use: the URL travelled through caches and message
+    // objects since it was validated, and this is the only credentialed fetch.
+    let parsed;
+    try {
+      parsed = new URL(attachment.url);
+    } catch {
+      throw new Error("invalid_attachment_url");
+    }
+    if (parsed.protocol !== "https:" || !GMAIL_ATTACHMENT_HOSTS.has(parsed.hostname)) {
+      throw new Error("untrusted_attachment_host");
+    }
+    const response = await fetch(parsed.href, { credentials: "include", cache: "no-store" });
     if (!response.ok) throw new Error(`download_${response.status}`);
     const declaredSize = Number(response.headers.get("Content-Length")) || 0;
     if (declaredSize > MAX_EXE_BYTES) throw new Error("file_too_large");

@@ -675,10 +675,16 @@ class InferenceService:
             else self._shadow_evidence(contextual_evidence)
         )
         evidence = [*pred.evidence, *displayed_contextual_evidence]
-        scoring_evidence = evidence if context_ai_mode == "active" else pred.evidence
-        score = self._finalize_score(pred.risk_score, scoring_evidence)
-        decision = self.policy.evaluate_human(score)
-        response = self._build(score, decision, evidence, Modality.URL, pred.model_version, t0)
+        # URL model/rules above only produce evidence. Risk Core v2 below is the
+        # sole scorer and policy engine for every URL caller.
+        response = self._build(
+            0.0,
+            Decision.ALLOW,
+            evidence,
+            Modality.URL,
+            pred.model_version,
+            t0,
+        )
         response.contextual_analysis = contextual.trace
 
         add_offline_url_findings(observations, pred.evidence)

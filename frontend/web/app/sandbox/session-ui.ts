@@ -2,6 +2,30 @@ export type SandboxMode = "auto" | "interactive";
 export type SandboxLeaseMinutes = 5 | 10;
 export type SandboxTier = "free" | "pro" | "max";
 
+export type SandboxModeCapability = {
+    available?: boolean | null;
+    reason?: string | null;
+};
+
+export function sandboxModeAvailability(
+    tier: SandboxTier,
+    mode: SandboxMode,
+    legacyConfigured: boolean,
+    modes?: Partial<Record<SandboxMode, SandboxModeCapability>> | null,
+): { available: boolean; reason: string | null } {
+    if (tier === "free") {
+        return mode === "auto"
+            ? { available: true, reason: null }
+            : { available: false, reason: "windows_interactive_requires_paid_tier" };
+    }
+    const capability = modes?.[mode];
+    if (typeof capability?.available === "boolean") {
+        return { available: capability.available, reason: capability.reason || null };
+    }
+    if (mode === "auto") return { available: legacyConfigured, reason: null };
+    return { available: false, reason: "interactive_capability_not_reported" };
+}
+
 export const REMOTE_IFRAME_SANDBOX_POLICY =
     "allow-scripts allow-forms allow-same-origin allow-pointer-lock";
 
@@ -20,12 +44,8 @@ export type SandboxSessionUiShape = {
 
 export type SandboxTimelineState = "done" | "active" | "pending" | "failed";
 
-export function labActionState(webBusy: boolean, exeBusy: boolean) {
+export function labActionState(exeBusy: boolean) {
     return {
-        web: {
-            disabled: webBusy,
-            label: webBusy ? "Đang kiểm thử…" : "Kiểm thử",
-        },
         exe: {
             disabled: exeBusy,
             label: exeBusy ? "Đang phân tích…" : "Chọn EXE",
@@ -66,6 +86,16 @@ export function buildSessionCreatePayload(
         mode: effectiveMode,
         ...(effectiveMode === "interactive" ? { leaseMinutes } : {}),
     };
+}
+
+export function sandboxStartActionLabel(
+    tier: SandboxTier,
+    mode: SandboxMode,
+    leaseMinutes: SandboxLeaseMinutes,
+): string {
+    if (tier === "free") return "Mở Browser Isolation miễn phí";
+    if (mode === "interactive") return `Tạo desktop ${leaseMinutes} phút`;
+    return `Bắt đầu Auto Analyze ${tier.toUpperCase()}`;
 }
 
 export function selectDisplayedSession<T>(
@@ -148,6 +178,25 @@ export function safeRemoteConnectUrl(
     } catch {
         return null;
     }
+}
+
+export function canRequestInteractiveRemoteAccess(input: {
+    sessionReady: boolean;
+    sessionMode: SandboxMode;
+    leaseSeconds: number | null;
+    remoteWaitingForSample: boolean;
+    remoteExplicitlyUnavailable: boolean;
+    remoteAvailable?: boolean | null;
+}): boolean {
+    return (
+        input.sessionReady &&
+        input.sessionMode === "interactive" &&
+        input.leaseSeconds !== null &&
+        input.leaseSeconds > 0 &&
+        input.remoteAvailable === true &&
+        !input.remoteWaitingForSample &&
+        !input.remoteExplicitlyUnavailable
+    );
 }
 
 export function timelineState(

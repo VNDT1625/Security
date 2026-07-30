@@ -82,6 +82,27 @@ export const ENGLISH_TRANSLATIONS: Record<string, string> = {
   "Lựa chọn được lưu cho các phiên truy cập tiếp theo.": "Your choice is saved for future visits.",
   "Interface preference": "Interface preference",
   "English đã sẵn sàng. Phạm vi bản dịch được kiểm tra tự động trong mỗi bản build.": "English is ready. Translation coverage is checked automatically in every build.",
+  "Model AI": "AI model",
+  "Che mật khẩu, OTP và số thẻ trong bản xem trước, lịch sử và kết quả được lưu.": "Mask passwords, OTPs, and card numbers in previews, history, and saved results.",
+  "Trang Lịch sử trong workspace chỉ đọc dữ liệu trên trình duyệt này. Lịch sử tài khoản được tải riêng sau khi đăng nhập.": "Workspace History reads only data from this browser. Account history is loaded separately after sign-in.",
+  "Model AI của bạn": "Your AI model",
+  "Đăng nhập để chọn model/chế độ AI và đồng bộ lựa chọn riêng trên mọi thiết bị.": "Sign in to choose an AI model or mode and sync your selection across devices.",
+  "Đăng nhập để cấu hình": "Sign in to configure",
+  "Model và chế độ AI": "AI model and mode",
+  "Web hỗ trợ AI bảo mật Prewise hoặc API endpoint HTTPS. Admin chỉ quyết định chế độ và model nào được phép xuất hiện.": "The web app supports Prewise security AI or an HTTPS API endpoint. Admins only control which modes and models are available.",
+  "Đã cấu hình": "Configured",
+  "Chưa chọn riêng": "No personal selection",
+  "Chế độ AI": "AI mode",
+  "AI bảo mật Prewise": "Prewise security AI",
+  "Model local trên backend": "Local model on the backend",
+  "API endpoint · model riêng": "API endpoint · custom model",
+  "Hiện chưa có chế độ AI nào phù hợp với web được admin cho phép.": "No web-compatible AI mode is currently enabled by an admin.",
+  "Chọn model được phép": "Choose an allowed model",
+  "Lưu cho tài khoản của tôi": "Save for my account",
+  "Kiểm tra model": "Test model",
+  "Local LLM trên máy cá nhân không thể được web hosted truy cập an toàn. Tùy chọn này chỉ có trên Desktop khi Core API cũng chạy local. Endpoint từ xa bắt buộc HTTPS.": "A hosted web app cannot safely access a personal local LLM. This option is available only on Desktop when the Core API also runs locally. Remote endpoints require HTTPS.",
+  "Đang tải cài đặt tài khoản…": "Loading account settings…",
+  "Đang xử lý…": "Processing…",
   "Lịch sử phân tích": "Analysis history",
   "Các lần kiểm tra được lưu cục bộ trên thiết bị này để bạn có thể xem lại.": "Checks are stored locally on this device so you can review them.",
   "Tìm theo nội dung hoặc loại…": "Search by content or type…",
@@ -202,6 +223,29 @@ export const ENGLISH_TRANSLATIONS: Record<string, string> = {
   "Khi vẻ ngoài có thể bị sao chép,": "When appearances can be copied,",
   "niềm tin cần bằng chứng.": "trust needs evidence.",
   "Prewise là lớp phân tích an toàn giúp phát hiện, giải thích và đánh giá tín hiệu đáng ngờ trước khi bạn quyết định tin tưởng.": "Prewise is a security analysis layer that detects, explains, and assesses suspicious signals before you decide to trust them.",
+  "MỘT HỆ THỐNG · NHIỀU CÁCH SỬ DỤNG": "ONE SYSTEM · MANY WAYS TO USE IT",
+  "Scanner, trợ lý, bảo vệ trong trình duyệt, sandbox và tích hợp cho AI — cùng dùng chung một lớp đánh giá.": "Scanner, assistant, browser protection, sandbox, and AI integrations—all powered by one assessment layer.",
+  "Phân tích và hiểu rõ.": "Analyze and understand.",
+  "Kiểm tra tín hiệu, giải thích bằng chứng và lưu lại kết quả để đối chiếu về sau.": "Inspect signals, explain the evidence, and save results for later comparison.",
+  "Khả năng phân tích": "Analysis capabilities",
+  "URL & website": "URLs & websites",
+  "Email · Gmail · EML": "Email · Gmail · EML",
+  "SMS & văn bản": "SMS & text",
+  "Tệp & báo cáo": "Files & reports",
+  "LỊCH SỬ ↗": "HISTORY ↗",
+  "Hỗ trợ đúng ngữ cảnh.": "Help in the right context.",
+  "Hỏi đáp pháp luật và an ninh mạng, gọi lại kết quả bằng @ID hoặc nhận cảnh báo ngay tại nơi rủi ro xuất hiện.": "Ask about law and cybersecurity, recall results with @ID, or receive warnings exactly where risk appears.",
+  "Khả năng trợ lý và bảo vệ": "Assistant and protection capabilities",
+  "Trợ lý pháp luật & ANM": "Legal & cybersecurity assistant",
+  "Ngữ cảnh @ID lịch sử": "History context with @ID",
+  "Cảnh báo Web & Gmail": "Web & Gmail warnings",
+  "MỞ TRỢ LÝ ↗": "OPEN ASSISTANT ↗",
+  "TẢI TIỆN ÍCH ↗": "GET EXTENSION ↗",
+  "Kiểm chứng và kết nối.": "Verify and connect.",
+  "Mở nội dung đáng ngờ trong môi trường cô lập, sau đó đưa lớp đánh giá Prewise vào AI agent và workflow.": "Open suspicious content in an isolated environment, then bring the Prewise assessment layer into AI agents and workflows.",
+  "Khả năng sandbox và tích hợp": "Sandbox and integration capabilities",
+  "MỞ SANDBOX ↗": "OPEN SANDBOX ↗",
+  "KẾT NỐI MCP ↗": "CONNECT MCP ↗",
   "Phân tích sâu.": "Analyze deeply.",
   "Kiểm tra URL, email, SMS và file; xem mức độ rủi ro cùng các tín hiệu đứng sau kết quả.": "Inspect URLs, emails, SMS, and files; see the risk level and the signals behind the result.",
   "MỞ SCANNER ↗": "OPEN SCANNER ↗",
@@ -547,6 +591,16 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     setLanguageState(initial);
     document.documentElement.lang = initial;
     document.documentElement.dataset.language = initial;
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+      const motion = ["full", "balanced", "reduced"].includes(saved?.motion) ? saved.motion : "balanced";
+      const density = ["comfortable", "compact"].includes(saved?.density) ? saved.density : "comfortable";
+      document.documentElement.dataset.motion = motion;
+      document.documentElement.dataset.density = density;
+    } catch {
+      document.documentElement.dataset.motion = "balanced";
+      document.documentElement.dataset.density = "comfortable";
+    }
   }, []);
 
   useEffect(() => {

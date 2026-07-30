@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
     REMOTE_IFRAME_SANDBOX_POLICY,
     buildSessionCreatePayload,
+    canRequestInteractiveRemoteAccess,
     formatLeaseCountdown,
     labActionState,
     leaseDeadline,
@@ -10,18 +11,18 @@ import {
     resolveSandboxMode,
     resolveSandboxPhase,
     safeRemoteConnectUrl,
+    sandboxModeAvailability,
+    sandboxStartActionLabel,
     selectDisplayedSession,
     timelineState,
 } from "./session-ui";
 
 describe("sandbox session UI contract", () => {
-    it("keeps website and EXE quick-scan busy states independent", () => {
-        expect(labActionState(true, false)).toEqual({
-            web: { disabled: true, label: "Đang kiểm thử…" },
+    it("exposes the EXE quick-scan busy state", () => {
+        expect(labActionState(false)).toEqual({
             exe: { disabled: false, label: "Chọn EXE" },
         });
-        expect(labActionState(false, true)).toEqual({
-            web: { disabled: false, label: "Kiểm thử" },
+        expect(labActionState(true)).toEqual({
             exe: { disabled: true, label: "Đang phân tích…" },
         });
     });
@@ -49,6 +50,31 @@ describe("sandbox session UI contract", () => {
             tier: "free",
             mode: "auto",
         });
+    });
+
+    it("does not present the free browser as Auto Analyze or a Windows desktop", () => {
+        expect(sandboxStartActionLabel("free", "auto", 5)).toBe(
+            "Mở Browser Isolation miễn phí",
+        );
+        expect(sandboxStartActionLabel("pro", "auto", 5)).toBe(
+            "Bắt đầu Auto Analyze PRO",
+        );
+        expect(sandboxStartActionLabel("max", "interactive", 10)).toBe(
+            "Tạo desktop 10 phút",
+        );
+    });
+
+    it("fails closed when Interactive infrastructure is missing or not reported", () => {
+        expect(
+            sandboxModeAvailability("pro", "interactive", true, {
+                interactive: { available: false, reason: "remote_broker_not_configured" },
+            }),
+        ).toEqual({ available: false, reason: "remote_broker_not_configured" });
+        expect(sandboxModeAvailability("pro", "interactive", true)).toEqual({
+            available: false,
+            reason: "interactive_capability_not_reported",
+        });
+        expect(sandboxModeAvailability("pro", "auto", true).available).toBe(true);
     });
 
     it("shows an active session first and falls back to the recent terminal report", () => {
@@ -142,5 +168,22 @@ describe("sandbox session UI contract", () => {
         expect(safeRemoteConnectUrl("http://localhost:8443/session/1")).toBe(
             "http://localhost:8443/session/1",
         );
+    });
+
+    it("only shows the remote connect action after backend confirms a live lease", () => {
+        const ready = {
+            sessionReady: true,
+            sessionMode: "interactive" as const,
+            leaseSeconds: 240,
+            remoteWaitingForSample: false,
+            remoteExplicitlyUnavailable: false,
+            remoteAvailable: true,
+        };
+        expect(canRequestInteractiveRemoteAccess(ready)).toBe(true);
+        expect(canRequestInteractiveRemoteAccess({ ...ready, leaseSeconds: null })).toBe(false);
+        expect(canRequestInteractiveRemoteAccess({ ...ready, leaseSeconds: 0 })).toBe(false);
+        expect(canRequestInteractiveRemoteAccess({ ...ready, remoteAvailable: false })).toBe(false);
+        expect(canRequestInteractiveRemoteAccess({ ...ready, remoteAvailable: undefined })).toBe(false);
+        expect(canRequestInteractiveRemoteAccess({ ...ready, remoteWaitingForSample: true })).toBe(false);
     });
 });

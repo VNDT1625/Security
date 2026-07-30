@@ -31,6 +31,10 @@ def test_check_url_before_click_phishing():
     assert set(["risk_score", "verdict", "evidence", "request_id"]).issubset(r)
     assert r["verdict"] in ("BLOCK", "WARN")
     assert r["request_id"]
+    assert r["schema_version"] == "2"
+    assert r["risk_core"] is not None
+    assert r["scoring_version"] == r["risk_core"]["scoring_version"]
+    assert r["risk_score"] == r["risk_core"]["final_score"] / 100
 
 
 def test_check_url_invalid_input():

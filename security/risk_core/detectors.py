@@ -147,6 +147,11 @@ def add_offline_url_findings(obs: ScanObservations, legacy_evidence: list[Any]) 
         "embedded_credentials": 18,
         "nonstandard_port": 18,
         "excessive_query_parameters": 18,
+        # A very confident URL-classifier verdict is a reputation-style signal, so
+        # it lands on criterion 12 ("Uy tín tên miền thấp"). It is scoped to the
+        # URL path only: this mapper is reached exclusively from assess_url, so
+        # the email, SMS and prompt modes are unaffected.
+        "model_high_confidence_phishing": 12,
     }
     checked = {5, 6, 7, 8, 12, 15, 16, 17, 18, 29, 34}
     obs.clean(*checked)

@@ -27,6 +27,14 @@ _PHONE = re.compile(r"(?<!\w)(?:\+?\d[\s().-]?){8,15}(?!\w)")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{10,})?\b")
 _SECRET = re.compile(r"\b(?:sk|pk|pw|api)[_-][A-Za-z0-9_-]{16,}\b", re.IGNORECASE)
 _LONG_TOKEN = re.compile(r"\b[A-Za-z0-9_-]{32,}\b")
+# A 16-digit payment card slipped past _PHONE, which stops at 15 digits, and the
+# 32-character floor of _LONG_TOKEN left 20-character AWS access key IDs and
+# GitLab "glpat-" tokens intact on a link anyone can open.
+_PAN = re.compile(r"(?<!\w)(?:\d[ -]?){13,19}(?!\w)")
+_VENDOR_TOKEN = re.compile(
+    r"\b(?:AKIA|ASIA|AIza|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xox[abposr]-|shpat_|shpss_)"
+    r"[A-Za-z0-9_-]{8,}\b"
+)
 
 
 def hash_share_token(token: str) -> str:
@@ -37,8 +45,12 @@ def sanitize_public_text(value: object, *, limit: int) -> str:
     text = " ".join(str(value or "").split())
     text = _URL.sub("[URL đã ẩn]", text)
     text = _EMAIL.sub("[email đã ẩn]", text)
+    # Card numbers before phone numbers: _PHONE would otherwise consume the
+    # first 15 digits of a 16-digit PAN and leave the remainder visible.
+    text = _PAN.sub("[số thẻ đã ẩn]", text)
     text = _PHONE.sub("[số điện thoại đã ẩn]", text)
     text = _JWT.sub("[token đã ẩn]", text)
+    text = _VENDOR_TOKEN.sub("[khóa bí mật đã ẩn]", text)
     text = _SECRET.sub("[khóa bí mật đã ẩn]", text)
     text = _LONG_TOKEN.sub("[chuỗi nhạy cảm đã ẩn]", text)
     return text[:limit]

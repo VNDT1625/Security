@@ -76,6 +76,7 @@ MAX_SANDBOX_REPORT_BYTES = 512 * 1024
 MAX_TELEMETRY_EVENT_FIELDS = 32
 MAX_TELEMETRY_TEXT_LENGTH = 4096
 CLEANUP_CLAIM_STALE_MINUTES = 10
+RESTART_PROVISIONING_GRACE_SECONDS = 30
 FORBIDDEN_TELEMETRY_FIELDS = {
     "content",
     "contents",
@@ -133,6 +134,47 @@ class CreateSessionInput(BaseModel):
     leaseMinutes: Literal[5, 10] | None = None
 
 
+class SandboxAgentAnalysis(BaseModel):
+    """Machine-readable result metadata; evidence content stays in bounded arrays."""
+
+    risk_score: int | None = Field(default=None, ge=0, le=100)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    evidence_channels: list[Literal["process", "file", "registry", "network"]] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+    missing_channels: list[Literal["process", "file", "registry", "network"]] = Field(
+        default_factory=list,
+        max_length=4,
+    )
+    risk_signals: list[str] = Field(default_factory=list, max_length=32)
+    execution_observed: bool | None = None
+    execution_failed: bool | None = None
+    timed_out: bool | None = None
+    root_exit_code: int | None = None
+
+    @field_validator("evidence_channels", "missing_channels")
+    @classmethod
+    def validate_unique_channels(cls, channels: list[str]) -> list[str]:
+        if len(channels) != len(set(channels)):
+            raise ValueError("Sandbox analysis channel bị trùng")
+        return channels
+
+    @field_validator("risk_signals")
+    @classmethod
+    def validate_risk_signals(cls, signals: list[str]) -> list[str]:
+        for signal in signals:
+            if not re.fullmatch(r"[A-Z0-9_]{1,80}", signal):
+                raise ValueError("Sandbox risk signal không hợp lệ")
+        return signals
+
+    @model_validator(mode="after")
+    def validate_channel_partition(self) -> SandboxAgentAnalysis:
+        if set(self.evidence_channels) & set(self.missing_channels):
+            raise ValueError("Sandbox analysis channel vừa available vừa missing")
+        return self
+
+
 class SandboxAgentReport(BaseModel):
     status: str = Field(pattern="^(staged|running|completed|failed)$")
     phase: str | None = Field(
@@ -146,6 +188,7 @@ class SandboxAgentReport(BaseModel):
     file_events: list[dict] = Field(default_factory=list, max_length=200)
     registry_events: list[dict] = Field(default_factory=list, max_length=200)
     network_events: list[dict] = Field(default_factory=list, max_length=200)
+    analysis: SandboxAgentAnalysis | None = None
 
     @field_validator(
         "process_tree",
@@ -426,6 +469,216 @@ def account_tier(db: DbSession, user_id: str) -> str:
     return max(valid, key=TIER_RANK.get) if valid else "free"
 
 
+SANDBOX_EVIDENCE_CHANNELS = ("process", "file", "registry", "network")
+SANDBOX_REPORT_ARRAYS = {
+    "process": "process_tree",
+    "file": "file_events",
+    "registry": "registry_events",
+    "network": "network_events",
+}
+SANDBOX_INCONCLUSIVE_VERDICTS = {
+    "analysis_inconclusive_timed_out",
+    "analysis_inconclusive_telemetry_degraded",
+    "analysis_inconclusive_missing_verdict",
+    "interactive_no_execution_observed",
+}
+SANDBOX_FAILED_VERDICTS = {"analysis_failed", "execution_failed"}
+
+
+def _summary_value(summary: object, key: str) -> str | None:
+    if not isinstance(summary, str):
+        return None
+    match = re.search(rf"(?:^|;\s*){re.escape(key)}=([^;]*)", summary)
+    return match.group(1).strip() if match else None
+
+
+def _legacy_analysis_metadata(report: dict) -> dict:
+    """Read old agent summaries without mistaking absent telemetry for zero events."""
+
+    summary = report.get("summary")
+    risk_text = _summary_value(summary, "risk_score")
+    try:
+        risk_score = max(0, min(100, int(risk_text))) if risk_text is not None else None
+    except ValueError:
+        risk_score = None
+
+    degraded_text = _summary_value(summary, "telemetry_degraded")
+    missing_channels: list[str] = []
+    evidence_channels: list[str] = []
+    if degraded_text is not None:
+        if degraded_text != "none":
+            missing_channels = [
+                channel
+                for channel in SANDBOX_EVIDENCE_CHANNELS
+                if channel in {part.strip().rstrip("s") for part in degraded_text.split(",")}
+            ]
+        evidence_channels = [
+            channel for channel in SANDBOX_EVIDENCE_CHANNELS if channel not in missing_channels
+        ]
+    else:
+        evidence_channels = [
+            channel
+            for channel, array_key in SANDBOX_REPORT_ARRAYS.items()
+            if isinstance(report.get(array_key), list) and len(report[array_key]) > 0
+        ]
+
+    signal_text = _summary_value(summary, "signals")
+    risk_signals = (
+        []
+        if not signal_text or signal_text == "none"
+        else [part for part in signal_text.split(",") if re.fullmatch(r"[A-Z0-9_]{1,80}", part)]
+    )
+    confidence = (
+        round(len(evidence_channels) / len(SANDBOX_EVIDENCE_CHANNELS), 2)
+        if degraded_text is not None
+        else None
+    )
+    return {
+        "risk_score": risk_score,
+        "confidence": confidence,
+        "evidence_channels": evidence_channels,
+        "missing_channels": missing_channels,
+        "risk_signals": risk_signals,
+        "execution_observed": _summary_value(summary, "execution_observed") == "True",
+        "execution_failed": report.get("verdict") == "execution_failed",
+        "timed_out": _summary_value(summary, "timed_out") == "True",
+    }
+
+
+def _recommended_sandbox_action(outcome: str) -> dict[str, str]:
+    actions = {
+        "dangerous": (
+            "block_and_isolate",
+            "Chặn file, cô lập nguồn gửi và dùng bằng chứng để điều tra phạm vi ảnh hưởng.",
+        ),
+        "suspicious": (
+            "manual_review",
+            "Giữ file trong vùng cách ly và chuyển chuyên gia xem bằng chứng trước khi cho phép.",
+        ),
+        "no_obvious_behavior": (
+            "corroborate_before_trust",
+            "Chưa thấy hành vi rõ; đối chiếu chữ ký và reputation, không coi đây là chứng nhận an toàn.",
+        ),
+        "inconclusive": (
+            "retry_or_investigate",
+            "Không đủ bằng chứng; thử lại Auto trên AMI tương thích hoặc chuyển sang điều tra tương tác.",
+        ),
+        "failed": (
+            "retry_compatible_environment",
+            "Phân tích không thành công; không mở file và thử lại trong môi trường tương thích.",
+        ),
+        "pending": ("wait_for_analysis", "Chờ agent hoàn tất và gửi đủ bằng chứng."),
+    }
+    code, label = actions[outcome]
+    return {"code": code, "label": label}
+
+
+def sandbox_analysis_output(
+    row: CloudSandboxSession,
+    report: dict,
+    *,
+    cleanup_state: str,
+) -> dict:
+    """Normalize Auto/Interactive output without ever presenting failure as safe."""
+
+    raw_analysis = report.get("analysis")
+    metadata = raw_analysis if isinstance(raw_analysis, dict) else _legacy_analysis_metadata(report)
+    verdict = str(report.get("verdict") or "").strip().lower()
+    terminal_sample = row.sample_status in {"completed", "failed"}
+    if not verdict or verdict == "unknown":
+        if row.sample_status == "failed":
+            verdict = "analysis_failed"
+        elif row.sample_status == "completed":
+            verdict = "analysis_inconclusive_missing_verdict"
+        else:
+            verdict = "pending"
+
+    if verdict in SANDBOX_FAILED_VERDICTS or row.sample_status == "failed":
+        outcome = "failed"
+    elif verdict in SANDBOX_INCONCLUSIVE_VERDICTS or verdict.startswith("analysis_inconclusive"):
+        outcome = "inconclusive"
+    elif verdict == "high_risk_behavior_observed":
+        outcome = "dangerous"
+    elif verdict == "suspicious_behavior_observed":
+        outcome = "suspicious"
+    elif verdict in {"completed_no_obvious_behavior", "no_obvious_behavior"}:
+        outcome = "no_obvious_behavior"
+    elif terminal_sample:
+        # Unknown terminal verdicts require review; they are never rendered as clean.
+        outcome = "inconclusive"
+    else:
+        outcome = "pending"
+
+    evidence_channels = {
+        str(channel)
+        for channel in metadata.get("evidence_channels", [])
+        if channel in SANDBOX_EVIDENCE_CHANNELS
+    }
+    missing_channels = {
+        str(channel)
+        for channel in metadata.get("missing_channels", [])
+        if channel in SANDBOX_EVIDENCE_CHANNELS
+    }
+    channel_output = []
+    for channel, array_key in SANDBOX_REPORT_ARRAYS.items():
+        events = report.get(array_key)
+        event_count = len(events) if isinstance(events, list) else 0
+        if channel in missing_channels:
+            status = "unavailable"
+        elif event_count > 0:
+            status = "observed"
+        elif channel in evidence_channels and terminal_sample:
+            status = "no_activity"
+        elif channel in evidence_channels:
+            status = "available"
+        elif terminal_sample:
+            status = "unknown"
+        else:
+            status = "pending"
+        channel_output.append(
+            {"id": channel, "status": status, "eventCount": event_count}
+        )
+
+    risk_score = metadata.get("risk_score")
+    if not isinstance(risk_score, int) or isinstance(risk_score, bool):
+        risk_score = None
+    confidence = metadata.get("confidence")
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
+        confidence = None
+    elif not 0 <= float(confidence) <= 1:
+        confidence = None
+    else:
+        confidence = round(float(confidence), 2)
+
+    conclusive = outcome in {"dangerous", "suspicious", "no_obvious_behavior"}
+    safety_claim = (
+        "no_obvious_behavior_only"
+        if outcome == "no_obvious_behavior"
+        else "not_established"
+        if outcome in {"failed", "inconclusive", "pending"}
+        else "not_applicable"
+    )
+    return {
+        "schemaVersion": "1",
+        "outcome": outcome,
+        "verdict": verdict,
+        "riskScore": risk_score,
+        "confidence": confidence,
+        "confidenceBasis": "telemetry_coverage" if confidence is not None else None,
+        "isConclusive": conclusive,
+        "safetyClaim": safety_claim,
+        "evidenceChannels": channel_output,
+        "missingChannels": sorted(missing_channels),
+        "riskSignals": metadata.get("risk_signals", []),
+        "recommendedAction": _recommended_sandbox_action(outcome),
+        "cleanup": {
+            "state": cleanup_state,
+            "vmDestroyed": cleanup_state == "complete",
+            "remoteAccessRevoked": row.mode == "auto" or row.status != "ready",
+        },
+    }
+
+
 def session_dict(row: CloudSandboxSession) -> dict:
     now = utcnow()
     deadline = effective_session_deadline(row)
@@ -501,6 +754,7 @@ def session_dict(row: CloudSandboxSession) -> dict:
 
     report = dict(row.sample_report or {})
     report["mode"] = row.mode
+    analysis = sandbox_analysis_output(row, report, cleanup_state=cleanup_state)
     return {
         "id": row.id,
         "tier": row.sandbox_tier,
@@ -529,6 +783,7 @@ def session_dict(row: CloudSandboxSession) -> dict:
             "status": row.sample_status,
             "phase": row.sample_status,
             "report": report,
+            "analysis": analysis,
         },
     }
 
@@ -704,6 +959,75 @@ async def cleanup_session_by_id(session_id: str) -> None:
             terminal_status=terminal_status,
             reason=row.termination_reason or "cleanup_reconciliation",
         )
+
+
+async def reconcile_cloud_sandbox_sessions_after_restart(
+    *,
+    provisioning_grace_seconds: int = RESTART_PROVISIONING_GRACE_SECONDS,
+) -> dict[str, int]:
+    """Recover lifecycle work lost with the previous API process.
+
+    A short grace avoids cancelling a provision call owned by another healthy
+    API worker. Cleanup claims left in ``terminating`` are safe to reopen
+    immediately here because this function is only invoked for process startup.
+    """
+
+    from backend.db import SessionLocal
+
+    counters = {
+        "provisioningRecovered": 0,
+        "cleanupRecovered": 0,
+        "expiredRecovered": 0,
+    }
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(CloudSandboxSession).where(
+                CloudSandboxSession.status.in_(ACTIVE_SESSION_STATES)
+            )
+        ).scalars().all()
+        provisioning_ids = [row.id for row in rows if row.status == "provisioning"]
+        cleanup_ids: set[str] = set()
+        for row in rows:
+            if row.status == "terminating":
+                row.status = "termination_requested"
+                row.termination_reason = row.termination_reason or "restart_recovery"
+                row.termination_requested_at = row.termination_requested_at or utcnow()
+                invalidate_remote_access(row)
+                cleanup_ids.add(row.id)
+                counters["cleanupRecovered"] += 1
+            elif row.status in {"termination_requested", "cleanup_failed"}:
+                cleanup_ids.add(row.id)
+                counters["cleanupRecovered"] += 1
+            elif row.status == "ready" and session_has_expired(row):
+                request_session_cleanup(db, row, reason="lease_expired")
+                cleanup_ids.add(row.id)
+                counters["expiredRecovered"] += 1
+        db.commit()
+
+    if provisioning_ids and provisioning_grace_seconds > 0:
+        await asyncio.sleep(min(max(provisioning_grace_seconds, 0), 60))
+
+    if provisioning_ids:
+        with SessionLocal() as db:
+            for session_id in provisioning_ids:
+                row = db.get(CloudSandboxSession, session_id)
+                if row is None or row.status != "provisioning":
+                    continue
+                request_session_cleanup(
+                    db,
+                    row,
+                    reason="provisioning_interrupted",
+                    refund_if_provisioning=True,
+                )
+                cleanup_ids.add(row.id)
+                counters["provisioningRecovered"] += 1
+            db.commit()
+
+    if cleanup_ids:
+        await asyncio.gather(
+            *(cleanup_session_by_id(session_id) for session_id in sorted(cleanup_ids))
+        )
+    return counters
 
 
 def schedule_session_cleanup(

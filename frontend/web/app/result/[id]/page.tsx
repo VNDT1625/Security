@@ -320,7 +320,9 @@ function ResultContent() {
       : "không tải nội dung website"}`;
   const dangerousCriteria = result?.dangerous_criteria ?? [];
   const accessAnalysis = result?.access_analysis;
-  const warningRequired = result?.warning_required === true || score >= 60;
+  const warningRequired = result?.warning_required === true
+    || ["WARN", "ASK_USER_CONFIRMATION", "BLOCK", "require_review", "soft_block", "hard_block"]
+      .includes(risk.decision || "");
   const contextAI = result?.contextual_analysis;
   const cacheHit = result?.cache_hit === true || result?.cache_status === "hit";
   const rescanHref = record?.content ? `/analyze?signal=${encodeURIComponent(record.content)}&force_rescan=1` : "/analyze";

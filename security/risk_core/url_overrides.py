@@ -112,4 +112,18 @@ URL_OVERRIDE_RULES = (
         "hard_block",
         "PhishTank returned a verified and currently valid phishing match.",
     ),
+    # The URL classifier alone may raise a warning but must never block. The floor
+    # sits at the WARN boundary (20) rather than in the blocking bands, mirroring
+    # how the message core lets a model-only signal warn without blocking. The
+    # 0.98 confidence bar that produces this finding was chosen from a threshold
+    # sweep on the frozen holdout, where it yields precision 0.8511 at a 4.20%
+    # false-positive rate.
+    OverrideRule(
+        "url-model-high-confidence-v1",
+        frozenset({"model_high_confidence_phishing"}),
+        20.0,
+        "warn",
+        "The URL classifier is highly confident this is a phishing page, without "
+        "corroborating deterministic evidence. Warn the user; never block on this alone.",
+    ),
 )

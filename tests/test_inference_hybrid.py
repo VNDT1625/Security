@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from ai.inference.engine import InferenceEngine
+from security.text_risk_core import MODEL_ONLY_CEILING
+from shared.constants import RISK_THRESHOLD_BLOCK
 
 
 class _Input:
@@ -34,10 +36,17 @@ class _Tokenizer:
         }
 
 
-def test_hybrid_score_uses_all_available_components(tmp_path):
+def test_hybrid_score_blends_models_and_floors_on_rules(tmp_path):
     engine = InferenceEngine(model_dir=str(tmp_path))
 
-    assert engine._hybrid_score(0.9, 0.6, 0.2) == pytest.approx(0.77)
+    # Trained models are averaged by weight; the rule heuristic is not a peer.
+    assert engine._hybrid_score(0.9, 0.6, 0.2) == pytest.approx((0.9 * 0.7 + 0.6 * 0.2) / 0.9)
+    # With the transformer absent the lightweight model keeps its full say
+    # instead of being diluted by a near-zero keyword baseline.
+    assert engine._hybrid_score(None, 0.7, 0.05) == pytest.approx(0.7)
+    # Rules may still raise the score above what the models produced.
+    assert engine._hybrid_score(None, 0.1, 0.8) == pytest.approx(0.8)
+    # With no model loaded the heuristic is all there is.
     assert engine._hybrid_score(None, None, 0.8) == pytest.approx(0.8)
 
 
@@ -102,9 +111,11 @@ def test_text_transformer_branch_is_executed_but_cannot_block_alone(tmp_path):
 
     result = engine.predict_text("Please verify this account request")
 
-    # A model-only verdict is bounded by the message policy. Independent sender,
-    # URL, attachment or scam-combination evidence is required for a high score.
-    assert result.risk_score <= 0.25
+    # A model-only verdict is bounded by the message policy: it may warn, but
+    # independent sender, URL, attachment or scam-combination evidence is
+    # required before the message can reach the BLOCK band.
+    assert result.risk_score == pytest.approx(MODEL_ONLY_CEILING)
+    assert result.risk_score < RISK_THRESHOLD_BLOCK
     assert result.model_version == "hybrid-text[transformer+rules]"
     assert any(item.source == "text_transformer" for item in result.evidence)
     assert session.last_feed["token_type_ids"].tolist() == [[0, 0, 0]]

@@ -15,9 +15,8 @@
  *   latency_ms, risk_score(0..1), request_id } → AssessResult{ score(0..100),
  *   riskLevel, confidence, reasons, evidence, ... }.
  *
- * Nguyên tắc nhất quán: `riskLevel` LUÔN được tính lại từ `score` bằng
- * `getRiskLevel(score).key` (nguồn duy nhất), bất kể backend trả `risk_level`
- * dạng gì — bảo đảm bất biến `riskLevel === getRiskLevel(score).key`.
+ * Nguyên tắc nhất quán: giao diện dùng `decision` do máy chủ trả về.
+ * Chỉ dữ liệu cũ không có quyết định mới được suy mức hiển thị từ điểm.
  *
  * _Requirements: 16.2, 16.3_
  */
@@ -27,7 +26,7 @@ import {
     fetchWithAnonymousSessionFallback,
     readStoredAccessToken,
 } from "@/lib/auth-session";
-import { getRiskLevel } from "@/lib/risk";
+import { getRiskLevelForDecision } from "@/lib/risk";
 import type {
     ApiKeyInfo,
     AssessMetadata,
@@ -135,6 +134,7 @@ interface BackendAssessResponse {
     risk_score?: number;
     /** Mức rủi ro 5 bậc (design.md §7). */
     risk_level?: BackendRiskLevel | string;
+    decision?: string;
     confidence?: number;
     reasons?: string[];
     evidence?: BackendEvidence[];
@@ -215,8 +215,7 @@ function clamp(value: number, min: number, max: number): number {
  * Ánh xạ phản hồi backend → `AssessResult` của frontend.
  *
  * - `score`: ưu tiên `risk_score`(0..1)×100; nếu thiếu, suy ra từ `risk_level`.
- * - `riskLevel`: LUÔN tính lại bằng `getRiskLevel(score).key` để giữ bất biến
- *   `riskLevel === getRiskLevel(score).key`.
+ * - `riskLevel`: lấy từ quyết định máy chủ; chỉ suy từ điểm cho dữ liệu cũ.
  * - `confidence`: kẹp về [0,1].
  */
 function mapAssessResponse(
@@ -229,7 +228,7 @@ function mapAssessResponse(
             : scoreFromRiskLevel(raw.risk_level);
 
     const score = clamp(Math.round(rawScore), 0, 100);
-    const riskLevel = getRiskLevel(score).key;
+    const riskLevel = getRiskLevelForDecision(raw.decision, score).key;
 
     const confidence =
         typeof raw.confidence === "number" && Number.isFinite(raw.confidence)
@@ -239,6 +238,7 @@ function mapAssessResponse(
     const result: AssessResult = {
         score,
         riskLevel,
+        decision: raw.decision,
         confidence,
         reasons: Array.isArray(raw.reasons) ? raw.reasons : [],
         evidence: Array.isArray(raw.evidence) ? raw.evidence.map(mapEvidence) : [],

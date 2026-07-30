@@ -230,6 +230,40 @@ function Get-DegradedTelemetrySummary {
   return ($names -join ',')
 }
 
+function Get-AnalysisMetadata([object] $assessment, [object] $executionResult) {
+  $available = New-Object System.Collections.ArrayList
+  $missing = New-Object System.Collections.ArrayList
+  $channelMap = [ordered]@{
+    processes = 'process'
+    files = 'file'
+    registry = 'registry'
+    network = 'network'
+  }
+  foreach ($entry in $channelMap.GetEnumerator()) {
+    if ([bool]$script:telemetryHealth[$entry.Key]) {
+      [void]$available.Add([string]$entry.Value)
+    } else {
+      [void]$missing.Add([string]$entry.Value)
+    }
+  }
+  $confidence = [Math]::Round(($available.Count / [double]$channelMap.Count), 2)
+  $signalIds = @()
+  if ($null -ne $assessment -and $null -ne $assessment.signal_ids) {
+    $signalIds = @($assessment.signal_ids)
+  }
+  return [ordered]@{
+    risk_score = if ($null -ne $assessment) { $assessment.risk_score } else { $null }
+    confidence = $confidence
+    evidence_channels = @($available.ToArray())
+    missing_channels = @($missing.ToArray())
+    risk_signals = @($signalIds)
+    execution_observed = if ($null -ne $executionResult) { [bool]$executionResult.execution_observed } else { $false }
+    execution_failed = if ($null -ne $executionResult) { [bool]$executionResult.execution_failed } else { $true }
+    timed_out = if ($null -ne $executionResult) { [bool]$executionResult.timed_out } else { $false }
+    root_exit_code = if ($null -ne $executionResult) { $executionResult.root_exit_code } else { $null }
+  }
+}
+
 function Get-RiskAssessment([bool] $executionObserved, [bool] $timedOut, [bool] $executionFailed) {
   $score = 0
   $signalIds = New-Object System.Collections.ArrayList
@@ -260,6 +294,7 @@ function Get-RiskAssessment([bool] $executionObserved, [bool] $timedOut, [bool] 
     verdict = $verdict
     risk_score = $score
     signals = if ($signalIds.Count -eq 0) { 'none' } else { $signalIds -join ',' }
+    signal_ids = @($signalIds.ToArray())
   }
 }
 
@@ -306,7 +341,7 @@ function Send-ProgressReport([string] $status, [string] $verdict, [string] $summ
   [void](Submit-ReportBody $body $false)
 }
 
-function Send-FinalReport([string] $status, [string] $verdict, [string] $summary) {
+function Send-FinalReport([string] $status, [string] $verdict, [string] $summary, [object] $analysis) {
   $body = @{
     status = $status
     verdict = $verdict
@@ -315,6 +350,7 @@ function Send-FinalReport([string] $status, [string] $verdict, [string] $summary
     file_events = Limit-ReportArray @($script:fileEvents.ToArray()) $maxFileEvents
     registry_events = Limit-ReportArray @($script:registryEvents.ToArray()) $maxRegistryEvents
     network_events = Limit-ReportArray @($script:networkEvents.ToArray()) $maxNetworkEvents
+    analysis = $analysis
   }
   [void](Submit-ReportBody $body $true)
 }
@@ -1295,14 +1331,15 @@ try {
   $leaseSummary = if ($analysisMode -eq 'interactive') { "lease_seconds_at_delivery=$($executionResult.lease_seconds_at_delivery); finalization_margin_seconds=$($executionResult.finalization_margin_seconds); " } else { '' }
   $summary = "mode=$analysisMode; ${leaseSummary}risk_score=$($assessment.risk_score); signals=$($assessment.signals); execution_observed=$($executionResult.execution_observed); timed_out=$($executionResult.timed_out); telemetry_degraded=$(Get-DegradedTelemetrySummary); process_count=$($script:processRecords.Count); file_event_count=$($script:fileEvents.Count); registry_event_count=$($script:registryEvents.Count); network_event_count=$($script:networkEvents.Count); truncated=$(Get-TruncationSummary); phases=$(Get-PhaseSummary)"
   $finalReportAttempted = $true
-  Send-FinalReport 'completed' $assessment.verdict $summary
+  $analysisMetadata = Get-AnalysisMetadata $assessment $executionResult
+  Send-FinalReport 'completed' $assessment.verdict $summary $analysisMetadata
 } catch {
   Set-AnalysisPhase 'failed'
   Stop-ObservedProcesses
   $errorCode = Get-SafeExceptionCode $_.Exception
   $summary = "mode=$analysisMode; error_code=$errorCode; process_count=$($script:processRecords.Count); file_event_count=$($script:fileEvents.Count); registry_event_count=$($script:registryEvents.Count); network_event_count=$($script:networkEvents.Count); truncated=$(Get-TruncationSummary); phases=$(Get-PhaseSummary)"
   if (!$finalReportAttempted) {
-    try { Send-FinalReport 'failed' 'analysis_failed' $summary } catch { }
+    try { Send-FinalReport 'failed' 'analysis_failed' $summary (Get-AnalysisMetadata $null $null) } catch { }
   }
 } finally {
   Set-AnalysisPhase 'cleanup'

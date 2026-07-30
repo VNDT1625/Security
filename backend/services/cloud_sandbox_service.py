@@ -537,6 +537,7 @@ class CloudSandboxService:
                     "ResourceType": "instance",
                     "Tags": [
                         {"Key": "Name", "Value": f"prewise-sandbox-{session_id[:8]}"},
+                        {"Key": "ManagedBy", "Value": "PrewiseSandbox"},
                         {"Key": "PrewiseSession", "Value": session_id},
                         {"Key": "PrewiseUser", "Value": user_id},
                         {"Key": "SandboxTier", "Value": tier},

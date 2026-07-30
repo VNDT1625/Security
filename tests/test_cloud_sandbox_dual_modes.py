@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from backend.config import settings
 from backend.db import SessionLocal
 from backend.main import app
-from backend.models import CloudSandboxSession
+from backend.models import CloudSandboxSession, SandboxWallet, Subscription
 from backend.routers import sandbox_cloud
 from backend.security_utils import utcnow
 
@@ -296,6 +296,50 @@ def test_paid_lease_clock_starts_only_after_provider_readiness(monkeypatch) -> N
         assert int((current.lease_expires_at - current.ready_at).total_seconds()) == 300
         assert current.expires_at == current.lease_expires_at
         assert current.remote_url == "https://broker.example.test/connect/ready-clock"
+
+
+def test_interactive_session_creation_fails_closed_before_credit_charge(
+    monkeypatch,
+) -> None:
+    user_id, auth_token = _register("Interactive unavailable")
+    with SessionLocal() as db:
+        db.add(Subscription(user_id=user_id, plan_tier="pro", status="active"))
+        db.add(SandboxWallet(user_id=user_id, credits=2))
+        db.commit()
+
+    def unavailable(_tier: str, mode: str) -> dict:
+        assert mode == "interactive"
+        return {
+            "available": False,
+            "reason": "missing_configuration",
+            "missing": ["ami", "security_group", "broker_health"],
+        }
+
+    monkeypatch.setattr(
+        sandbox_cloud.cloud_sandbox_service,
+        "availability",
+        unavailable,
+    )
+    monkeypatch.setattr(
+        sandbox_cloud.cloud_sandbox_service,
+        "provision",
+        lambda *_args: pytest.fail("unavailable interactive mode must not launch AWS"),
+    )
+
+    response = client.post(
+        "/v1/sandbox-cloud/sessions",
+        headers=_headers(auth_token),
+        json={"tier": "pro", "mode": "interactive", "leaseMinutes": 5},
+    )
+
+    assert response.status_code == 503
+    assert "chưa được cấu hình" in response.json()["detail"]
+    with SessionLocal() as db:
+        wallet = db.get(SandboxWallet, user_id)
+        sessions = db.query(CloudSandboxSession).filter_by(user_id=user_id).all()
+        assert wallet is not None
+        assert wallet.credits == 2
+        assert sessions == []
 
 
 def test_failed_termination_revokes_remote_access_and_stays_fail_visible(

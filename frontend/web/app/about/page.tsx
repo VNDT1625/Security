@@ -7,7 +7,7 @@ import type { Metadata } from "next";
  * bằng tiếng Việt, khớp wireframe §1.4:
  *   - Hero/intro "Vì sao chúng tôi xây sản phẩm này"
  *   - Threat model (Attacker → Email/URL → Người & AI Agent) minh họa bằng JSX/CSS
- *   - Đội ngũ (thẻ thành viên placeholder)
+ *   - Đội ngũ (đội Prenium; vai trò, không hiển thị tên cá nhân)
  *   - Công nghệ (chips) + nút "Đọc tài liệu kỹ thuật"
  */
 
@@ -17,17 +17,15 @@ export const metadata: Metadata = {
         "Vì sao chúng tôi xây Prewise: khi phishing không chỉ nhắm vào con người mà còn nhắm vào AI agent. Prompt injection chính là phishing dành cho AI.",
 };
 
-interface TeamMember {
-    name: string;
-    role: string;
-    initials: string;
-}
+const TEAM_NAME = "Prenium";
 
-const TEAM: TeamMember[] = [
-    { name: "Nguyễn Minh An", role: "Trưởng nhóm & Kiến trúc ML", initials: "MA" },
-    { name: "Trần Thu Hà", role: "Kỹ sư Bảo mật AI", initials: "TH" },
-    { name: "Lê Quốc Bảo", role: "Kỹ sư Frontend", initials: "QB" },
-    { name: "Phạm Gia Linh", role: "Nghiên cứu NLP tiếng Việt", initials: "GL" },
+// Mảng vai trò, không phải tên người: trang công khai không nên hiển thị tên
+// thành viên chưa được xác nhận. Thêm tên thật vào đây khi đã có sự đồng ý.
+const TEAM_ROLES: string[] = [
+    "Kiến trúc & Mô hình học máy",
+    "Bảo mật AI & Risk Core",
+    "Sản phẩm & Giao diện",
+    "Nghiên cứu ngôn ngữ tiếng Việt",
 ];
 
 const TECH_STACK: string[] = [
@@ -146,25 +144,28 @@ export default function AboutPage() {
             {/* Đội ngũ */}
             <section className="mt-14 sm:mt-20">
                 <h2 className="text-center text-2xl font-bold tracking-tight text-neutral-900">
-                    Đội ngũ
+                    Đội {TEAM_NAME}
                 </h2>
+                <p className="mx-auto mt-3 max-w-xl text-center text-sm text-neutral-500">
+                    Prewise được xây dựng bởi đội {TEAM_NAME}.
+                </p>
                 <div className="mt-8 grid grid-cols-1 gap-4 sm:mt-10 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
-                    {TEAM.map((member) => (
+                    {TEAM_ROLES.map((role) => (
                         <div
-                            key={member.name}
+                            key={role}
                             className="flex flex-col items-center rounded-xl border border-neutral-200 bg-white p-5 text-center shadow-sm sm:p-6"
                         >
                             <div
                                 className="flex h-16 w-16 items-center justify-center rounded-full bg-neutral-100 text-xl font-semibold text-neutral-600"
                                 aria-hidden="true"
                             >
-                                {member.initials}
+                                {TEAM_NAME.slice(0, 2).toUpperCase()}
                             </div>
                             <p className="mt-4 font-semibold text-neutral-900">
-                                {member.name}
+                                {TEAM_NAME}
                             </p>
                             <p className="mt-1 text-sm text-neutral-500">
-                                {member.role}
+                                {role}
                             </p>
                         </div>
                     ))}

@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     threat_feed_scheduler_interval_minutes: int = 60
     threat_feed_request_timeout_seconds: float = 45.0
     threat_feed_max_download_bytes: int = 64 * 1024 * 1024
+    # Compressed feeds are expanded incrementally and aborted past this size.
+    # Without it a 64 MiB gzip of zero bytes expands to tens of gigabytes and
+    # OOM-kills the process the API shares with the sync scheduler.
+    threat_feed_max_decompressed_bytes: int = 512 * 1024 * 1024
     threat_feed_max_records_per_source: int = 250_000
     threat_feed_retention_days: int = 30
     threat_feed_user_agent: str = "AI-Security-Armor/0.2 threat-feed-collector"
@@ -205,6 +209,11 @@ class Settings(BaseSettings):
     release_email_max_attempts: int = 3
     release_unsubscribe_base_url: str = "https://api.prewise.site/v1/waitlist/unsubscribe"
     password_reset_web_url: str = "https://www.prewise.site/auth"
+    # Returning the reset token in the HTTP response turns an unauthenticated
+    # endpoint into account takeover, so it is opt-in by an explicit flag rather
+    # than implied by APP_ENV. A deployment that forgets to set APP_ENV=production
+    # must still refuse to echo the token.
+    expose_password_reset_token: bool = False
 
     # Disposable Windows EC2.  The legacy security group is intentionally the
     # agent-only/no-inbound group used by automatic detonation.  Interactive
@@ -257,6 +266,11 @@ class Settings(BaseSettings):
     mcp_allow_anonymous: bool = False
     mcp_api_key_rate_limit_per_min: int = 120
     mcp_anonymous_rate_limit_per_min: int = 10
+    # Unauthenticated OAuth endpoints (/register, /authorize, /token, /revoke,
+    # /oauth/consent). Generous enough for a real client's login dance, low
+    # enough that the consent form cannot be used as an API-key testing oracle.
+    mcp_public_endpoint_rate_limit_per_min: int = 20
+    mcp_webhook_rate_limit_per_min: int = 60
     mcp_public_url: str = "https://api.prewise.site"
     mcp_allowed_hosts: str = ""
     mcp_allowed_origins: str = ""

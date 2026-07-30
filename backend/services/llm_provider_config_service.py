@@ -15,9 +15,11 @@ from sqlalchemy.orm import Session as DbSession
 
 from backend.config import _is_https_or_loopback, settings
 from backend.models import LLMProviderSetting, UserLLMProviderSetting
+from shared.net_guard import SSRFBlocked, is_loopback_target, reject_private_target
 
 LLMProvider = Literal["auto", "adapter", "local", "endpoint"]
 ALL_LLM_PROVIDERS: tuple[LLMProvider, ...] = ("auto", "adapter", "local", "endpoint")
+USER_LLM_PROVIDERS: tuple[LLMProvider, ...] = ("adapter", "local", "endpoint")
 
 
 @dataclass(frozen=True)
@@ -78,8 +80,30 @@ def normalize_provider_url(value: str, *, provider: LLMProvider) -> str:
         or not _is_https_or_loopback(raw)
     ):
         raise ValueError("Endpoint phải dùng HTTPS; HTTP chỉ được phép với localhost/127.0.0.1.")
+    # Scheme validation alone is not an SSRF control: "https://10.0.0.5:6379" and
+    # "https://metadata.internal" both pass it. Resolve the host and require it to
+    # be either wholly loopback (a genuine local model server) or wholly public.
+    if not is_loopback_target(raw):
+        try:
+            reject_private_target(raw)
+        except SSRFBlocked as exc:
+            raise ValueError(
+                "Endpoint phải là địa chỉ công cộng hoặc localhost. "
+                "Không thể trỏ tới mạng nội bộ."
+            ) from exc
     path = parsed.path.rstrip("/")
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def target_keeps_data_local(base_url: str) -> bool:
+    """Whether scanned user content may be sent to this endpoint.
+
+    ``provider == "local"`` is a self-declared label, not a property of the URL,
+    so the data-minimisation decision is made from where the traffic actually
+    goes. Only a host that resolves entirely to loopback keeps user content on
+    this machine.
+    """
+    return bool(base_url) and is_loopback_target(base_url)
 
 
 def environment_llm_config() -> RuntimeLLMConfig:
@@ -142,10 +166,10 @@ def get_runtime_llm_config(
 
 def get_user_llm_policy(db: DbSession) -> dict[str, list[str]]:
     record = db.get(LLMProviderSetting, "default")
-    providers = list(record.allowed_user_providers or []) if record else list(ALL_LLM_PROVIDERS)
-    providers = [item for item in providers if item in ALL_LLM_PROVIDERS]
-    if "auto" not in providers:
-        providers.insert(0, "auto")
+    providers = list(record.allowed_user_providers or []) if record else list(USER_LLM_PROVIDERS)
+    # "auto" is an internal fallback/reset mechanism, not a user-selectable
+    # model mode. Admins may expose only providers implemented by the backend.
+    providers = [item for item in providers if item in USER_LLM_PROVIDERS]
     models = list(record.allowed_user_models or []) if record else []
     return {
         "allowedProviders": list(dict.fromkeys(providers)),
@@ -175,18 +199,18 @@ def save_user_llm_config(
     clear_api_key: bool,
     commit: bool = True,
 ) -> RuntimeLLMConfig:
-    validate_user_llm_choice(db, provider=provider, model=model)
-    normalized_url = normalize_provider_url(base_url, provider=provider)
-    normalized_model = model.strip()
-    if provider in {"endpoint", "local"} and not normalized_model:
-        raise ValueError("Hãy nhập model ID chính xác của endpoint.")
     record = db.get(UserLLMProviderSetting, user_id)
-    if provider == "auto" and not normalized_url and not normalized_model and not api_key:
+    if provider == "auto" and not base_url.strip() and not model.strip() and not api_key:
         if record is not None:
             db.delete(record)
             if commit:
                 db.commit()
         return get_runtime_llm_config(db)
+    validate_user_llm_choice(db, provider=provider, model=model)
+    normalized_url = normalize_provider_url(base_url, provider=provider)
+    normalized_model = model.strip()
+    if provider in {"endpoint", "local"} and not normalized_model:
+        raise ValueError("Hãy nhập model ID chính xác của endpoint.")
     current_key = _decrypt(record.api_key_ciphertext) if record else ""
     next_key = "" if clear_api_key else api_key.strip() if api_key is not None else current_key
     if provider == "endpoint" and not next_key:
@@ -226,13 +250,30 @@ def save_runtime_llm_config(
     allowed_user_providers: list[str] | None = None,
     allowed_user_models: list[str] | None = None,
 ) -> RuntimeLLMConfig:
+    normalized_user_providers: list[str] | None = None
+    if allowed_user_providers is not None:
+        normalized_user_providers = list(
+            dict.fromkeys(item.strip() for item in allowed_user_providers)
+        )
+        if any(item not in USER_LLM_PROVIDERS for item in normalized_user_providers):
+            raise ValueError("Danh sách provider cá nhân không hợp lệ.")
+    normalized_user_models = (
+        list(dict.fromkeys(item.strip() for item in allowed_user_models if item.strip()))
+        if allowed_user_models is not None
+        else None
+    )
     normalized_url = normalize_provider_url(base_url, provider=provider)
     normalized_model = model.strip()
     if provider in {"endpoint", "local"} and not normalized_model:
         raise ValueError("Hãy nhập model ID chính xác của endpoint.")
     record = db.get(LLMProviderSetting, "default")
-    current_key = _decrypt(record.api_key_ciphertext) if record else ""
-    next_key = "" if clear_api_key else api_key.strip() if api_key is not None else current_key
+    if record:
+        current_key = _decrypt(record.api_key_ciphertext)
+    else:
+        environment_config = environment_llm_config()
+        current_key = environment_config.api_key if environment_config.provider == provider else ""
+    submitted_key = api_key.strip() if api_key is not None else ""
+    next_key = "" if clear_api_key else submitted_key or current_key
     if provider == "endpoint" and not next_key:
         raise ValueError("Chế độ API endpoint yêu cầu API key.")
     if provider == "local":
@@ -244,17 +285,10 @@ def save_runtime_llm_config(
     record.base_url = normalized_url
     record.model = normalized_model
     record.api_key_ciphertext = _encrypt(next_key)
-    if allowed_user_providers is not None:
-        normalized_providers = list(dict.fromkeys(item.strip() for item in allowed_user_providers))
-        if any(item not in ALL_LLM_PROVIDERS for item in normalized_providers):
-            raise ValueError("Danh sách provider cá nhân không hợp lệ.")
-        if "auto" not in normalized_providers:
-            normalized_providers.insert(0, "auto")
-        record.allowed_user_providers = normalized_providers
-    if allowed_user_models is not None:
-        record.allowed_user_models = list(
-            dict.fromkeys(item.strip() for item in allowed_user_models if item.strip())
-        )
+    if normalized_user_providers is not None:
+        record.allowed_user_providers = normalized_user_providers
+    if normalized_user_models is not None:
+        record.allowed_user_models = normalized_user_models
     record.updated_by_user_id = updated_by_user_id
     db.commit()
     db.refresh(record)

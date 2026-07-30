@@ -21,7 +21,20 @@ import os
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
-from ai.adapters.url_adapter import CONTEXT_FEATURE_NAMES, STATIC_FEATURE_NAMES
+from ai.adapters.url_adapter import (
+    CONTEXT_FEATURE_NAMES,
+    STATIC_FEATURE_NAMES,
+    parse_url_parts,
+)
+
+
+def _registrable_domain(url: str) -> str:
+    """Group key for the split. Unparseable rows form their own group."""
+    candidate = url if "://" in url else f"http://{url}"
+    try:
+        return parse_url_parts(candidate).registrable_domain.lower() or url.lower()
+    except Exception:
+        return url.lower()
 
 
 def select_trained_feature_names(
@@ -59,7 +72,7 @@ def main() -> None:  # pragma: no cover - offline training job
     from onnxmltools import convert_lightgbm
     from onnxmltools.convert.common.data_types import FloatTensorType
     from sklearn.metrics import classification_report, f1_score
-    from sklearn.model_selection import train_test_split
+    from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
     from ai.adapters.url_adapter import extract_url_features
 
@@ -77,6 +90,17 @@ def main() -> None:  # pragma: no cover - offline training job
         "--require-context-features",
         action="store_true",
         help="Fail instead of producing a static-only model when no context feature qualifies",
+    )
+    parser.add_argument(
+        "--split",
+        choices=("domain", "random"),
+        default="domain",
+        help=(
+            "How to build the held-out split. 'domain' (default) keeps every URL of a "
+            "registrable domain on one side, which is the only setting that measures "
+            "generalisation to unseen domains. 'random' reproduces the historical "
+            "leaky split and is kept only for before/after comparison."
+        ),
     )
     args = parser.parse_args()
 
@@ -124,8 +148,37 @@ def main() -> None:  # pragma: no cover - offline training job
     y = [label for _, label, _ in rows]
     X = np.array(X, dtype=np.float32)
     y = np.array(y)
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=args.test_size, random_state=42,
-                                          stratify=y)
+
+    # A random row split leaks: this corpus holds ~1.8 URLs per registrable
+    # domain and 53% of rows sit on a domain that appears more than once, so a
+    # random 80/20 puts the *same* domain on both sides for about half the test
+    # set. The model then scores well by memorising domains rather than learning
+    # phishing structure, which is why the historical 0.8375 accuracy collapsed
+    # to 0.4237 on a domain-disjoint holdout. Grouping by registrable domain is
+    # the only split that answers the question deployment actually asks: is this
+    # brand-new domain, registered an hour ago, a phishing site?
+    if args.split == "domain":
+        groups = np.array([_registrable_domain(url) for url, _, _ in rows])
+        splitter = GroupShuffleSplit(
+            n_splits=1, test_size=args.test_size, random_state=42
+        )
+        train_index, test_index = next(splitter.split(X, y, groups=groups))
+        Xtr, Xte = X[train_index], X[test_index]
+        ytr, yte = y[train_index], y[test_index]
+        overlap = set(groups[train_index]) & set(groups[test_index])
+        if overlap:
+            raise RuntimeError(
+                f"domain split leaked {len(overlap)} registrable domains into both sides"
+            )
+        print(
+            f"[split] domain-grouped: {len(set(groups[train_index]))} train domains, "
+            f"{len(set(groups[test_index]))} test domains, 0 shared"
+        )
+    else:
+        Xtr, Xte, ytr, yte = train_test_split(
+            X, y, test_size=args.test_size, random_state=42, stratify=y
+        )
+        print("[split] RANDOM row split - leaky, for comparison only")
 
     model = lgb.LGBMClassifier(
         n_estimators=300, num_leaves=48, learning_rate=0.05,
@@ -161,6 +214,12 @@ def main() -> None:  # pragma: no cover - offline training job
             "skipped_rows": int(skipped_rows),
             "class_counts": {str(label): int(label_counts[label]) for label in (0, 1)},
             "test_size": args.test_size,
+            "split": args.split,
+            "split_note": (
+                "domain-grouped: no registrable domain appears on both sides"
+                if args.split == "domain"
+                else "random row split - leaks domains across sides"
+            ),
             "train_rows": int(len(ytr)),
             "test_rows": int(len(yte)),
         },

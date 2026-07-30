@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Annotated, Any, Literal, NoReturn
@@ -48,6 +49,7 @@ from backend.services.llm_provider_config_service import (
     test_runtime_llm_config,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1", tags=["auth"])
 bearer_scheme = HTTPBearer(auto_error=False)
 BearerCredentials = Annotated[
@@ -738,17 +740,23 @@ def forgot_password(payload: PasswordResetRequest, db: DbSession = Depends(get_d
     token = create_session_token()
     db.add(PasswordResetToken(user_id=user.id, token_hash=session_key(token), expires_at=now + timedelta(minutes=30)))
     db.commit()
-    # Development exposes the token so the local UI can complete the flow without an email provider.
-    if settings.app_env != "production":
+    # Echoing the token is account takeover for anyone who knows an email address,
+    # so it requires an explicit opt-in flag and is refused outright in production.
+    if settings.expose_password_reset_token and settings.app_env != "production":
         response["resetToken"] = token
     else:
         from backend.services.release_email_service import send_password_reset_email
 
         query = urlencode({"mode": "reset", "token": token})
-        send_password_reset_email(
-            recipient=user.email,
-            reset_url=f"{settings.password_reset_web_url}?{query}",
-        )
+        try:
+            send_password_reset_email(
+                recipient=user.email,
+                reset_url=f"{settings.password_reset_web_url}?{query}",
+            )
+        except Exception:
+            # Never let delivery failure reveal whether the address exists. The
+            # token stays valid so a retry after fixing SMTP still works.
+            logger.warning("password reset email delivery failed", exc_info=True)
     return response
 
 

@@ -8,7 +8,19 @@ export const RISK_LEVELS = {
 };
 
 /** Map a 0..100 score to a risk level (clamps out-of-range for safety). */
-export function getRiskLevel(score) {
+export function getRiskLevel(score, decision = "") {
+    const policy = String(decision || "").toUpperCase();
+    if (policy === "BLOCK" || policy === "SOFT_BLOCK" || policy === "HARD_BLOCK") {
+        return RISK_LEVELS.danger;
+    }
+    if (
+        policy === "WARN"
+        || policy === "ASK_USER_CONFIRMATION"
+        || policy === "REQUIRE_REVIEW"
+    ) {
+        return RISK_LEVELS.warn;
+    }
+    if (policy === "ALLOW") return RISK_LEVELS.safe;
     const s = Number.isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
     if (s <= 39) return RISK_LEVELS.safe;
     if (s <= 69) return RISK_LEVELS.warn;

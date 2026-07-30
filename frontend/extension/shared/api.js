@@ -6,18 +6,11 @@ async function request(path,options={},timeoutMs=DEFAULT_TIMEOUT){const base=awa
 const post=(path,body,timeoutMs)=>request(path,{method:"POST",body:JSON.stringify(body)},timeoutMs);
 export const verifyExtensionKey=()=>request("/v1/auth/extension/verify",{method:"GET"});
 export async function assessUrl(url,context=""){
-  const result=await post("/v1/demo/url/analyze",{
-    url,
-    deep_analysis:true,
-    advanced_analysis:false,
-    llm_context:context||undefined,
-    ai_context:"off",
-  },URL_ASSESS_TIMEOUT);
+  const result=await post("/v1/assess/url",{url,context,ai_context:"off"},URL_ASSESS_TIMEOUT);
   const responseScore=Number(result.risk_score||0);
-  const coreFinalScore=Number(result.risk_core?.final_score);
-  const normalizedScore=Number.isFinite(coreFinalScore)
-    ?coreFinalScore/100
-    :result.score_scale==="0..100"||responseScore>1?responseScore/100:responseScore;
+  const normalizedScore=result.score_scale==="0..100"||responseScore>1
+    ?responseScore/100
+    :responseScore;
   const evidence=Array.isArray(result.evidence)?result.evidence:[];
   return {
     ...result,

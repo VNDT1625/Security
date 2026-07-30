@@ -52,6 +52,8 @@ import {
   GmailStatus,
   MailItem,
   SmsAssessment,
+  UserAIProvider,
+  UserAISettings,
   UserSession,
   apiBaseUrl,
   askContext,
@@ -71,15 +73,18 @@ import {
   getGmailMessagePreview,
   getGmailStatus,
   getProfile,
+  getUserAISettings,
   issueCloudRemoteAccess,
   listGmailMessages,
   login,
   logout,
   register,
+  saveUserAISettings,
   setAdminUserStatus,
   setSessionToken,
   stopCloudSandboxSession,
   submitFeedback,
+  testUserAISettings,
   uploadCloudSandboxSample,
 } from "./api";
 import FullAdminConsole from "./AdminConsole";
@@ -2528,9 +2533,45 @@ const defaultPreferences: Preferences = {
   riskNotifications: true,
   rememberLastView: true,
 };
-type SettingsTab = "general" | "protection" | "notifications" | "privacy" | "account";
+type SettingsTab = "ai" | "general" | "protection" | "notifications" | "privacy" | "account";
+type UserAIDraft = {
+  provider: UserAIProvider;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  weightPercent: number;
+};
+const emptyUserAI: UserAISettings = {
+  provider: "auto",
+  baseUrl: "",
+  model: "",
+  apiKeyConfigured: false,
+  configured: false,
+  source: "database",
+  allowedProviders: ["adapter", "local", "endpoint"],
+  allowedModels: [],
+  percent: 0,
+  minPercent: 0,
+  maxPercent: 40,
+  weightPercent: 0,
+  weightEligible: false,
+  weightSource: "global",
+};
+const localCoreAPI = (() => {
+  try {
+    return new Set(["localhost", "127.0.0.1", "::1", "[::1]"]).has(new URL(apiBaseUrl).hostname);
+  } catch {
+    return false;
+  }
+})();
 const SETTINGS_META: Record<SettingsTab, { eyebrow: string; title: string; description: string }> =
   {
+    ai: {
+      eyebrow: "PERSONAL AI",
+      title: "Model và chế độ AI",
+      description:
+        "Dùng cùng cấu hình AI của tài khoản; Local LLM chỉ khả dụng khi Core API chạy trên máy này.",
+    },
     general: {
       eyebrow: "PREFERENCES",
       title: "Thiết lập chung",
@@ -2568,13 +2609,23 @@ function SettingsView({
   onSignOut: () => void;
   onPreferencesChange: (prefs: Preferences) => void;
 }) {
-  const [tab, setTab] = useState<SettingsTab>("general");
+  const [tab, setTab] = useState<SettingsTab>("ai");
   const [prefs, setPrefs] = useState<Preferences>(readPreferences);
   const [notice, setNotice] = useState("");
   const [downloadGuard, setDownloadGuard] = useState(false);
   const [guardReady, setGuardReady] = useState(!window.desktop);
   const [guardBusy, setGuardBusy] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
+  const [ai, setAI] = useState<UserAISettings>(emptyUserAI);
+  const [aiDraft, setAIDraft] = useState<UserAIDraft>({
+    provider: "adapter",
+    baseUrl: "",
+    model: "",
+    apiKey: "",
+    weightPercent: 0,
+  });
+  const [aiBusy, setAIBusy] = useState(true);
+  const [aiNotice, setAINotice] = useState("");
   useEffect(() => {
     if (!window.desktop) return;
     void window.desktop.localSecurity
@@ -2587,6 +2638,46 @@ function SettingsView({
         setNotice("Không thể đọc trạng thái Download Guard.");
         setGuardReady(true);
       });
+  }, []);
+  useEffect(() => {
+    let active = true;
+    setAIBusy(true);
+    void getUserAISettings()
+      .then((value) => {
+        if (!active) return;
+        setAI(value);
+        const available = value.allowedProviders.filter(
+          (provider) => provider !== "local" || localCoreAPI,
+        );
+        const selected =
+          value.source === "account" &&
+          value.provider !== "auto" &&
+          available.includes(value.provider)
+            ? value.provider
+            : available[0] || "adapter";
+        setAIDraft({
+          provider: selected,
+          baseUrl:
+            value.source === "account" && value.provider === selected
+              ? value.baseUrl
+              : selected === "local"
+                ? "http://127.0.0.1:11434/v1"
+                : "",
+          model: value.source === "account" && value.provider === selected ? value.model : "",
+          apiKey: "",
+          weightPercent: value.weightPercent,
+        });
+      })
+      .catch((error) => {
+        if (active)
+          setAINotice(error instanceof Error ? error.message : "Không tải được cài đặt AI.");
+      })
+      .finally(() => {
+        if (active) setAIBusy(false);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
   const update = (patch: Partial<Preferences>) => {
     const next = { ...prefs, ...patch };
@@ -2633,6 +2724,52 @@ function SettingsView({
       setGuardBusy(false);
     }
   }
+  async function savePersonalAI() {
+    if (aiDraft.provider === "local" && !localCoreAPI) {
+      setAINotice(
+        "Local LLM không khả dụng khi Desktop đang kết nối Core API production từ xa.",
+      );
+      return;
+    }
+    setAIBusy(true);
+    setAINotice("");
+    try {
+      const { weightPercent, ...providerDraft } = aiDraft;
+      const value = await saveUserAISettings({
+        ...providerDraft,
+        ...(ai.weightEligible ? { weightPercent } : {}),
+        ...(aiDraft.apiKey ? { apiKey: aiDraft.apiKey } : {}),
+      });
+      setAI(value);
+      setAIDraft((current) => ({ ...current, apiKey: "" }));
+      setAINotice("Đã lưu cấu hình AI cho tài khoản.");
+    } catch (error) {
+      setAINotice(error instanceof Error ? error.message : "Không lưu được cài đặt AI.");
+    } finally {
+      setAIBusy(false);
+    }
+  }
+  async function testPersonalAI() {
+    setAIBusy(true);
+    setAINotice("");
+    try {
+      const value = await testUserAISettings();
+      setAINotice(
+        value.modelAvailable
+          ? `Kết nối model thành công · endpoint có ${value.modelsCount} model.`
+          : "Kết nối được endpoint nhưng không tìm thấy model đã chọn.",
+      );
+    } catch (error) {
+      setAINotice(error instanceof Error ? error.message : "Không kiểm tra được model.");
+    } finally {
+      setAIBusy(false);
+    }
+  }
+  const availableAIProviders = ai.allowedProviders.filter(
+    (provider) => provider !== "local" || localCoreAPI,
+  );
+  const personalAIConfigured =
+    ai.source === "account" && !(ai.provider === "local" && !localCoreAPI);
   const meta = SETTINGS_META[tab];
   return (
     <section className="settings-view">
@@ -2647,6 +2784,13 @@ function SettingsView({
           </div>
         </div>
         <nav aria-label="Danh mục cài đặt">
+          <button className={tab === "ai" ? "active" : ""} onClick={() => setTab("ai")}>
+            <Cpu />
+            <span>
+              <b>Model AI</b>
+              <small>Cấu hình theo tài khoản</small>
+            </span>
+          </button>
           <button className={tab === "general" ? "active" : ""} onClick={() => setTab("general")}>
             <Settings />
             <span>
@@ -2730,6 +2874,191 @@ function SettingsView({
               ×
             </button>
           </div>
+        )}
+        {tab === "ai" && (
+          <>
+            {aiNotice && (
+              <div className="settings-notice" role="status">
+                <Info />
+                {aiNotice}
+                <button aria-label="Đóng thông báo AI" onClick={() => setAINotice("")}>
+                  ×
+                </button>
+              </div>
+            )}
+            <div className="setting-group desktop-ai-settings">
+              <h3>
+                <Cpu />
+                Cấu hình AI cá nhân
+              </h3>
+              {ai.weightEligible && (
+                <label>
+                  <span>
+                    <b>Trọng số AI cá nhân · {aiDraft.weightPercent}%</b>
+                    <small>
+                      Admin cho phép từ {ai.minPercent}% đến {ai.maxPercent}% cho phân tích Pro.
+                    </small>
+                  </span>
+                  <input
+                    aria-label="Trọng số AI cá nhân"
+                    type="range"
+                    min={ai.minPercent}
+                    max={ai.maxPercent}
+                    value={aiDraft.weightPercent}
+                    onChange={(event) =>
+                      setAIDraft({ ...aiDraft, weightPercent: Number(event.target.value) })
+                    }
+                  />
+                </label>
+              )}
+              <label>
+                <span>
+                  <b>Chế độ AI</b>
+                  <small>
+                    {personalAIConfigured ? "Đã cấu hình cho tài khoản" : "Chưa chọn riêng"}
+                  </small>
+                </span>
+                <select
+                  aria-label="Chế độ AI"
+                  value={availableAIProviders.includes(aiDraft.provider) ? aiDraft.provider : ""}
+                  disabled={aiBusy || availableAIProviders.length === 0}
+                  onChange={(event) => {
+                    const provider = event.target.value as UserAIProvider;
+                    setAIDraft(
+                      provider === "adapter"
+                        ? { ...aiDraft, provider, baseUrl: "", model: "", apiKey: "" }
+                        : provider === "local"
+                          ? {
+                              ...aiDraft,
+                              provider,
+                              baseUrl: "http://127.0.0.1:11434/v1",
+                              apiKey: "",
+                            }
+                          : { ...aiDraft, provider, baseUrl: "", apiKey: "" },
+                    );
+                  }}
+                >
+                  {availableAIProviders.length === 0 && (
+                    <option value="">Không có provider khả dụng</option>
+                  )}
+                  {ai.allowedProviders.includes("adapter") && (
+                    <option value="adapter">AI bảo mật Prewise</option>
+                  )}
+                  {ai.allowedProviders.includes("local") && (
+                    <option value="local" disabled={!localCoreAPI}>
+                      Local LLM {!localCoreAPI ? "· cần Core API local" : ""}
+                    </option>
+                  )}
+                  {ai.allowedProviders.includes("endpoint") && (
+                    <option value="endpoint">API endpoint · model riêng</option>
+                  )}
+                </select>
+              </label>
+              {aiDraft.provider !== "adapter" && (
+                <label>
+                  <span>
+                    <b>Model ID</b>
+                    <small>Ví dụ: qwen2.5:7b hoặc model-id OpenAI-compatible.</small>
+                  </span>
+                  {ai.allowedModels.length ? (
+                    <select
+                      aria-label="Model ID"
+                      value={aiDraft.model}
+                      onChange={(event) => setAIDraft({ ...aiDraft, model: event.target.value })}
+                    >
+                      <option value="">Chọn model được phép</option>
+                      {ai.allowedModels.map((model) => (
+                        <option value={model} key={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      aria-label="Model ID"
+                      value={aiDraft.model}
+                      onChange={(event) => setAIDraft({ ...aiDraft, model: event.target.value })}
+                      placeholder="qwen2.5:7b"
+                    />
+                  )}
+                </label>
+              )}
+              {(aiDraft.provider === "local" || aiDraft.provider === "endpoint") && (
+                <label>
+                  <span>
+                    <b>Base URL</b>
+                    <small>
+                      {aiDraft.provider === "local"
+                        ? "Ollama/OpenAI-compatible trên cùng máy với Core API."
+                        : "Endpoint công cộng bắt buộc HTTPS."}
+                    </small>
+                  </span>
+                  <input
+                    aria-label="Base URL"
+                    value={aiDraft.baseUrl}
+                    onChange={(event) => setAIDraft({ ...aiDraft, baseUrl: event.target.value })}
+                    placeholder={
+                      aiDraft.provider === "local"
+                        ? "http://127.0.0.1:11434/v1"
+                        : "https://api.example.com/v1"
+                    }
+                  />
+                </label>
+              )}
+              {aiDraft.provider === "endpoint" && (
+                <label>
+                  <span>
+                    <b>API key</b>
+                    <small>
+                      {ai.apiKeyConfigured
+                        ? "Đã lưu mã hóa; để trống để giữ khóa hiện tại."
+                        : "Khóa được gửi tới Core API qua kết nối hiện tại."}
+                    </small>
+                  </span>
+                  <input
+                    aria-label="API key"
+                    type="password"
+                    value={aiDraft.apiKey}
+                    onChange={(event) => setAIDraft({ ...aiDraft, apiKey: event.target.value })}
+                    autoComplete="new-password"
+                  />
+                </label>
+              )}
+            </div>
+            <div className={`desktop-local-ai-note ${localCoreAPI ? "available" : ""}`}>
+              <HardDrive />
+              <div>
+                <b>
+                  Local LLM: {localCoreAPI ? "có thể sử dụng" : "không khả dụng với Core API hiện tại"}
+                </b>
+                <p>
+                  {localCoreAPI
+                    ? "Desktop đang kết nối Core API localhost. Ollama phải chạy trên cùng máy và cung cấp API OpenAI-compatible."
+                    : `Desktop đang dùng ${apiBaseUrl}. Địa chỉ 127.0.0.1 tại backend từ xa không phải máy của bạn, nên tùy chọn Local LLM bị khóa.`}
+                </p>
+              </div>
+            </div>
+            <div className="desktop-ai-actions">
+              <button
+                className="scan"
+                disabled={aiBusy || !availableAIProviders.includes(aiDraft.provider)}
+                onClick={() => void savePersonalAI()}
+              >
+                {aiBusy ? "Đang xử lý…" : "Lưu cho tài khoản"}
+              </button>
+              <button
+                disabled={
+                  aiBusy ||
+                  !personalAIConfigured ||
+                  !["endpoint", "local"].includes(ai.provider) ||
+                  (ai.provider === "local" && !localCoreAPI)
+                }
+                onClick={() => void testPersonalAI()}
+              >
+                Kiểm tra model
+              </button>
+            </div>
+          </>
         )}
         {tab === "general" && (
           <>

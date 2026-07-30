@@ -144,6 +144,26 @@ export function getRiskLevel(score: number): RiskLevel {
     return RISK_LEVELS.danger;
 }
 
+/** Dùng quyết định máy chủ làm nguồn chính; điểm chỉ dành cho dữ liệu cũ. */
+export function getRiskLevelForDecision(
+    decision: string | undefined,
+    score: number,
+): RiskLevel {
+    const policy = String(decision || "").toUpperCase();
+    if (policy === "BLOCK" || policy === "SOFT_BLOCK" || policy === "HARD_BLOCK") {
+        return RISK_LEVELS.danger;
+    }
+    if (
+        policy === "WARN"
+        || policy === "ASK_USER_CONFIRMATION"
+        || policy === "REQUIRE_REVIEW"
+    ) {
+        return RISK_LEVELS.warn;
+    }
+    if (policy === "ALLOW") return RISK_LEVELS.safe;
+    return getRiskLevel(score);
+}
+
 /**
  * Tiện ích: lấy bảng token màu Tailwind cho một mức rủi ro theo `key`.
  *

@@ -79,11 +79,16 @@ export function mapRiskResult(payload: unknown, legacyScore?: number): RiskCoreV
       source: "risk_core_v2",
       schemaVersion: text(core.schema_version),
       scoringVersion: text(core.scoring_version),
-      score: clamp(number(core.final_score) ?? number(core.risk_score) ?? 0),
+      score: clamp(
+        number(core.blended_final_score)
+        ?? number(core.final_score)
+        ?? number(core.risk_score)
+        ?? 0
+      ),
       rawScore: number(core.raw_score) ?? number(core.base_risk_score),
       confidence: number(core.confidence_score) ?? number(core.confidence),
-      level: text(core.risk_level) ?? text(core.verdict),
-      decision: text(core.decision),
+      level: text(outer.risk_level) ?? text(core.risk_level) ?? text(core.verdict),
+      decision: text(outer.decision) ?? text(core.decision),
       nextAction: text(core.next_action),
       criteria: criterionRecords(core.criteria), evidence: records(core.evidence), mitigations: records(core.mitigations),
       overrides: records(core.overrides), effectiveOverride: record(core.effective_override), caps: records(core.caps),

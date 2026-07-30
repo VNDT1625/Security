@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import bz2
 import csv
-import gzip
 import io
 import logging
+import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,6 +27,7 @@ from security.risk_core.types import (
     MatchedSubject,
     ProviderVerdict,
 )
+from shared.net_guard import SSRFBlocked, assert_global_target
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ OFFICIAL_FEED_HOSTS = {
     "urlhaus-api.abuse.ch",
 }
 REMOTE_FEED_SOURCES = frozenset({"phishtank", "openphish", "urlhaus"})
+_MAX_FEED_REDIRECTS = 3
 
 
 @dataclass(frozen=True)
@@ -85,11 +87,36 @@ def _parse_datetime(value: object) -> datetime | None:
         return None
 
 
+def _bounded_decompress(payload: bytes, decompressor: object, limit: int) -> bytes:
+    """Decompress incrementally and abort once the output exceeds ``limit``.
+
+    ``gzip.decompress`` and ``bz2.decompress`` have no output bound, so a 64 MiB
+    archive of zero bytes expands to tens of gigabytes and kills the process that
+    the scheduler shares with the API.
+    """
+    out = bytearray()
+    chunk_size = 1 << 20
+    for offset in range(0, len(payload), chunk_size):
+        out.extend(
+            decompressor.decompress(  # type: ignore[attr-defined]
+                payload[offset : offset + chunk_size], limit - len(out) + 1
+            )
+        )
+        if len(out) > limit:
+            raise ValueError(
+                f"Threat feed expanded beyond the {limit} byte decompression limit"
+            )
+    return bytes(out)
+
+
 def _decode_payload(payload: bytes) -> str:
+    limit = max(1, int(settings.threat_feed_max_decompressed_bytes))
     if payload.startswith(b"\x1f\x8b"):
-        payload = gzip.decompress(payload)
+        payload = _bounded_decompress(
+            payload, zlib.decompressobj(16 + zlib.MAX_WBITS), limit
+        )
     elif payload.startswith(b"BZh"):
-        payload = bz2.decompress(payload)
+        payload = _bounded_decompress(payload, bz2.BZ2Decompressor(), limit)
     return payload.decode("utf-8-sig", errors="replace")
 
 
@@ -294,15 +321,25 @@ def _configured_feed_specs_for_runtime(
     return configured_feed_specs(openphish_enabled=openphish_enabled)
 
 
-def _validate_endpoint(spec: FeedSpec) -> None:
-    parsed = urlsplit(spec.url)
+def _validate_feed_url(url: str, source: str) -> None:
+    parsed = urlsplit(url)
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or not host:
-        raise ValueError(f"Invalid {spec.source} feed URL")
+        raise ValueError(f"Invalid {source} feed URL")
     if parsed.scheme != "https":
         raise ValueError("Threat-feed endpoints must use HTTPS")
     if not settings.threat_feed_allow_custom_endpoints and host not in OFFICIAL_FEED_HOSTS:
         raise ValueError(f"Unapproved threat-feed host: {host}")
+    # Even an approved host must not resolve into private space; a hijacked or
+    # rebinding DNS answer would otherwise turn the collector into an SSRF probe.
+    try:
+        assert_global_target(url)
+    except SSRFBlocked as exc:
+        raise ValueError(f"{source} feed host resolves to a non-public address") from exc
+
+
+def _validate_endpoint(spec: FeedSpec) -> None:
+    _validate_feed_url(spec.url, spec.source)
 
 
 def _safe_endpoint(url: str) -> str:
@@ -317,23 +354,37 @@ def _download(spec: FeedSpec, state: ThreatFeedSyncState | None) -> tuple[bytes 
         headers["If-None-Match"] = state.etag
     if state is not None and state.last_modified:
         headers["If-Modified-Since"] = state.last_modified
+    # Redirects are followed manually so every hop is re-validated. With
+    # follow_redirects=True httpx silently leaves the approved host list, and a
+    # 302 from an allowlisted host (raw.githubusercontent.com is one) to
+    # http://169.254.169.254/... would be fetched and parsed as a feed.
+    target = spec.url
     with httpx.Client(
-        follow_redirects=True,
+        follow_redirects=False,
         timeout=settings.threat_feed_request_timeout_seconds,
         headers=headers,
     ) as client:
-        with client.stream("GET", spec.url) as response:
-            if response.status_code == 304:
-                return None, dict(response.headers)
-            response.raise_for_status()
-            chunks: list[bytes] = []
-            size = 0
-            for chunk in response.iter_bytes():
-                size += len(chunk)
-                if size > settings.threat_feed_max_download_bytes:
-                    raise ValueError(f"{spec.source} feed exceeded download limit")
-                chunks.append(chunk)
-            return b"".join(chunks), dict(response.headers)
+        for _hop in range(_MAX_FEED_REDIRECTS + 1):
+            with client.stream("GET", target) as response:
+                if response.status_code == 304:
+                    return None, dict(response.headers)
+                if response.is_redirect:
+                    location = response.headers.get("location", "")
+                    if not location:
+                        raise ValueError(f"{spec.source} feed redirect had no Location")
+                    target = str(httpx.URL(target).join(location))
+                    _validate_feed_url(target, spec.source)
+                    continue
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                size = 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > settings.threat_feed_max_download_bytes:
+                        raise ValueError(f"{spec.source} feed exceeded download limit")
+                    chunks.append(chunk)
+                return b"".join(chunks), dict(response.headers)
+    raise ValueError(f"{spec.source} feed exceeded {_MAX_FEED_REDIRECTS} redirects")
 
 
 def _upsert_records(
