@@ -12,6 +12,8 @@ const node_crypto_1 = __importDefault(require("node:crypto"));
 const node_child_process_1 = require("node:child_process");
 const allowedExtensions = new Set(['.exe', '.msi', '.bat', '.cmd', '.com', '.scr', '.ps1']);
 const pendingDownloadInspections = new Set();
+const approvedLocalFiles = new Set();
+const MAX_CLOUD_SAMPLE_BYTES = 10 * 1024 * 1024;
 let downloadsWatcher;
 function ps(script, args = []) {
     return new Promise((resolve, reject) => (0, node_child_process_1.execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script, ...args], { windowsHide: true, timeout: 15000 }, (error, output, stderr) => error
@@ -20,6 +22,17 @@ function ps(script, args = []) {
 }
 function isExecutable(filePath) {
     return allowedExtensions.has(node_path_1.default.extname(filePath).toLowerCase());
+}
+function approveLocalFile(filePath) {
+    const resolved = node_path_1.default.resolve(filePath);
+    approvedLocalFiles.add(resolved);
+    // Keep the capability set bounded during long-running desktop sessions.
+    if (approvedLocalFiles.size > 32) {
+        const oldest = approvedLocalFiles.values().next().value;
+        if (oldest)
+            approvedLocalFiles.delete(oldest);
+    }
+    return resolved;
 }
 function guardSettingsPath() {
     return node_path_1.default.join(electron_1.app.getPath('userData'), 'download-guard.json');
@@ -224,7 +237,38 @@ function registerIpc() {
             properties: ['openFile'],
             filters: [{ name: 'Tệp thực thi', extensions: ['exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'ps1'] }],
         });
-        return result.canceled ? null : inspectExecutable(result.filePaths[0]);
+        if (result.canceled)
+            return null;
+        const source = node_path_1.default.resolve(result.filePaths[0]);
+        const report = await inspectExecutable(source);
+        approveLocalFile(source);
+        return report;
+    });
+    electron_1.ipcMain.handle('local:read-for-cloud', async (_event, filePath, expectedSha256) => {
+        const source = node_path_1.default.resolve(filePath);
+        if (!approvedLocalFiles.has(source)) {
+            throw new Error('Tệp chưa được người dùng chọn trong Local Shield.');
+        }
+        if (!isExecutable(source)) {
+            throw new Error('Chỉ cho phép gửi tệp thực thi Windows đã được kiểm tra.');
+        }
+        const stat = await promises_1.default.stat(source);
+        if (!stat.isFile() || stat.size === 0)
+            throw new Error('Tệp không hợp lệ hoặc đã bị di chuyển.');
+        if (stat.size > MAX_CLOUD_SAMPLE_BYTES) {
+            throw new Error('Tệp vượt giới hạn 10 MB của Cloud Lab.');
+        }
+        const currentSha256 = await hashFile(source);
+        if (!expectedSha256 || currentSha256 !== expectedSha256.toLowerCase()) {
+            approvedLocalFiles.delete(source);
+            throw new Error('Tệp đã thay đổi sau lần kiểm tra tĩnh. Hãy chọn và kiểm tra lại.');
+        }
+        const bytes = await promises_1.default.readFile(source);
+        return {
+            filename: node_path_1.default.basename(source),
+            sha256: currentSha256,
+            data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+        };
     });
     electron_1.ipcMain.handle('local:quarantine', async (_event, filePath) => copyToQuarantine(filePath));
     electron_1.ipcMain.handle('local:download-guard-settings', readDownloadGuardSettings);

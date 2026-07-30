@@ -1,13 +1,13 @@
 {
   "name": "ai-security-armor-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Ứng dụng desktop AI Security Armor — Browser Cover",
   "author": "Prewise",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "build": "tsc && vite build && tsc -p electron/tsconfig.json",
+    "build": "tsc && vite build && node scripts/validate-built-api.mjs && tsc -p electron/tsconfig.json",
     "release:validate": "node scripts/validate-release-env.mjs",
     "release:dir": "npm run release:validate && npm run build && electron-builder --dir --win --x64",
     "release:windows": "npm run release:validate && npm run build && electron-builder --win nsis portable --x64",

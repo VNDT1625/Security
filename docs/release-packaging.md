@@ -19,7 +19,9 @@ The command builds two x64 artifacts in `frontend/desktop/release/`:
 
 The release scripts fail closed unless `VITE_API_BASE_URL` is an HTTPS,
 non-local production endpoint without embedded credentials. Development builds
-may continue to use the localhost default.
+may continue to use the localhost default. A plain production Vite build uses
+`https://api.prewise.site` as a safe fallback and validates the generated
+bundle so a packaged application cannot silently retain the localhost URL.
 
 `electron-builder` reads its signing identity from the standard `CSC_LINK` and
 `CSC_KEY_PASSWORD` environment variables. CI leaves these unset for pull

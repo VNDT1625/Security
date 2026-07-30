@@ -333,7 +333,12 @@ export interface CloudRemoteAccess {
   oneTime: true;
 }
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
+const PRODUCTION_API_BASE = "https://api.prewise.site";
+const DEVELOPMENT_API_BASE = "http://localhost:8000";
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? DEVELOPMENT_API_BASE : PRODUCTION_API_BASE)
+).replace(/\/$/, "");
 let sessionToken = "";
 export const setSessionToken = (token: string | null) => {
   sessionToken = token || "";
@@ -418,6 +423,12 @@ async function request<T>(
           .join("; ")
       : payload.detail;
     throw new Error(detail || `Máy chủ phản hồi ${response.status}`);
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      "Core API trả về nội dung không hợp lệ. Hãy kiểm tra endpoint HTTPS hoặc quyền truy cập gateway.",
+    );
   }
   return response.json() as Promise<T>;
 }

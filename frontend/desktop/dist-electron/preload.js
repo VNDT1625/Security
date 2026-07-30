@@ -6,6 +6,7 @@ electron_1.contextBridge.exposeInMainWorld('desktop', {
     openExternal: (url) => electron_1.ipcRenderer.invoke('app:open-external', url),
     localSecurity: {
         chooseExecutable: () => electron_1.ipcRenderer.invoke('local:choose'),
+        readForCloud: (filePath, expectedSha256) => electron_1.ipcRenderer.invoke('local:read-for-cloud', filePath, expectedSha256),
         quarantine: (filePath) => electron_1.ipcRenderer.invoke('local:quarantine', filePath),
         getDownloadGuardSettings: () => electron_1.ipcRenderer.invoke('local:download-guard-settings'),
         setDownloadGuard: (enabled) => electron_1.ipcRenderer.invoke('local:set-download-guard-settings', enabled),
