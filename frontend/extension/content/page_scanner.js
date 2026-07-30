@@ -134,14 +134,11 @@
     bar.style.setProperty("--accent", copy.accent);
     bar.style.setProperty("--background", copy.background);
     bar.setAttribute("role", "alert");
-    bar.setAttribute("aria-label", `AI Security Armor cảnh báo ${score} trên 100`);
+    bar.setAttribute("aria-label", `AI Security Armor cảnh báo: ${copy.label}`);
 
     const scoreBox = document.createElement("div");
     scoreBox.className = "score";
-    scoreBox.append(document.createTextNode(String(score)));
-    const unit = document.createElement("small");
-    unit.textContent = "/100";
-    scoreBox.append(unit);
+    scoreBox.append(document.createTextNode(level === "danger" ? "⛔" : "⚠"));
 
     const content = document.createElement("div");
     content.className = "copy";

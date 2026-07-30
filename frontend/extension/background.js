@@ -58,7 +58,7 @@ function setBadge(tabId, entry, threshold = DEFAULT_WARNING_THRESHOLD) {
   if (entry?.status === "loading" || entry?.error || level.key === "safe" || legacyBelowThreshold) { clearBadge(tabId); return; }
   chrome.action.setBadgeText({ tabId, text: level.key === "danger" ? "X" : "!" });
   chrome.action.setBadgeBackgroundColor({ tabId, color: level.color });
-  chrome.action.setTitle({ tabId, title: `AI Security Armor — ${level.label} (${entry.score}/100)` });
+  chrome.action.setTitle({ tabId, title: `AI Security Armor — ${level.label}` });
 }
 function notifyTab(tabId, entry, current) {
   if (tabId == null) return;

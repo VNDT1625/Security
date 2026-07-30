@@ -983,7 +983,7 @@ export class MockApiClient implements ApiClient {
                     ? assessment.reasons.map((r) => `- ${r}`).join(" ")
                     : "không có dấu hiệu nổi bật.";
             return (
-                `Kết quả đánh giá: ${level.icon} ${assessment.score}/100 — ${level.label}. ` +
+                `Kết quả đánh giá: ${level.icon} ${level.label}. ` +
                 `Các lý do chính: ${reasons} ` +
                 `Bạn nên cẩn trọng và cân nhắc cài đặt tiện ích để được bảo vệ tự động.`
             );

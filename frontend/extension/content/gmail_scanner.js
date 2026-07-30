@@ -115,9 +115,9 @@
 
     const scoreBox = document.createElement("div");
     scoreBox.className = "score";
-    scoreBox.append(document.createTextNode(loading ? "…" : String(numericScore)));
+    scoreBox.append(document.createTextNode(loading ? "…" : danger ? "⛔" : warning ? "⚠" : "✓"));
     const unit = document.createElement("small");
-    unit.textContent = loading ? "AI" : "/100";
+    unit.textContent = loading ? "AI" : danger ? "NGUY HIỂM" : warning ? "CẨN THẬN" : "AN TOÀN";
     scoreBox.append(unit);
 
     const copy = document.createElement("div");

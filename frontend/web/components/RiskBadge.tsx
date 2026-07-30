@@ -16,17 +16,21 @@
  * _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
  */
 
-import { getRiskColorToken, getRiskLevel } from "@/lib/risk";
+import { getRiskColorToken, getRiskLevelForContext } from "@/lib/risk";
 
 export interface RiskBadgeProps {
     /** Điểm rủi ro; kỳ vọng trong [0, 100], sẽ được kẹp về biên nếu lệch. */
     score: number;
     /** Kích thước hiển thị. Mặc định "md". */
     size?: "sm" | "md" | "lg";
-    /** Hiển thị điểm dạng "X/100". */
+    /** Tương thích cũ: bật nhãn kết luận, không hiển thị điểm số. */
     showScore?: boolean;
     /** Hiển thị nhãn mức rủi ro (vd "RỦI RO CAO"). */
     showLabel?: boolean;
+    /** Quyết định máy chủ, được ưu tiên hơn điểm nội bộ. */
+    decision?: string;
+    /** Mức rủi ro máy chủ, dùng khi chưa có quyết định. */
+    riskLevel?: string;
 }
 
 /** Class Tailwind theo kích thước badge. */
@@ -66,13 +70,15 @@ export default function RiskBadge({
     size = "md",
     showScore = false,
     showLabel = false,
+    decision,
+    riskLevel,
 }: RiskBadgeProps) {
     const safeScore = clampScore(score);
-    const level = getRiskLevel(safeScore);
+    const level = getRiskLevelForContext(decision, riskLevel, safeScore);
     const colors = getRiskColorToken(level.key);
-
-    // Hiển thị điểm dạng số nguyên "X/100" (Requirement 2.2).
-    const displayScore = Math.round(safeScore);
+    // `showScore` được giữ để không phá API component cũ, nhưng UI công khai
+    // chỉ hiển thị kết luận định tính. Điểm vẫn được dùng nội bộ.
+    const shouldShowLabel = showLabel || showScore;
 
     const className = [
         "inline-flex items-center font-semibold",
@@ -87,15 +93,12 @@ export default function RiskBadge({
         <span
             className={className}
             role="status"
-            aria-label={`Mức rủi ro: ${level.label}, điểm ${displayScore} trên 100`}
+            aria-label={`Mức rủi ro: ${level.label}`}
         >
             <span className={ICON_SIZE_CLASSES[size]} aria-hidden="true">
                 {level.icon}
             </span>
-            {showScore && (
-                <span className="tabular-nums">{displayScore}/100</span>
-            )}
-            {showLabel && <span>{level.label}</span>}
+            {shouldShowLabel && <span>{level.label}</span>}
         </span>
     );
 }

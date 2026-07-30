@@ -18,9 +18,9 @@ export function WebIsolationReport({ result }: WebIsolationReportProps) {
                     <strong>{report.conclusion}</strong>
                     <p>{report.target}</p>
                 </div>
-                <div className={styles.score} aria-label={report.riskScore == null ? "Backend chưa trả điểm rủi ro" : `Điểm rủi ro ${report.riskScore} trên 100`}>
-                    <span>Điểm rủi ro</span>
-                    <b>{report.riskScore == null ? "—" : `${report.riskScore}/100`}</b>
+                <div className={styles.score} aria-label={`Kết luận: ${report.conclusion}`}>
+                    <span>Mức rủi ro</span>
+                    <b>{report.conclusion}</b>
                     {report.confidence != null && <small>Tin cậy {report.confidence}%</small>}
                 </div>
             </header>
