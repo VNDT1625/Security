@@ -14,6 +14,37 @@ from pathlib import Path
 from shared.schemas import BrowserSandboxURLResponse
 
 
+def _browser_worker_environment() -> dict[str, str]:
+    """Return the minimal environment needed by the isolated browser worker."""
+    worker_env = {"PYTHONIOENCODING": "utf-8"}
+    keep_env = (
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "USERPROFILE",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "BRAND_VISUAL_HASH_REGISTRY",
+        # Production installs Chromium into a shared, non-root-readable path.
+        # The worker receives a deliberately reduced environment, so this must
+        # be forwarded explicitly instead of falling back to ~/.cache.
+        "PLAYWRIGHT_BROWSERS_PATH",
+    )
+    for name in keep_env:
+        if value := os.environ.get(name):
+            worker_env[name] = value
+    return worker_env
+
+
 class BrowserSandboxRunner:
     def __init__(
         self,
@@ -34,28 +65,7 @@ class BrowserSandboxRunner:
             ensure_ascii=False,
         )
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        worker_env = {"PYTHONIOENCODING": "utf-8"}
-        keep_env = (
-            "SYSTEMROOT",
-            "WINDIR",
-            "COMSPEC",
-            "PATH",
-            "PATHEXT",
-            "PROGRAMFILES",
-            "PROGRAMFILES(X86)",
-            "LOCALAPPDATA",
-            "APPDATA",
-            "USERPROFILE",
-            "TEMP",
-            "TMP",
-            "LANG",
-            "SSL_CERT_FILE",
-            "SSL_CERT_DIR",
-            "BRAND_VISUAL_HASH_REGISTRY",
-        )
-        for name in keep_env:
-            if value := os.environ.get(name):
-                worker_env[name] = value
+        worker_env = _browser_worker_environment()
 
         # Browser descendants can retain inherited stdout/stderr handles on Windows
         # after the worker has already completed. A pipe-based JSON protocol then

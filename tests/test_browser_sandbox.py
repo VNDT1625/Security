@@ -4,7 +4,15 @@ import json
 import socket
 
 from security import browser_sandbox_worker
-from security.browser_sandbox import BrowserSandboxRunner
+from security.browser_sandbox import BrowserSandboxRunner, _browser_worker_environment
+
+
+def test_browser_worker_inherits_shared_playwright_browser_path(monkeypatch) -> None:
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/ms-playwright")
+
+    worker_env = _browser_worker_environment()
+
+    assert worker_env["PLAYWRIGHT_BROWSERS_PATH"] == "/ms-playwright"
 
 
 def test_browser_runner_blocks_private_network_before_navigation() -> None:
