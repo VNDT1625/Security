@@ -36,6 +36,7 @@ def test_production_image_uses_runtime_only_dependencies_and_fail_closed_health(
     assert "requirements.runtime.txt" in dockerfile
     assert "requirements.txt ./" not in dockerfile
     assert "pytest" not in runtime_requirements.lower()
+    assert "mcp>=1.0.0,<2" in runtime_requirements
     assert "-r requirements.runtime.txt" in development_requirements
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in dockerfile
     assert "--only-shell chromium" in dockerfile

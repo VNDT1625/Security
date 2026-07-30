@@ -46,7 +46,7 @@ train = [
     "mlflow>=2.11.0",
 ]
 llm = ["ollama>=0.1.7"]
-mcp = ["mcp>=1.0.0"]
+mcp = ["mcp>=1.0.0,<2"]
 browser = ["playwright>=1.48.0"]
 postgres = [
     "psycopg[binary]>=3.2.0",
