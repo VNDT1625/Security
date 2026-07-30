@@ -6,9 +6,11 @@ import {
     Bot,
     CircleHelp,
     Clock3,
+    History,
     Link2,
     LockKeyhole,
     MessageCircleQuestion,
+    Scale,
     Send,
     ShieldCheck,
     Sparkles,
@@ -21,7 +23,7 @@ import { PrewiseShell } from "@/components/PrewiseUI";
 import { useAuth } from "@/context/AuthContext";
 import { useChatSession } from "@/hooks/useChatSession";
 import { getApiClient } from "@/lib/api";
-import type { ScanRecord } from "@/lib/types";
+import type { LegalContext, ScanRecord } from "@/lib/types";
 
 import styles from "./chat.module.css";
 
@@ -29,21 +31,21 @@ const CONTEXT_TOKEN = /@([A-Za-z0-9]+(?:-[A-Za-z0-9]+){1,})/g;
 
 const QUICK_QUESTIONS = [
     {
-        title: "Xử lý sau khi bấm nhầm",
-        detail: "Các bước cần làm ngay để giảm rủi ro.",
-        question: "Tôi vừa bấm vào một liên kết đáng ngờ. Tôi nên làm gì ngay bây giờ?",
+        title: "Thông báo sự cố dữ liệu",
+        detail: "Nghĩa vụ khi phát hiện rò rỉ dữ liệu cá nhân.",
+        question: "Doanh nghiệp tại Việt Nam cần làm gì khi phát hiện sự cố rò rỉ dữ liệu cá nhân?",
         icon: ShieldCheck,
     },
     {
-        title: "Nhận biết email giả mạo",
-        detail: "Dấu hiệu phổ biến và cách tự kiểm tra.",
-        question: "Những dấu hiệu phổ biến của email giả mạo là gì?",
+        title: "Chuyển dữ liệu ra nước ngoài",
+        detail: "Điều kiện và hồ sơ cần chuẩn bị.",
+        question: "Doanh nghiệp có được chuyển dữ liệu cá nhân của khách hàng ra nước ngoài không?",
         icon: CircleHelp,
     },
     {
-        title: "Bảo vệ lại tài khoản",
-        detail: "Khi nào nên đổi mật khẩu và thu hồi phiên.",
-        question: "Khi nào tôi nên đổi mật khẩu và thu hồi các phiên đăng nhập?",
+        title: "Thu thập log truy cập",
+        detail: "Căn cứ, thông báo và thời hạn lưu trữ.",
+        question: "Khi thu thập log truy cập của người dùng, doanh nghiệp cần thông báo và xin đồng ý thế nào?",
         icon: LockKeyhole,
     },
 ] as const;
@@ -81,6 +83,15 @@ export default function ChatPage(): JSX.Element {
     const [historyLoading, setHistoryLoading] = useState(true);
     const [historyError, setHistoryError] = useState("");
     const [attachedId, setAttachedId] = useState<string | null>(null);
+    const [mentionOpen, setMentionOpen] = useState(false);
+    const [mode, setMode] = useState<"legal" | "history">("legal");
+    const [legalContext, setLegalContext] = useState<LegalContext>(() => ({
+        jurisdiction: "VN",
+        as_of_date: new Date().toISOString().slice(0, 10),
+        actor: "",
+        action: "",
+        data_or_asset: "",
+    }));
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
@@ -119,41 +130,74 @@ export default function ChatPage(): JSX.Element {
         [attachedId, records],
     );
     const recentRecords = records.slice(0, 6);
+    const mentionQuery = input.match(/(?:^|\s)@([A-Za-z0-9-]*)$/)?.[1]?.toLowerCase() ?? "";
+    const mentionMatches = records.filter((record) => {
+        if (!mentionQuery) return true;
+        return `${record.id} ${record.type} ${record.target ?? ""}`
+            .toLowerCase()
+            .includes(mentionQuery);
+    });
     const hasAssessment = messages.some((message) => Boolean(message.assessment));
 
     function updateInput(value: string): void {
         setInput(value);
+        const hasMentionTrigger = /(?:^|\s)@[A-Za-z0-9-]*$/.test(value);
+        if (hasMentionTrigger) {
+            setMode("history");
+            setMentionOpen(true);
+        } else {
+            setMentionOpen(false);
+        }
         const referencedId = findReferencedId(value, records);
-        if (referencedId) setAttachedId(referencedId);
+        if (referencedId) {
+            setAttachedId(referencedId);
+            setMode("history");
+            setMentionOpen(false);
+        }
     }
 
     function attachRecord(record: ScanRecord): void {
         setAttachedId(record.id);
+        setMode("history");
+        setMentionOpen(false);
         setInput((current) => {
-            const question = stripContextTokens(current);
+            const withoutPendingMention = current.replace(
+                /(?:^|\s)@[A-Za-z0-9-]*$/,
+                " ",
+            );
+            const question = stripContextTokens(withoutPendingMention);
             return `@${record.id}${question ? ` ${question}` : " "}`;
         });
     }
 
     function removeContext(): void {
         setAttachedId(null);
+        setMentionOpen(false);
         setInput((current) => stripContextTokens(current));
+    }
+
+    function selectMode(nextMode: "legal" | "history"): void {
+        setMode(nextMode);
+        if (nextMode === "legal") {
+            removeContext();
+        }
     }
 
     async function handleSend(): Promise<void> {
         const question = stripContextTokens(input);
-        if (!question || isStreaming) return;
+        if (!question || isStreaming || (mode === "history" && !attachedId)) return;
 
         setInput("");
         await sendMessage(
             question,
-            attachedId
+            mode === "history" && attachedId
                 ? {
                     content: "",
                     modality: "text",
                     analysis_id: attachedId,
                 }
                 : undefined,
+            mode === "legal" ? legalContext : undefined,
         );
         await refreshQuota();
     }
@@ -165,11 +209,11 @@ export default function ChatPage(): JSX.Element {
                     <div>
                         <p className={styles.eyebrow}><i />CHAT / SECURITY ASSISTANT</p>
                         <h1>Trợ lý an toàn số</h1>
-                        <p>Hỏi đáp và giải thích kết quả cũ — không chạy lại Analyze.</p>
+                        <p>Hỏi pháp luật an ninh mạng hoặc giải thích kết quả cũ bằng @ID.</p>
                     </div>
                     <div className={styles.headerStatus} aria-label="Trạng thái trợ lý">
                         <span><span className={styles.liveDot} /> Trợ lý sẵn sàng</span>
-                        <span><LockKeyhole /> Ngữ cảnh riêng tư</span>
+                        <span><Scale /> Legal adapter</span>
                     </div>
                 </header>
 
@@ -181,7 +225,11 @@ export default function ChatPage(): JSX.Element {
                                 <strong>PREWISE ASSISTANT</strong>
                             </div>
                             <small>
-                                {attachedId ? `ACTIVE CONTEXT · @${shortId(attachedId)}` : "NO ACTIVE CONTEXT"}
+                                {mode === "legal"
+                                    ? "LEGAL ADAPTER ACTIVE"
+                                    : attachedId
+                                        ? `HISTORY CONTEXT · @${shortId(attachedId)}`
+                                        : "SELECT HISTORY CONTEXT"}
                             </small>
                         </div>
 
@@ -189,32 +237,45 @@ export default function ChatPage(): JSX.Element {
                             {messages.length === 0 ? (
                                 <div className={styles.welcome}>
                                     <span className={styles.welcomeIcon}><MessageCircleQuestion /></span>
-                                    <p className={styles.welcomeKicker}>ASK, UNDERSTAND, ACT</p>
-                                    <h2>Bạn muốn hỏi điều gì?</h2>
-                                    <p>
-                                        Hỏi về an toàn số, cách xử lý sự cố hoặc gắn một kết quả
-                                        trong lịch sử bằng <strong>@ID</strong> để được giải thích.
-                                    </p>
-                                    <div className={styles.quickStarts}>
-                                        {QUICK_QUESTIONS.map((item) => {
-                                            const Icon = item.icon;
-                                            return (
-                                                <button
-                                                    key={item.title}
-                                                    type="button"
-                                                    onClick={() => setInput(item.question)}
-                                                    aria-label={item.title}
-                                                >
-                                                    <Icon />
-                                                    <span>
-                                                        <strong>{item.title}</strong>
-                                                        <small>{item.detail}</small>
-                                                    </span>
-                                                    <ArrowUpRight />
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                                    <p className={styles.welcomeKicker}>TWO PURPOSES, ONE ASSISTANT</p>
+                                    <h2>
+                                        {mode === "legal"
+                                            ? "Hỏi pháp luật an ninh mạng"
+                                            : "Hỏi theo kết quả đã phân tích"}
+                                    </h2>
+                                    {mode === "legal" ? (
+                                        <>
+                                            <p>
+                                                Câu hỏi được chuyển thẳng tới adapter pháp luật,
+                                                kèm căn cứ và trạng thái hiệu lực nguồn.
+                                            </p>
+                                            <div className={styles.quickStarts}>
+                                                {QUICK_QUESTIONS.map((item) => {
+                                                    const Icon = item.icon;
+                                                    return (
+                                                        <button
+                                                            key={item.title}
+                                                            type="button"
+                                                            onClick={() => setInput(item.question)}
+                                                            aria-label={item.title}
+                                                        >
+                                                            <Icon />
+                                                            <span>
+                                                                <strong>{item.title}</strong>
+                                                                <small>{item.detail}</small>
+                                                            </span>
+                                                            <ArrowUpRight />
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <p>
+                                            Chọn một kết quả ở cột lịch sử hoặc dán
+                                            <strong> @ID</strong>, sau đó đặt câu hỏi cần giải thích.
+                                        </p>
+                                    )}
                                 </div>
                             ) : (
                                 messages.map((message, index) => (
@@ -229,12 +290,97 @@ export default function ChatPage(): JSX.Element {
                         </div>
 
                         <div className={styles.composerZone}>
+                            <div className={styles.modeSwitch} role="tablist" aria-label="Công dụng Chat">
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={mode === "legal"}
+                                    className={mode === "legal" ? styles.activeMode : ""}
+                                    onClick={() => selectMode("legal")}
+                                >
+                                    <Scale /> Pháp luật an ninh mạng
+                                </button>
+                                <button
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={mode === "history"}
+                                    className={mode === "history" ? styles.activeMode : ""}
+                                    onClick={() => selectMode("history")}
+                                >
+                                    <History /> Hỏi theo @ID lịch sử
+                                </button>
+                            </div>
+
                             {error && (
                                 <div className={`${styles.notice} ${styles.errorNotice}`} role="alert">
                                     <span>{error}</span>
                                     <button type="button" onClick={() => void retryLast()}>
                                         Thử lại
                                     </button>
+                                </div>
+                            )}
+
+                            {mode === "legal" && (
+                                <div className={styles.legalFields} aria-label="Bối cảnh pháp luật">
+                                    <label>
+                                        Quốc gia
+                                        <input
+                                            aria-label="Quốc gia"
+                                            value={legalContext.jurisdiction}
+                                            onChange={(event) => setLegalContext((current) => ({
+                                                ...current,
+                                                jurisdiction: event.target.value,
+                                            }))}
+                                        />
+                                    </label>
+                                    <label>
+                                        Ngày áp dụng
+                                        <input
+                                            aria-label="Ngày áp dụng"
+                                            type="date"
+                                            value={legalContext.as_of_date}
+                                            onChange={(event) => setLegalContext((current) => ({
+                                                ...current,
+                                                as_of_date: event.target.value,
+                                            }))}
+                                        />
+                                    </label>
+                                    <label>
+                                        Chủ thể
+                                        <input
+                                            aria-label="Chủ thể"
+                                            placeholder="VD: doanh nghiệp"
+                                            value={legalContext.actor}
+                                            onChange={(event) => setLegalContext((current) => ({
+                                                ...current,
+                                                actor: event.target.value,
+                                            }))}
+                                        />
+                                    </label>
+                                    <label>
+                                        Hành động
+                                        <input
+                                            aria-label="Hành động"
+                                            placeholder="VD: thông báo sự cố"
+                                            value={legalContext.action}
+                                            onChange={(event) => setLegalContext((current) => ({
+                                                ...current,
+                                                action: event.target.value,
+                                            }))}
+                                        />
+                                    </label>
+                                    <label className={styles.wideField}>
+                                        Dữ liệu / tài sản liên quan
+                                        <input
+                                            aria-label="Dữ liệu hoặc tài sản liên quan"
+                                            placeholder="VD: dữ liệu cá nhân khách hàng"
+                                            value={legalContext.data_or_asset}
+                                            onChange={(event) => setLegalContext((current) => ({
+                                                ...current,
+                                                data_or_asset: event.target.value,
+                                            }))}
+                                        />
+                                    </label>
                                 </div>
                             )}
 
@@ -256,34 +402,91 @@ export default function ChatPage(): JSX.Element {
                                 </div>
                             )}
 
-                            <div className={styles.composer}>
-                                <textarea
-                                    aria-label="Câu hỏi cho trợ lý"
-                                    value={input}
-                                    onChange={(event) => updateInput(event.target.value)}
-                                    onKeyDown={(event) => {
-                                        if (event.key === "Enter" && !event.shiftKey) {
-                                            event.preventDefault();
-                                            void handleSend();
+                            <div className={styles.composerWrap}>
+                                {mentionOpen && (
+                                    <div
+                                        className={styles.mentionPicker}
+                                        role="listbox"
+                                        aria-label="Gợi ý lịch sử"
+                                    >
+                                        <div className={styles.mentionHeader}>
+                                            <span>LỊCH SỬ · MỚI NHẤT TRƯỚC</span>
+                                            <small>{mentionMatches.length} kết quả</small>
+                                        </div>
+                                        <div className={styles.mentionList}>
+                                            {historyLoading ? (
+                                                <p>Đang tải lịch sử…</p>
+                                            ) : mentionMatches.length === 0 ? (
+                                                <p>Không tìm thấy kết quả phù hợp.</p>
+                                            ) : mentionMatches.map((record) => (
+                                                <button
+                                                    key={record.id}
+                                                    type="button"
+                                                    role="option"
+                                                    aria-selected={attachedId === record.id}
+                                                    aria-label={`Chọn lịch sử @${record.id}`}
+                                                    onClick={() => attachRecord(record)}
+                                                >
+                                                    <span className={styles.historyBadge}>
+                                                        {record.type}
+                                                    </span>
+                                                    <span>
+                                                        <strong>
+                                                            {record.target || "Nội dung đã được ẩn"}
+                                                        </strong>
+                                                        <small>
+                                                            @{record.id} · {record.timestamp}
+                                                        </small>
+                                                    </span>
+                                                    <b>{record.score}</b>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                <div className={styles.composer}>
+                                    <textarea
+                                        aria-label="Câu hỏi cho trợ lý"
+                                        value={input}
+                                        onChange={(event) => updateInput(event.target.value)}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Escape") {
+                                                setMentionOpen(false);
+                                                return;
+                                            }
+                                            if (event.key === "Enter" && !event.shiftKey) {
+                                                event.preventDefault();
+                                                void handleSend();
+                                            }
+                                        }}
+                                        placeholder={
+                                            mode === "legal"
+                                                ? "Đặt câu hỏi pháp luật hoặc an ninh mạng…"
+                                                : "Gõ @ để chọn lịch sử, rồi đặt câu hỏi cần giải thích…"
                                         }
-                                    }}
-                                    placeholder="Hỏi điều bạn cần biết… Có thể thêm @ID từ lịch sử để làm ngữ cảnh."
-                                />
-                                <button
-                                    type="button"
-                                    disabled={!stripContextTokens(input) || isStreaming}
-                                    onClick={() => void handleSend()}
-                                    aria-label="Gửi câu hỏi"
-                                >
-                                    <Send />
-                                    <span>{isStreaming ? "Đang trả lời" : "Gửi"}</span>
-                                </button>
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={
+                                            !stripContextTokens(input)
+                                            || isStreaming
+                                            || (mode === "history" && !attachedId)
+                                        }
+                                        onClick={() => void handleSend()}
+                                        aria-label="Gửi câu hỏi"
+                                    >
+                                        <Send />
+                                        <span>{isStreaming ? "Đang trả lời" : "Gửi"}</span>
+                                    </button>
+                                </div>
                             </div>
 
                             <div className={styles.composerMeta}>
                                 <span>ENTER để gửi · SHIFT + ENTER để xuống dòng</span>
                                 <span className={styles.composerHint}>
-                                    <Sparkles /> Chat không dùng lượt Analyze
+                                    {mode === "legal"
+                                        ? <><Scale /> Dùng adapter pháp luật</>
+                                        : <><Sparkles /> Không quét lại Analyze</>}
                                 </span>
                                 <div>
                                     <span>AI CREDITS</span>

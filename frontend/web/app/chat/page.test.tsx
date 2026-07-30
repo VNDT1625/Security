@@ -17,6 +17,15 @@ const mocks = vi.hoisted(() => ({
             target: "https://example.test/path",
             decision: "BLOCK",
         },
+        {
+            id: "019f-test-history-older",
+            timestamp: "31/07 13:00",
+            type: "Email",
+            score: 24,
+            riskLevel: "low",
+            target: "older@example.test",
+            decision: "ALLOW",
+        },
     ]),
 }));
 
@@ -63,13 +72,19 @@ describe("ChatPage question-and-answer contract", () => {
         mocks.getScanHistory.mockClear();
     });
 
-    it("is a Q&A workspace and clearly separates itself from Analyze", async () => {
+    it("exposes exactly the legal-adapter and @ID-history purposes", async () => {
         render(<ChatPage />);
 
         expect(screen.getByTestId("prewise-shell")).toBeInTheDocument();
         expect(screen.getByRole("heading", { name: "Trợ lý an toàn số" })).toBeInTheDocument();
-        expect(screen.getByRole("heading", { name: "Bạn muốn hỏi điều gì?" })).toBeInTheDocument();
-        expect(screen.getByText("Chat không dùng lượt Analyze")).toBeInTheDocument();
+        expect(screen.getByRole("heading", {
+            name: "Hỏi pháp luật an ninh mạng",
+        })).toBeInTheDocument();
+        expect(screen.getByRole("tab", { name: "Pháp luật an ninh mạng" }))
+            .toHaveAttribute("aria-selected", "true");
+        expect(screen.getByRole("tab", { name: "Hỏi theo @ID lịch sử" }))
+            .toBeInTheDocument();
+        expect(screen.getByText("Dùng adapter pháp luật")).toBeInTheDocument();
         expect(screen.queryByText("Core scans")).not.toBeInTheDocument();
         expect(screen.queryByText("Kiểm tra một URL")).not.toBeInTheDocument();
 
@@ -100,21 +115,55 @@ describe("ChatPage question-and-answer contract", () => {
                 modality: "text",
                 analysis_id: "019f-test-history-0001",
             },
+            undefined,
         ));
         expect(mocks.refreshQuota).toHaveBeenCalledOnce();
     });
 
-    it("sends an ordinary security question without Analyze context", async () => {
+    it("opens newest-first history suggestions when the user types @", async () => {
         const user = userEvent.setup();
         render(<ChatPage />);
 
+        await screen.findByRole("button", {
+            name: "Gắn kết quả @019f-test-history-0001",
+        });
         const input = screen.getByRole("textbox", { name: "Câu hỏi cho trợ lý" });
-        await user.type(input, "Tôi nên làm gì khi bị lộ mật khẩu?");
+        await user.type(input, "@");
+
+        const picker = screen.getByRole("listbox", { name: "Gợi ý lịch sử" });
+        const options = screen.getAllByRole("option");
+        expect(picker).toBeInTheDocument();
+        expect(options).toHaveLength(2);
+        expect(options[0]).toHaveAccessibleName("Chọn lịch sử @019f-test-history-0001");
+        expect(options[1]).toHaveAccessibleName("Chọn lịch sử @019f-test-history-older");
+
+        await user.click(options[0]);
+        expect(input).toHaveValue("@019f-test-history-0001 ");
+    });
+
+    it("forces legal questions through the legal adapter context", async () => {
+        const user = userEvent.setup();
+        render(<ChatPage />);
+
+        await user.type(screen.getByRole("textbox", { name: "Chủ thể" }), "doanh nghiệp");
+        await user.type(screen.getByRole("textbox", { name: "Hành động" }), "thông báo sự cố");
+        await user.type(
+            screen.getByRole("textbox", { name: "Dữ liệu hoặc tài sản liên quan" }),
+            "dữ liệu cá nhân",
+        );
+        const input = screen.getByRole("textbox", { name: "Câu hỏi cho trợ lý" });
+        await user.type(input, "Tôi phải thông báo trong thời hạn nào?");
         await user.click(screen.getByRole("button", { name: "Gửi câu hỏi" }));
 
         await waitFor(() => expect(mocks.sendMessage).toHaveBeenCalledWith(
-            "Tôi nên làm gì khi bị lộ mật khẩu?",
+            "Tôi phải thông báo trong thời hạn nào?",
             undefined,
+            expect.objectContaining({
+                jurisdiction: "VN",
+                actor: "doanh nghiệp",
+                action: "thông báo sự cố",
+                data_or_asset: "dữ liệu cá nhân",
+            }),
         ));
     });
 });
