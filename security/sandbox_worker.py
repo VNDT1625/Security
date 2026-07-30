@@ -539,11 +539,10 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     detected_payments = [
         method for method, values in payment_terms.items() if any(value in page_text for value in values)
     ]
-    # A page that publishes a price, payment method, or recipient is asking for
-    # a transaction even when it avoids ordinary shop words such as "buy now".
-    # Treating those pages as non-commercial incorrectly suppressed the legal
-    # identity/contact checks while still detecting the payment recipient.
-    is_commercial = is_commercial or bool(prices or detected_payments or recipient_hints)
+    # A concrete payment recipient is evidence of a transaction even when the
+    # page avoids shop words. Prices and payment-brand mentions alone can come
+    # from advertising on a non-commercial first-party utility.
+    is_commercial = is_commercial or bool(recipient_hints)
 
     if not has_contact and is_commercial:
         issues.append(_issue("missing_contact_information", "medium", "content", "Trang thương mại không có thông tin liên hệ rõ ràng."))

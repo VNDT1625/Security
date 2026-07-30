@@ -1195,9 +1195,14 @@ def run(payload: dict) -> dict:
                             const paymentTerms = ['bank transfer', 'wire transfer', 'crypto', 'bitcoin', 'usdt', 'gift card', 'credit card', 'debit card', 'cash on delivery', 'cod', 'chuyen khoan', 'thanh toan'];
                             const payment_methods = paymentTerms.filter((term) => folded.includes(term));
                             const prices = (text.match(/(?:[$€£¥]|vnd|usd|eur|đ|dong)\\s?\\d[\\d.,]*|\\d[\\d.,]*\\s?(?:vnd|usd|eur|đ|dong)/gi) || []).slice(0, 20);
+                            const discount_values = Array.from(text.matchAll(/\\b(\\d{1,2})\\s*%\\s*(?:off|discount|sale|giam|giảm)/gi)).map((match) => Number(match[1])).filter((value) => value <= 99);
                             const recipient_hints = (text.match(/(?:account|stk|so tai khoan|wallet|vi)\\s*(?:number|no|:|-)?\\s*[A-Z0-9]{8,34}/gi) || []).slice(0, 8);
                             const address_terms = (text.match(/(?:address|dia chi|registered office|head office)\\s*[:-]?\\s*[^\\n]{8,160}/gi) || []).slice(0, 8);
                             const complaint_terms = ['scam', 'fraud', 'lua dao', 'khieu nai', 'complaint', 'not received', 'mat tien'].filter((term) => folded.includes(term));
+                            const urgency_hits = ['act now', 'urgent', 'immediately', 'verify now', 'limited time', 'khan cap', 'xac minh ngay'].filter((term) => folded.includes(term));
+                            const placeholder_hits = ['lorem ipsum', 'your company name', 'example product', 'insert text here', 'coming soon'].filter((term) => folded.includes(term));
+                            const visible_words = folded.match(/[a-z0-9]{2,}/g) || [];
+                            const unique_word_ratio = visible_words.length ? new Set(visible_words).size / visible_words.length : null;
                             const reviewNodes = Array.from(document.querySelectorAll('[itemprop="review"], [itemprop="ratingValue"], .review, .reviews, .testimonial, [class*="rating" i]'));
                             const rating_mentions = (text.match(/(?:[1-5](?:\\.\\d)?\\s*[/]\\s*5|[1-5](?:\\.\\d)?\\s*(?:stars?|sao))/gi) || []).slice(0, 30);
                             const legal_names = [];
@@ -1221,7 +1226,17 @@ def run(payload: dict) -> dict:
                             for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
                                 try { visit(JSON.parse(node.textContent || 'null')); } catch (_) {}
                             }
-                            const commercial = prices.length > 0 || payment_methods.length > 0 || recipient_hints.length > 0 || /add to cart|buy now|checkout|mua ngay|gio hang/.test(folded);
+                            const commerceText = /add to cart|buy now|checkout|mua ngay|gio hang|thanh toan/.test(folded);
+                            const commerceLink = hrefs.some((item) => /checkout|cart|order|buy-now|mua-ngay|thanh-toan/.test((item.label + ' ' + item.href).toLowerCase()));
+                            const commercial = commerceText || commerceLink || recipient_hints.length > 0;
+                            const high_risk_sensitive_fields = Array.from(document.querySelectorAll('input, textarea')).map((node) => [
+                                node.getAttribute('type') || '',
+                                node.getAttribute('name') || '',
+                                node.getAttribute('id') || '',
+                                node.getAttribute('autocomplete') || '',
+                                node.getAttribute('placeholder') || '',
+                                node.getAttribute('aria-label') || '',
+                            ].join(' ').toLowerCase()).filter((value) => /seed|mnemonic|private.?key|recovery.?phrase|cvv|cvc|cccd|social.?security/.test(value)).slice(0, 12);
                             const image_hosts = Array.from(new Set(Array.from(document.images).map((image) => { try { return new URL(image.currentSrc || image.src, location.href).hostname; } catch (_) { return ''; } }).filter(Boolean))).slice(0, 20);
                             const script_hosts = Array.from(new Set(Array.from(document.scripts).map((script) => { try { return script.src ? new URL(script.src, location.href).hostname : ''; } catch (_) { return ''; } }).filter(Boolean))).slice(0, 20);
                             return {
@@ -1244,8 +1259,14 @@ def run(payload: dict) -> dict:
                                 refund_links,
                                 is_commercial: commercial,
                                 prices,
+                                max_discount_percent: discount_values.length ? Math.max(...discount_values) : null,
                                 payment_methods,
                                 payment_recipient_hints: recipient_hints,
+                                urgency_hits,
+                                word_count: visible_words.length,
+                                unique_word_ratio,
+                                placeholder_hits,
+                                high_risk_sensitive_fields,
                                 review_elements: reviewNodes.length,
                                 rating_mentions,
                                 structured_ratings: ratings.slice(0, 8),

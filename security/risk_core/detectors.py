@@ -753,7 +753,10 @@ def add_http_sandbox(obs: ScanObservations, report: Any) -> None:
 
 
 def add_browser_sandbox(obs: ScanObservations, report: Any) -> None:
-    covered = {16, 19, 28, 29, 30, 33, 34, 35, 36, 37, 38, 39, 40, 41, 46, 48, 49}
+    covered = {
+        16, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
+        33, 34, 35, 36, 37, 38, 39, 40, 41, 46, 48, 49,
+    }
     if not report.ok:
         reason = report.issues[0].message if report.issues else "Browser sandbox unavailable."
         for cid in covered:
@@ -761,6 +764,7 @@ def add_browser_sandbox(obs: ScanObservations, report: Any) -> None:
         return
     obs.clean(*covered)
     identity = report.page_identity if isinstance(report.page_identity, dict) else {}
+    issue_codes = {issue.code for issue in report.issues}
     visual = report.visual_analysis if isinstance(report.visual_analysis, dict) else {}
     if visual.get("status") == "no_reference":
         obs.not_applicable[19] = "No curated brand visual reference is installed for this page."
@@ -811,6 +815,107 @@ def add_browser_sandbox(obs: ScanObservations, report: Any) -> None:
             source="browser_identity",
             metadata=contact.metadata,
         )
+    commercial = bool(identity.get("is_commercial"))
+    _replace_assessment(
+        obs,
+        21,
+        assess_business_email(
+            str(getattr(report, "final_url", "") or getattr(report, "url", "") or obs.url),
+            commercial=commercial,
+            emails=identity.get("emails", ()) or (),
+        ),
+        source="browser_identity",
+    )
+    _replace_assessment(
+        obs,
+        22,
+        assess_business_address(
+            commercial=commercial,
+            addresses=identity.get("addresses", ()) or (),
+        ),
+        source="browser_identity",
+    )
+    _replace_assessment(
+        obs,
+        23,
+        assess_legal_identity(
+            commercial=commercial,
+            legal_names=identity.get("legal_names", ()) or (),
+            business_ids=identity.get("business_ids", ()) or (),
+        ),
+        source="browser_identity",
+    )
+    _replace_assessment(
+        obs,
+        24,
+        assess_privacy_policy(
+            collects_sensitive_data=bool(identity.get("sensitive_fields")),
+            privacy_links=identity.get("privacy_policy_links", ()) or (),
+        ),
+        source="browser_identity",
+    )
+    _replace_assessment(
+        obs,
+        25,
+        assess_terms_refund(
+            commercial=commercial,
+            terms_links=identity.get("terms_links", ()) or (),
+            refund_links=identity.get("refund_links", ()) or (),
+        ),
+        source="browser_identity",
+    )
+    _replace_assessment(
+        obs,
+        26,
+        assess_content_quality(
+            word_count=int(identity.get("word_count") or 0),
+            unique_word_ratio=(
+                float(identity["unique_word_ratio"])
+                if identity.get("unique_word_ratio") is not None
+                else None
+            ),
+            placeholder_hits=identity.get("placeholder_hits", ()) or (),
+        ),
+        source="browser_identity",
+    )
+    _replace_assessment(
+        obs,
+        27,
+        assess_promotion_claim(
+            int(identity["max_discount_percent"])
+            if identity.get("max_discount_percent") is not None
+            else None
+        ),
+        source="browser_identity",
+    )
+    _replace_assessment(
+        obs,
+        28,
+        assess_coercive_content(
+            urgency_hits=identity.get("urgency_hits", ()) or (),
+            sensitive_context=bool(identity.get("sensitive_fields")),
+            transaction_context=bool(
+                commercial or identity.get("payment_recipient_hints")
+            ),
+            external_form="cross_origin_form_action" in issue_codes,
+        ),
+        source="browser_identity",
+    )
+    high_risk_fields = [
+        str(value)
+        for value in identity.get("high_risk_sensitive_fields", ()) or ()
+        if str(value)
+    ]
+    if high_risk_fields:
+        obs.risk(
+            29,
+            "high_risk_secret_request",
+            1.0,
+            1.0,
+            "The rendered page requests a recovery secret or regulated identifier.",
+            source="browser_identity",
+            metadata={"fields": high_risk_fields[:5]},
+        )
     if not identity.get("social_links"):
         obs.not_applicable[41] = "No social profile was linked from the rendered page."
     obs.not_applicable[39] = (
@@ -837,7 +942,6 @@ def add_browser_sandbox(obs: ScanObservations, report: Any) -> None:
         "malvertising_behavior": 38,
         "forged_brand_image": 40,
     }
-    issue_codes = {issue.code for issue in report.issues}
     credential_field = bool(
         {"otp_input_detected", "password_input_detected"} & issue_codes
     ) or bool(identity.get("sensitive_fields"))
