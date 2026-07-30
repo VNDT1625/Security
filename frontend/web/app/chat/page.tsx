@@ -24,22 +24,58 @@
  * _Requirements: 8.1, 8.2, 8.3, 8.4, 8.6_
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import {
+    ArrowUpRight,
+    LockKeyhole,
+    MailWarning,
+    Paperclip,
+    RefreshCw,
+    Scale,
+    ScanSearch,
+    Send,
+    ShieldCheck,
+    Sparkles,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import ChatMessage from "@/components/ChatMessage";
+import { PrewiseShell } from "@/components/PrewiseUI";
 import { useAuth } from "@/context/AuthContext";
 import { useChatSession, type ChatContext } from "@/hooks/useChatSession";
 import { looksLikeUrl } from "@/lib/quick-scan";
 import type { LegalContext } from "@/lib/types";
 
+import styles from "./chat.module.css";
+
 /** Nội dung bong bóng chào mừng của trợ lý (UI_wireframe §1.5). */
 const WELCOME_TEXT =
-    "🛡 Chào bạn! Dán URL hoặc nội dung email vào đây, tôi sẽ đánh giá độ tin cậy và giải thích lý do.";
+    "Dán URL, email hoặc tin nhắn đáng ngờ. Prewise sẽ kiểm tra tín hiệu, chấm điểm rủi ro và giải thích bằng chứng.";
 
 /** Thông điệp khi người dùng hết lượt quét trong ngày. */
 const QUOTA_EXCEEDED_TEXT =
     "Bạn đã hết lượt quét miễn phí hôm nay. Nâng cấp gói hoặc cài Extension để tiếp tục được bảo vệ.";
+
+const QUICK_STARTS = [
+    {
+        label: "Kiểm tra một URL",
+        detail: "Tên miền, chuyển hướng và dấu hiệu giả mạo",
+        value: "Hãy kiểm tra URL này:\n",
+        icon: ScanSearch,
+    },
+    {
+        label: "Phân tích email",
+        detail: "Người gửi, ý đồ và yêu cầu nhạy cảm",
+        value: "Hãy phân tích nội dung email sau:\n",
+        icon: MailWarning,
+    },
+    {
+        label: "Hỏi tiếp về kết quả",
+        detail: "Giải thích rủi ro bằng ngôn ngữ dễ hiểu",
+        value: "Hãy giải thích những dấu hiệu rủi ro quan trọng nhất.",
+        icon: Sparkles,
+    },
+];
 
 /**
  * ChatPage — giao diện chat đánh giá có ngữ cảnh.
@@ -154,161 +190,205 @@ export default function ChatPage(): JSX.Element {
     const showWelcome = messages.length === 0;
 
     return (
-        <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-3xl min-w-0 flex-col px-3 py-3 pb-[calc(4.5rem+env(safe-area-inset-bottom))] sm:px-4 sm:py-6 sm:pb-6">
-            {/* Danh sách hội thoại (cuộn) */}
-            <div
-                ref={scrollRef}
-                className="flex-1 space-y-4 overflow-y-auto pb-4"
-                aria-live="polite"
-            >
-                {/* Bong bóng chào mừng khi chưa có tin nhắn nào */}
-                {showWelcome && (
-                    <ChatMessage
-                        message={{
-                            id: "welcome",
-                            role: "assistant",
-                            text: WELCOME_TEXT,
-                            createdAt: 0,
-                        }}
-                    />
-                )}
-
-                {/* Danh sách tin nhắn thực tế */}
-                {messages.map((message) => (
-                    <ChatMessage
-                        key={message.id}
-                        message={message}
-                        isStreaming={
-                            isStreaming && message.id === lastAssistantId
-                        }
-                    />
-                ))}
-
-                {/* CTA cài Extension sau khi có kết quả đánh giá */}
-                {hasAssessment && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                        💡 Muốn được bảo vệ tự động khi duyệt web?{" "}
-                        <Link
-                            href="/downloads"
-                            className="font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-950"
-                        >
-                            Cài Extension
-                        </Link>
+        <PrewiseShell>
+            <main id="main-content" className={styles.page}>
+                <header className={styles.pageHeader}>
+                    <div>
+                        <p className={styles.eyebrow}><i /> AI / RISK COPILOT</p>
+                        <h1>Trợ lý phân tích</h1>
+                        <p>Kiểm tra tín hiệu đáng ngờ và hỏi tiếp trên cùng một ngữ cảnh.</p>
                     </div>
-                )}
-            </div>
-
-            {/* Banner lỗi mất kết nối WS + nút thử lại (Req 8.5) */}
-            {error && (
-                <div
-                    role="alert"
-                    className="mb-3 flex flex-col items-stretch justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700 sm:flex-row sm:items-center"
-                >
-                    <span>⚠ {error}</span>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            void retryLast();
-                        }}
-                        className="min-h-11 shrink-0 rounded-md border border-red-300 bg-white px-3 py-2 font-medium text-red-700 hover:bg-red-100"
-                    >
-                        Thử lại
-                    </button>
-                </div>
-            )}
-
-            {/* Thông báo hết quota + CTA nâng cấp/Extension */}
-            {quotaBlocked && (
-                <div
-                    role="alert"
-                    className="mb-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm text-orange-800"
-                >
-                    {QUOTA_EXCEEDED_TEXT}{" "}
-                    <a
-                        href="/pricing"
-                        className="font-semibold underline underline-offset-2"
-                    >
-                        Xem gói nâng cấp
-                    </a>
-                </div>
-            )}
-
-            {/* Ô nhập cố định dưới cùng */}
-            <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-                <label className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-700">
-                    <input type="checkbox" checked={legalMode}
-                        onChange={(event) => setLegalMode(event.target.checked)} />
-                    ⚖ Câu hỏi pháp luật
-                </label>
-                {legalMode && (
-                    <div className="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-blue-100 bg-blue-50 p-3 sm:grid-cols-2">
-                        <input value={legalContext.jurisdiction} aria-label="Quốc gia"
-                            onChange={(e) => setLegalContext({ ...legalContext, jurisdiction: e.target.value })}
-                            placeholder="Quốc gia (VN)" className="rounded border px-3 py-2 text-sm text-gray-800" />
-                        <input type="date" value={legalContext.as_of_date} aria-label="Ngày áp dụng"
-                            onChange={(e) => setLegalContext({ ...legalContext, as_of_date: e.target.value })}
-                            className="rounded border px-3 py-2 text-sm text-gray-800" />
-                        <input value={legalContext.actor} aria-label="Chủ thể"
-                            onChange={(e) => setLegalContext({ ...legalContext, actor: e.target.value })}
-                            placeholder="Chủ thể, ví dụ: doanh nghiệp" className="rounded border px-3 py-2 text-sm text-gray-800" />
-                        <input value={legalContext.action} aria-label="Hành động"
-                            onChange={(e) => setLegalContext({ ...legalContext, action: e.target.value })}
-                            placeholder="Hành động cần đánh giá" className="rounded border px-3 py-2 text-sm text-gray-800" />
-                        <input value={legalContext.data_or_asset} aria-label="Dữ liệu hoặc tài sản"
-                            onChange={(e) => setLegalContext({ ...legalContext, data_or_asset: e.target.value })}
-                            placeholder="Dữ liệu/tài sản liên quan" className="rounded border px-3 py-2 text-sm text-gray-800 sm:col-span-2" />
+                    <div className={styles.headerStatus}>
+                        <span><LockKeyhole aria-hidden /> Kết nối mã hóa</span>
+                        <span><ShieldCheck aria-hidden /> Bằng chứng có giải thích</span>
                     </div>
-                )}
-                <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-end">
-                    <textarea
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        rows={2}
-                        placeholder={legalMode ? "Nhập câu hỏi pháp luật..." : "Dán URL hoặc nội dung email..."}
-                        aria-label="Nội dung cần đánh giá"
-                        className="min-h-11 min-w-0 flex-1 resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400"
-                    />
-                    <button
-                        type="button"
-                        onClick={() => void handleSend()}
-                        disabled={isStreaming || input.trim().length === 0}
-                        className="min-h-11 shrink-0 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        Gửi ▶
-                    </button>
-                </div>
+                </header>
 
-                <div className="mt-2 flex flex-col items-stretch justify-between gap-2 text-xs text-gray-500 sm:flex-row sm:items-center">
-                    <input
-                        ref={emlInputRef}
-                        type="file"
-                        accept=".eml,message/rfc822"
-                        className="hidden"
-                        aria-hidden="true"
-                        onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (!file) return;
-                            void file.text().then((raw) => {
-                                setLegalMode(false);
-                                setInput(raw.slice(0, 200_000));
-                            });
-                            event.target.value = "";
-                        }}
-                    />
-                    <button
-                        type="button"
-                        onClick={() => emlInputRef.current?.click()}
-                        className="min-h-11 rounded-md px-2 py-2 text-left text-gray-500 hover:bg-gray-100"
-                        aria-label="Tải file .eml"
-                    >
-                        📎 Tải file .eml
-                    </button>
+                <div className={styles.workspace}>
+                    <section className={styles.conversation} aria-label="Hội thoại phân tích">
+                        <div className={styles.conversationBar}>
+                            <div>
+                                <span className={styles.liveDot} />
+                                <strong>Phiên phân tích mới</strong>
+                            </div>
+                            <small>{legalMode ? "LEGAL CONTEXT" : "RISK CONTEXT"} · STREAMING</small>
+                        </div>
 
-                    {/* Quota còn lại hôm nay theo gói (∞ cho pro/team) */}
-                    <span className="break-words" title="Nội dung mới dùng 1 scan; AI Evaluate và AI Explain là hai lần gọi riêng.">Core: {remainingLabel} scan · AI: {aiRemainingLabel} credit</span>
+                        <div ref={scrollRef} className={styles.messages} aria-live="polite">
+                            {showWelcome && (
+                                <section className={styles.welcome} aria-label="Bắt đầu phiên phân tích">
+                                    <div className={styles.welcomeIcon}><ShieldCheck aria-hidden /></div>
+                                    <p className={styles.welcomeKicker}>PREWISE ASSISTANT</p>
+                                    <h2>Bạn muốn kiểm tra điều gì?</h2>
+                                    <p>{WELCOME_TEXT}</p>
+                                    <div className={styles.quickStarts}>
+                                        {QUICK_STARTS.map(({ label, detail, value, icon: Icon }) => (
+                                            <button key={label} type="button" onClick={() => setInput(value)}>
+                                                <Icon aria-hidden />
+                                                <span><strong>{label}</strong><small>{detail}</small></span>
+                                                <ArrowUpRight aria-hidden />
+                                            </button>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+
+                            {messages.map((message) => (
+                                <ChatMessage
+                                    key={message.id}
+                                    message={message}
+                                    isStreaming={isStreaming && message.id === lastAssistantId}
+                                />
+                            ))}
+
+                            {hasAssessment && (
+                                <div className={styles.extensionCta}>
+                                    <Sparkles aria-hidden />
+                                    <span>Muốn được bảo vệ tự động khi duyệt web?</span>
+                                    <Link href="/downloads">Cài Extension <ArrowUpRight aria-hidden /></Link>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className={styles.composerZone}>
+                            {error && (
+                                <div role="alert" className={`${styles.notice} ${styles.errorNotice}`}>
+                                    <span>{error}</span>
+                                    <button type="button" onClick={() => void retryLast()}>
+                                        <RefreshCw aria-hidden /> Thử lại
+                                    </button>
+                                </div>
+                            )}
+
+                            {quotaBlocked && (
+                                <div role="alert" className={`${styles.notice} ${styles.quotaNotice}`}>
+                                    <span>{QUOTA_EXCEEDED_TEXT}</span>
+                                    <Link href="/pricing">Xem gói nâng cấp</Link>
+                                </div>
+                            )}
+
+                            <div className={styles.modeSwitch} role="group" aria-label="Chế độ trợ lý">
+                                <button
+                                    type="button"
+                                    className={!legalMode ? styles.activeMode : ""}
+                                    aria-pressed={!legalMode}
+                                    onClick={() => setLegalMode(false)}
+                                >
+                                    <ScanSearch aria-hidden /> Phân tích rủi ro
+                                </button>
+                                <button
+                                    type="button"
+                                    className={legalMode ? styles.activeMode : ""}
+                                    aria-pressed={legalMode}
+                                    onClick={() => setLegalMode(true)}
+                                >
+                                    <Scale aria-hidden /> Hỏi pháp luật
+                                </button>
+                            </div>
+
+                            {legalMode && (
+                                <div className={styles.legalFields}>
+                                    <label>Quốc gia
+                                        <input value={legalContext.jurisdiction} aria-label="Quốc gia"
+                                            onChange={(e) => setLegalContext({ ...legalContext, jurisdiction: e.target.value })}
+                                            placeholder="VN" />
+                                    </label>
+                                    <label>Ngày áp dụng
+                                        <input type="date" value={legalContext.as_of_date} aria-label="Ngày áp dụng"
+                                            onChange={(e) => setLegalContext({ ...legalContext, as_of_date: e.target.value })} />
+                                    </label>
+                                    <label>Chủ thể
+                                        <input value={legalContext.actor} aria-label="Chủ thể"
+                                            onChange={(e) => setLegalContext({ ...legalContext, actor: e.target.value })}
+                                            placeholder="Ví dụ: doanh nghiệp" />
+                                    </label>
+                                    <label>Hành động
+                                        <input value={legalContext.action} aria-label="Hành động"
+                                            onChange={(e) => setLegalContext({ ...legalContext, action: e.target.value })}
+                                            placeholder="Hành động cần đánh giá" />
+                                    </label>
+                                    <label className={styles.wideField}>Dữ liệu hoặc tài sản
+                                        <input value={legalContext.data_or_asset} aria-label="Dữ liệu hoặc tài sản"
+                                            onChange={(e) => setLegalContext({ ...legalContext, data_or_asset: e.target.value })}
+                                            placeholder="Thông tin, tài sản hoặc dữ liệu liên quan" />
+                                    </label>
+                                </div>
+                            )}
+
+                            <div className={styles.composer}>
+                                <textarea
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyDown={handleKeyDown}
+                                    rows={3}
+                                    placeholder={legalMode ? "Mô tả tình huống pháp lý cần làm rõ…" : "Dán URL, email hoặc tin nhắn đáng ngờ…"}
+                                    aria-label="Nội dung cần đánh giá"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => void handleSend()}
+                                    disabled={isStreaming || input.trim().length === 0}
+                                    aria-label="Gửi nội dung"
+                                >
+                                    <Send aria-hidden /><span>Gửi</span>
+                                </button>
+                            </div>
+
+                            <div className={styles.composerMeta}>
+                                <input
+                                    ref={emlInputRef}
+                                    type="file"
+                                    accept=".eml,message/rfc822"
+                                    hidden
+                                    aria-hidden="true"
+                                    onChange={(event) => {
+                                        const file = event.target.files?.[0];
+                                        if (!file) return;
+                                        void file.text().then((raw) => {
+                                            setLegalMode(false);
+                                            setInput(raw.slice(0, 200_000));
+                                        });
+                                        event.target.value = "";
+                                    }}
+                                />
+                                <button type="button" onClick={() => emlInputRef.current?.click()} aria-label="Tải file .eml">
+                                    <Paperclip aria-hidden /> Đính kèm .eml
+                                </button>
+                                <span>Enter để gửi · Shift + Enter để xuống dòng</span>
+                                <div title="Nội dung mới dùng 1 scan; AI Evaluate và AI Explain là hai lần gọi riêng.">
+                                    <span>CORE <strong>{remainingLabel}</strong></span>
+                                    <span>AI <strong>{aiRemainingLabel}</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <aside className={styles.contextRail} aria-label="Thông tin phiên chat">
+                        <section>
+                            <p className={styles.railLabel}>PHẠM VI PHÂN TÍCH</p>
+                            <h2>{legalMode ? "Ngữ cảnh pháp luật" : "Tín hiệu rủi ro"}</h2>
+                            <p>{legalMode
+                                ? "Trả lời dựa trên quốc gia, thời điểm và dữ kiện bạn cung cấp."
+                                : "Đối chiếu URL, nội dung và hành vi đáng ngờ trong cùng một phiên."}</p>
+                            <ul>
+                                <li><i>01</i><span><strong>Nhận diện</strong><small>Loại tín hiệu và mục đích</small></span></li>
+                                <li><i>02</i><span><strong>Đánh giá</strong><small>Điểm rủi ro và bằng chứng</small></span></li>
+                                <li><i>03</i><span><strong>Giải thích</strong><small>Hướng xử lý an toàn</small></span></li>
+                            </ul>
+                        </section>
+                        <section className={styles.privacyCard}>
+                            <LockKeyhole aria-hidden />
+                            <div><strong>Không tự mở liên kết</strong><p>Nội dung được hiển thị dạng trơ. Bạn quyết định mọi hành động tiếp theo.</p></div>
+                        </section>
+                        <section className={styles.quotaCard}>
+                            <p className={styles.railLabel}>HẠN MỨC HÔM NAY</p>
+                            <div><span>Core scans</span><strong>{remainingLabel}</strong></div>
+                            <div><span>AI credits</span><strong>{aiRemainingLabel}</strong></div>
+                            <Link href="/account/billing">Quản lý gói <ArrowUpRight aria-hidden /></Link>
+                        </section>
+                    </aside>
                 </div>
-            </div>
-        </div>
+            </main>
+        </PrewiseShell>
     );
 }

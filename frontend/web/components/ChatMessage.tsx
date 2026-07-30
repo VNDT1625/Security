@@ -21,8 +21,10 @@
  * _Requirements: 8.2, 8.3, 8.6, 18.1, 18.3_
  */
 
-import type { ChatMessageModel } from "@/lib/types";
+import { ShieldCheck } from "lucide-react";
 
+import styles from "@/app/chat/chat.module.css";
+import type { ChatMessageModel } from "@/lib/types";
 import EvidencePanel from "./EvidencePanel";
 import InertContent from "./InertContent";
 import RiskBadge from "./RiskBadge";
@@ -38,7 +40,7 @@ export interface ChatMessageProps {
 function TypingCursor() {
     return (
         <span
-            className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse bg-current align-middle"
+            className={styles.typingCursor}
             role="status"
             aria-label="Đang trả lời"
         />
@@ -50,7 +52,7 @@ const IMPORTANT_LEGAL_PHRASES = /^(Hướng xử lý thận trọng|Cần bổ s
 function FormattedAssistantText({ text }: { text: string }) {
     const parts = text.split(/(Hướng xử lý thận trọng|Cần bổ sung dữ kiện|Tạm thời chưa|Trước khi thực hiện, hãy xác minh:|Hệ thống đã tìm thấy nguồn liên quan nhưng chưa đủ để đưa ra kết luận chắc chắn\.)/gi);
     return <>{parts.map((part, index) => IMPORTANT_LEGAL_PHRASES.test(part)
-        ? <strong key={index} className="font-semibold text-gray-950">{part}</strong>
+        ? <strong key={index} className={styles.messageStrong}>{part}</strong>
         : <span key={index}>{part}</span>)}</>;
 }
 
@@ -73,14 +75,14 @@ export default function ChatMessage({
     }[legal.status] : "";
 
     // Canh lề: user bên phải, assistant bên trái.
-    const rowClass = isUser
-        ? "flex justify-end gap-2"
-        : "flex justify-start gap-2";
+    const rowClass = `${styles.messageRow} ${
+        isUser ? styles.userRow : styles.assistantRow
+    }`;
 
     // Kiểu bong bóng theo vai trò.
-    const bubbleClass = isUser
-        ? "max-w-[80%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 text-white"
-        : "max-w-[80%] rounded-2xl rounded-bl-sm border border-gray-200 bg-white px-4 py-2.5 text-gray-800";
+    const bubbleClass = `${styles.messageBubble} ${
+        isUser ? styles.userBubble : styles.assistantBubble
+    }`;
 
     return (
         <div
@@ -90,11 +92,8 @@ export default function ChatMessage({
         >
             {/* Avatar 🛡 chỉ cho assistant, canh trái */}
             {!isUser && (
-                <span
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-lg"
-                    aria-hidden="true"
-                >
-                    🛡
+                <span className={styles.messageAvatar} aria-hidden="true">
+                    <ShieldCheck />
                 </span>
             )}
 
@@ -117,7 +116,7 @@ export default function ChatMessage({
                     trơ, không phải link sống (Req 18.3). Bong bóng assistant là
                     văn bản của hệ thống (tin cậy) → render thẳng đã escape. */}
                 {message.text && (
-                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                    <p className={styles.messageText}>
                         {isUser ? (
                             <InertContent text={message.text} />
                         ) : (
@@ -129,32 +128,30 @@ export default function ChatMessage({
 
                 {/* Con trỏ nhấp nháy khi chưa có text nhưng đang stream */}
                 {!message.text && isStreaming && (
-                    <p className="text-sm leading-relaxed" aria-label="Đang trả lời">
+                    <p className={styles.messageText} aria-label="Đang trả lời">
                         <TypingCursor />
                     </p>
                 )}
 
                 {!isUser && legal && (
-                    <div className="space-y-3 text-sm">
-                        <div className={`rounded-lg border px-3 py-2 font-medium ${
-                            legal.status === "answered"
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                                : "border-amber-200 bg-amber-50 text-amber-800"
+                    <div className={styles.legalAnswer}>
+                        <div className={`${styles.legalStatus} ${
+                            legal.status === "answered" ? styles.legalStatusAnswered : ""
                         }`}>
                             ⚖ {legalStatusText}
                         </div>
                         {legal.missing_facts.length > 0 && (
-                            <p className="text-gray-700">
+                            <p className={styles.legalMissing}>
                                 Còn thiếu: {legal.missing_facts.join(", ")}.
                             </p>
                         )}
                         {legal.citations.length > 0 && (
                             <div>
-                                <p className="font-semibold text-gray-700">Nguồn đã truy xuất:</p>
-                                <ul className="mt-1 space-y-2">
+                                <p className={styles.legalSourcesTitle}>Nguồn đã truy xuất:</p>
+                                <ul className={styles.legalSources}>
                                     {legal.citations.map((citation) => (
-                                        <li key={citation.chunk_id} className="rounded border border-gray-200 p-2 text-xs text-gray-600">
-                                            <span className="font-semibold text-gray-800">
+                                        <li key={citation.chunk_id}>
+                                            <span>
                                                 {citation.title} — {citation.document_number}
                                             </span>
                                             <br />{citation.section}; trang {citation.page_start ?? "?"}
@@ -169,7 +166,7 @@ export default function ChatMessage({
                             </div>
                         )}
                         {legal.disclaimer && (
-                            <p className="border-t border-gray-200 pt-2 text-[11px] leading-relaxed text-gray-500">
+                            <p className={styles.legalDisclaimer}>
                                 {legal.disclaimer}
                             </p>
                         )}
@@ -178,14 +175,14 @@ export default function ChatMessage({
 
                 {/* Phần đánh giá chi tiết: reasons + EvidencePanel */}
                 {!isUser && assessment && (
-                    <div className="mt-3 space-y-3">
+                    <div className={styles.assessment}>
                         {/* Danh sách "Lý do chính" */}
                         {assessment.reasons.length > 0 && (
                             <div>
-                                <p className="text-sm font-semibold text-gray-700">
+                                <p className={styles.assessmentTitle}>
                                     Lý do chính:
                                 </p>
-                                <ul className="mt-1 list-inside list-disc space-y-0.5 text-sm text-gray-700">
+                                <ul className={styles.assessmentReasons}>
                                     {assessment.reasons.map((reason, index) => (
                                         <li key={index}>{reason}</li>
                                     ))}
