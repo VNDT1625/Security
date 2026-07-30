@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -60,7 +61,7 @@ def _build_test_db(path: Path, *, extraction_method: str = "native_pdf_text") ->
         "binding",
         "current",
         "2026-01-01",
-        "2026-07-22",
+        date.today().isoformat(),
         1,
         "vi",
         '["personal_data"]',

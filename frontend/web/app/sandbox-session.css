@@ -1,4 +1,5 @@
 .sandbox-page{height:auto;min-height:100vh}
+.live-sandbox-grid.single-card{grid-template-columns:minmax(0,1fr)}
 .sandbox-page-live{background:radial-gradient(circle at 50% 38%,rgba(55,181,165,.055),transparent 38%),#05080d}
 .sandbox-page-live .sandbox-toolbar{min-height:52px;border-color:rgba(76,139,132,.38);background:rgba(7,13,18,.92)}
 .sandbox-page-live .sandbox-subtabs{margin-top:12px}
@@ -188,6 +189,9 @@
 .auto-evidence-status>span{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:7px;padding:7px;border:1px solid rgba(70,101,101,.23);border-radius:6px}
 .auto-evidence-status>span>i{width:6px;height:6px;border-radius:50%;background:#4d5d60}.auto-evidence-status>span.observed>i{background:#69d0c3;box-shadow:0 0 7px rgba(99,244,229,.45)}
 .auto-evidence-status b{color:#8fa5a4;font-size:8px}.auto-evidence-status em{color:#637779;font-size:7px;font-style:normal}
+.sandbox-mode-unavailable{display:flex;align-items:center;gap:10px;margin:10px 0;padding:11px 13px;border:1px solid rgba(229,160,73,.42);border-radius:8px;background:rgba(130,76,20,.13);color:#d7a765}.sandbox-mode-unavailable svg{width:18px;flex:none}.sandbox-mode-unavailable b,.sandbox-mode-unavailable small{display:block}.sandbox-mode-unavailable b{font-size:10px}.sandbox-mode-unavailable small{margin-top:3px;color:#a98559;font-size:8px}
+.auto-evidence-status>span.unavailable>i,.auto-evidence-status>span.unknown>i{background:#d9a25f}.auto-evidence-status>span.no_activity>i{background:#5b8580}
+.auto-recommended-action{display:block;margin-top:10px;color:#92cfc7;font-size:9px;line-height:1.5}.auto-legacy-summary{display:block;margin-top:8px;color:#6f8483;font-size:8px;font-style:normal;line-height:1.45}.auto-cleanup-proof{margin-top:4px!important;color:#74a69f!important}
 .raw-sandbox-report{margin-top:10px;border:1px solid rgba(72,111,108,.27);border-radius:7px;background:#050a0d;color:#79908f;font-size:8px}.raw-sandbox-report summary{padding:9px 11px;cursor:pointer}.raw-sandbox-report pre{max-height:210px;margin:0;padding:12px;overflow:auto;border-top:1px solid rgba(72,111,108,.24);color:#80b9b2;font:8px/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 
 .remote-desktop-stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;background:#010203}

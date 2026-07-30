@@ -1,0 +1,16 @@
+{
+  "name": "Prewise Native Phishing Simulator",
+  "safety": "training-only, no credentials, no network",
+  "expectedArtifacts": [
+    "TRAINING_ONLY_FAKE_LOGIN.html",
+    "credential-harvest-simulator.bat",
+    "simulation-output.txt",
+    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\PrewisePhishingTraining"
+  ],
+  "expectedSignals": [
+    "EXECUTABLE_ARTIFACT_CHANGED",
+    "PERSISTENCE_REGISTRY_CHANGED"
+  ],
+  "expectedMinimumRiskScore": 65,
+  "expectedVerdict": "high_risk_behavior_observed"
+}

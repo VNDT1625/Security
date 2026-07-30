@@ -51,6 +51,7 @@ export interface AssessMetadata {
 export interface AssessResult {
     score: number; // 0..100 (từ risk_score*100)
     riskLevel: RiskLevelKey;
+    decision?: string;
     confidence: number; // 0..1
     reasons: string[]; // "Lý do chính" tiếng Việt
     evidence: Evidence[];

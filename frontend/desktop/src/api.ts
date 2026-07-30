@@ -54,6 +54,7 @@ export interface SmsAssessment {
 export interface Assessment {
   score: number;
   riskLevel: RiskLevel;
+  decision?: string;
   confidence: number;
   reasons: string[];
   evidence: Evidence[];
@@ -338,8 +339,13 @@ export const setSessionToken = (token: string | null) => {
   sessionToken = token || "";
 };
 export const apiBaseUrl = API_BASE;
-const level = (score: number): RiskLevel =>
-  score >= 70 ? "danger" : score >= 40 ? "warn" : "safe";
+const level = (score: number, decision: unknown = ""): RiskLevel => {
+  const policy = String(decision || "").toUpperCase();
+  if (["BLOCK", "SOFT_BLOCK", "HARD_BLOCK"].includes(policy)) return "danger";
+  if (["WARN", "ASK_USER_CONFIRMATION", "REQUIRE_REVIEW"].includes(policy)) return "warn";
+  if (policy === "ALLOW") return "safe";
+  return score >= 70 ? "danger" : score >= 40 ? "warn" : "safe";
+};
 
 const aiContextScore = (raw: Record<string, unknown>): AIContextScore | undefined => {
   const core =
@@ -363,9 +369,11 @@ const aiContextScore = (raw: Record<string, unknown>): AIContextScore | undefine
 const normalize = (raw: Record<string, unknown>): Assessment => {
   const numeric = Number(raw.risk_score ?? raw.score ?? 0);
   const score = Math.max(0, Math.min(100, Math.round(numeric <= 1 ? numeric * 100 : numeric)));
+  const decision = typeof raw.decision === "string" ? raw.decision : undefined;
   return {
     score,
-    riskLevel: level(score),
+    riskLevel: level(score, decision),
+    decision,
     confidence: Number(raw.confidence ?? 0.85),
     reasons: Array.isArray(raw.reasons) ? (raw.reasons as string[]) : [],
     evidence: Array.isArray(raw.evidence) ? (raw.evidence as Evidence[]) : [],
@@ -446,6 +454,8 @@ const text = (value: unknown, fallback = "") => (typeof value === "string" ? val
 function normalizeWebUrl(raw: Record<string, unknown>): Assessment {
   const numeric = Number(raw.risk_score ?? 0);
   const score = Math.max(0, Math.min(100, Math.round(numeric <= 1 ? numeric * 100 : numeric)));
+  const decision = text(raw.decision);
+  const riskLevel = level(score, decision);
   const ai =
     raw.ai_detection && typeof raw.ai_detection === "object"
       ? (raw.ai_detection as Record<string, unknown>)
@@ -478,16 +488,20 @@ function normalizeWebUrl(raw: Record<string, unknown>): Assessment {
     raw.sandbox_report && typeof raw.sandbox_report === "object"
       ? (raw.sandbox_report as Record<string, unknown>)
       : null;
-  const reasons = evidence.map((item) => item.message);
+  const reasonsFromCore = strings(raw.reasons);
+  const reasons = reasonsFromCore.length
+    ? reasonsFromCore
+    : evidence.map((item) => item.message);
   const defaultExplanation =
-    score >= 70
+    riskLevel === "danger"
       ? "Không truy cập, không nhập mật khẩu, OTP hoặc thông tin thanh toán. Hãy xác minh qua kênh chính thức."
-      : score >= 40
+      : riskLevel === "warn"
         ? "Có tín hiệu cần xem xét. Hãy xác minh tên miền và nguồn gửi trước khi tiếp tục."
         : "Chưa thấy tín hiệu rủi ro nổi bật trong phạm vi các lớp đã kiểm tra.";
   return {
     score,
-    riskLevel: level(score),
+    riskLevel,
+    decision: decision || undefined,
     confidence: Number(ai.confidence ?? 0.85),
     reasons,
     evidence,

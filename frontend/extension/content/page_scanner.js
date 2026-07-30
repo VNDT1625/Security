@@ -9,6 +9,7 @@
   let currentUrl = location.href;
   let scanToken = 0;
   let warningHost = null;
+  let warningGuard = null;
   const dismissedUrls = new Set();
 
   function isGmail() {
@@ -61,13 +62,29 @@
     });
   }
 
+  // The background strips credential-bearing query parameters and the fragment
+  // before scanning, so a returned entry.url is not byte-identical to
+  // location.href. Identity for "is this result about the page I am on" is
+  // therefore origin + path, which is also what the verdict was based on.
+  function samePage(a, b) {
+    try {
+      const left = new URL(a);
+      const right = new URL(b);
+      return left.origin === right.origin && left.pathname === right.pathname;
+    } catch {
+      return a === b;
+    }
+  }
+
   function clearWarning() {
+    warningGuard?.disconnect();
+    warningGuard = null;
     warningHost?.remove();
     warningHost = null;
   }
 
-  function riskCopy(score) {
-    if (score >= 70) return {
+  function riskCopy(level) {
+    if (level === "danger") return {
       label: "RỦI RO CAO",
       title: "Trang này có dấu hiệu nguy hiểm",
       accent: "#dc2626",
@@ -83,12 +100,14 @@
 
   function showWarning(entry) {
     const score = Number(entry?.score || 0);
+    const level = entry?.level || "safe";
     if (
       !protectionEnabled
       || !websiteProtection
       || entry?.status !== "complete"
-      || entry.url !== location.href
-      || score <= warningThreshold
+      || !samePage(entry.url, location.href)
+      || level === "safe"
+      || (!entry?.result?.decision && score <= warningThreshold)
       || dismissedUrls.has(entry.url)
     ) {
       clearWarning();
@@ -96,9 +115,14 @@
     }
 
     clearWarning();
-    const copy = riskCopy(score);
+    const copy = riskCopy(level);
     const host = document.createElement("div");
-    host.dataset.aiArmorPageWarning = "1";
+    // Deliberately unlabelled. The shadow root is closed, but the host element
+    // lives in the page's light DOM, so a stable marker attribute let the very
+    // page being warned about find and delete the banner:
+    //   new MutationObserver(() => document
+    //     .querySelectorAll('[data-ai-armor-page-warning]')
+    //     .forEach((n) => n.remove())).observe(document.documentElement, ...)
     host.style.cssText = "position:fixed;top:12px;left:50%;z-index:2147483647;width:min(860px,calc(100vw - 24px));transform:translateX(-50%);pointer-events:none";
     const root = host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
@@ -154,6 +178,15 @@
     root.append(style, bar);
     (document.documentElement || document.body).append(host);
     warningHost = host;
+    // Re-assert the banner if page script removes it. Only the user's close
+    // button (which sets warningHost = null via clearWarning) may retire it.
+    warningGuard?.disconnect();
+    warningGuard = new MutationObserver(() => {
+      if (warningHost === host && !host.isConnected) {
+        (document.documentElement || document.body).append(host);
+      }
+    });
+    warningGuard.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   async function scan(url = location.href, force = false) {
@@ -166,7 +199,7 @@
     const token = ++scanToken;
     try {
       const entry = await send({ type: "ASSESS_URL", url, force });
-      if (token === scanToken && url === location.href) showWarning(entry);
+      if (token === scanToken && samePage(url, location.href)) showWarning(entry);
     } catch {
       // Background/offline failures stay silent on the page. The toolbar popup exposes diagnostics.
     }

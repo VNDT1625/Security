@@ -41,13 +41,27 @@ from backend.routers import (
 from backend.services.operational_maintenance_scheduler import run_operational_maintenance_scheduler
 from backend.services.threat_feed_scheduler import run_threat_feed_scheduler
 
-
 logger = logging.getLogger(__name__)
+
+
+async def recover_cloud_sandbox_lifecycle() -> None:
+    try:
+        recovered = await sandbox_cloud.reconcile_cloud_sandbox_sessions_after_restart()
+        if any(recovered.values()):
+            logger.warning("Recovered interrupted Cloud Sandbox lifecycle: %s", recovered)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Cloud Sandbox restart recovery failed")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
+    sandbox_recovery_task = asyncio.create_task(
+        recover_cloud_sandbox_lifecycle(),
+        name="cloud-sandbox-restart-recovery",
+    )
     # The workers are lightweight while disabled and read persistent Admin
     # switches every minute, so turning them on does not need a deployment.
     feed_task = asyncio.create_task(
@@ -59,6 +73,10 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        if sandbox_recovery_task is not None and not sandbox_recovery_task.done():
+            sandbox_recovery_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await sandbox_recovery_task
         if feed_task is not None:
             feed_task.cancel()
             with suppress(asyncio.CancelledError):

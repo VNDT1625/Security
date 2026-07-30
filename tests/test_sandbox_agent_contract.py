@@ -123,6 +123,14 @@ def test_auto_collector_prioritizes_durable_evidence_and_never_loses_root(
     assessment_body = _function_body(agent_script, "Get-RiskAssessment")
     assert "analysis_inconclusive_telemetry_degraded" in assessment_body
     assert "Get-DegradedTelemetrySummary" in assessment_body
+    assert "signal_ids" in assessment_body
+
+    metadata_body = _function_body(agent_script, "Get-AnalysisMetadata")
+    for channel in ("process", "file", "registry", "network"):
+        assert f"= '{channel}'" in metadata_body
+    assert "evidence_channels" in metadata_body
+    assert "missing_channels" in metadata_body
+    assert "confidence" in metadata_body
 
     process_map_body = _function_body(agent_script, "Get-CurrentProcessMap")
     assert "$script:telemetryHealth.processes = $true" in process_map_body
@@ -176,6 +184,7 @@ def test_agent_does_not_export_secrets_or_evidence_contents(agent_script: str) -
     assert "PREWISE_SANDBOX_TOKEN" not in final_report_body
     assert "file_contents" not in final_report_body
     assert "registry_value_data" not in final_report_body
+    assert "analysis = $analysis" in final_report_body
 
     assert "raw_value_exported = $false" in agent_script
     assert "content_exported = $false" in agent_script
@@ -191,7 +200,7 @@ def test_agent_has_fail_safe_reporting_and_cleanup(agent_script: str) -> None:
     assert "Invoke-RestMethod -Method Post" in submit_body
 
     assert "catch {" in agent_script
-    assert "Send-FinalReport 'failed' 'analysis_failed'" in agent_script
+    assert "Send-FinalReport 'failed' 'analysis_failed' $summary (Get-AnalysisMetadata $null $null)" in agent_script
     assert "finally {" in agent_script
     assert "Stop-ObservedProcesses" in agent_script
     assert "Remove-SamplePrincipal" in agent_script
@@ -281,3 +290,40 @@ def test_risk_assessment_fails_closed_when_telemetry_is_degraded() -> None:
     assessment = json.loads(result.stdout)
     assert assessment["verdict"] == "analysis_inconclusive_telemetry_degraded"
     assert assessment["risk_score"] == 0
+
+
+def test_analysis_metadata_reports_coverage_and_missing_channels() -> None:
+    powershell = shutil.which("powershell") or shutil.which("powershell.exe")
+    if powershell is None:
+        pytest.skip("Windows PowerShell is not available")
+
+    escaped_path = str(AGENT_PATH).replace("'", "''")
+    command = (
+        f"$source=[IO.File]::ReadAllText('{escaped_path}'); "
+        "$tokens=$null; $errors=$null; "
+        "$ast=[System.Management.Automation.Language.Parser]::ParseInput("
+        "$source,[ref]$tokens,[ref]$errors); "
+        "$fn=$ast.Find({param($node) $node -is "
+        "[System.Management.Automation.Language.FunctionDefinitionAst] -and "
+        "$node.Name -eq 'Get-AnalysisMetadata'},$true); "
+        "if($null -eq $fn){throw 'missing Get-AnalysisMetadata'}; "
+        "Invoke-Expression $fn.Extent.Text; "
+        "$script:telemetryHealth=[ordered]@{processes=$true;files=$true;registry=$false;network=$false}; "
+        "$assessment=[ordered]@{risk_score=35;signal_ids=@('DROPPED_SCRIPT')}; "
+        "$execution=[ordered]@{execution_observed=$true;execution_failed=$false;timed_out=$false;root_exit_code=0}; "
+        "Get-AnalysisMetadata $assessment $execution | ConvertTo-Json -Depth 5 -Compress"
+    )
+    result = subprocess.run(
+        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    metadata = json.loads(result.stdout)
+    assert metadata["risk_score"] == 35
+    assert metadata["confidence"] == 0.5
+    assert metadata["evidence_channels"] == ["process", "file"]
+    assert metadata["missing_channels"] == ["registry", "network"]
+    assert metadata["risk_signals"] == ["DROPPED_SCRIPT"]

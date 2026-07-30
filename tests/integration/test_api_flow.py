@@ -257,6 +257,11 @@ def test_judge_demo_phishing_comparison_uses_live_detector():
     assert body["ai_detection"]["detected"] is True
     assert body["risk_score"] >= 0.7
     assert body["ai_detection"]["model_version"]
+    assert body["schema_version"] == "2"
+    assert body["decision"] == "BLOCK"
+    assert body["risk_level"] == body["threat_level"]
+    assert body["scoring_version"] == body["risk_core"]["scoring_version"]
+    assert body["risk_score"] == body["risk_core"]["final_score"]
 
 
 def test_judge_demo_prompt_injection_before_after():

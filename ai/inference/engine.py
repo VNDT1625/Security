@@ -268,12 +268,23 @@ class InferenceEngine:
         lightweight_score: float | None,
         heuristic_score: float,
     ) -> float:
+        """Blend trained models, then let the rule heuristic raise but never lower.
+
+        The heuristic is a crude keyword baseline, not a peer estimator. When it
+        was averaged in as a third component, a missing transformer left it
+        holding a third of the weight, and on non-Vietnamese text its ~0.05
+        baseline dragged confident classifier scores below the warning
+        threshold. Treating rules as a floor matches how the prompt path
+        (``max(model_prob, firewall.score)``) and the message risk core already
+        combine deterministic and learned signals.
+        """
         weighted = [
             (transformer_score, 0.70),
             (lightweight_score, 0.20),
-            (heuristic_score, 0.10),
         ]
         available = [(score, weight) for score, weight in weighted if score is not None]
+        if not available:
+            return _clip01(heuristic_score)
         total_weight = sum(weight for _, weight in available)
         ensemble = sum(float(score) * weight for score, weight in available) / total_weight
         return _clip01(max(ensemble, heuristic_score))

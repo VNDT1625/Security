@@ -30,14 +30,16 @@ import { PrewiseShell } from "@/components/PrewiseUI";
 import { getApiClient } from "@/lib/api";
 import { readStoredAccessToken } from "@/lib/auth-session";
 import type {
-    BrowserSandboxResult,
     ExeProviderResult,
     ExeSandboxResult,
 } from "@/lib/types";
-import { WebIsolationReport } from "./WebIsolationReport";
+import { CloudAnalysisReport } from "./cloud-analysis-report";
+import type { CloudAnalysis } from "./cloud-analysis-report";
+import { ExeQuickReport, resetQuickExeSelection } from "./exe-quick-report";
 import {
     REMOTE_IFRAME_SANDBOX_POLICY,
     buildSessionCreatePayload,
+    canRequestInteractiveRemoteAccess,
     formatLeaseCountdown,
     labActionState,
     leaseDeadline,
@@ -45,6 +47,8 @@ import {
     resolveSandboxMode,
     resolveSandboxPhase,
     safeRemoteConnectUrl,
+    sandboxModeAvailability,
+    sandboxStartActionLabel,
     selectDisplayedSession,
     timelineState,
 } from "./session-ui";
@@ -76,6 +80,7 @@ type CloudSession = {
         size: number | null;
         status: string;
         report: Record<string, unknown>;
+        analysis?: CloudAnalysis | null;
     };
 };
 type SandboxPayment = {
@@ -157,8 +162,15 @@ type CloudStatus = {
         creditCost: number;
         allowed: boolean;
         configured: boolean;
+        modes?: Partial<Record<SandboxMode, {
+            available: boolean;
+            reason?: string | null;
+            missing?: string[];
+            leaseMinutes?: number | number[];
+        }>>;
     }>;
     cloudConfigured: boolean;
+    interactiveAvailable?: boolean;
     freeConfigured: boolean;
     session: CloudSession | null;
     recentSession?: CloudSession | null;
@@ -292,14 +304,6 @@ function phaseTimelineIndex(
     return 0;
 }
 
-function reportArrayLength(report: Record<string, unknown>, keys: string[]): number {
-    for (const key of keys) {
-        const value = report[key];
-        if (Array.isArray(value)) return value.length;
-    }
-    return 0;
-}
-
 function remoteUnavailableLabel(reason?: string | null): string {
     if (!reason) return "Gateway điều khiển chưa trả về một URL phiên hợp lệ.";
     if (reason === "auto_mode_agent_only") {
@@ -310,6 +314,9 @@ function remoteUnavailableLabel(reason?: string | null): string {
     }
     if (reason === "interactive_mode_disabled") {
         return "Chế độ Interactive đang bị tắt trên hạ tầng hiện tại.";
+    }
+    if (["missing configuration", "missing_configuration"].includes(reason)) {
+        return "Chưa cấu hình đủ Interactive AMI, security group và remote broker.";
     }
     return reason.replaceAll("_", " ");
 }
@@ -353,26 +360,6 @@ function verdictForScore(score: number): ExeSandboxResult["verdict"] {
     return "no_obvious_theft_detected";
 }
 
-function verdictLabel(verdict: ExeSandboxResult["verdict"]): string {
-    if (verdict === "dangerous") return "NGUY HIỂM";
-    if (verdict === "suspicious") return "ĐÁNG NGỜ";
-    if (verdict === "no_obvious_theft_detected") return "CHƯA THẤY DẤU HIỆU RÕ";
-    return "CHƯA XÁC ĐỊNH";
-}
-
-function providerStatusLabel(provider?: ExeProviderResult): string {
-    if (!provider?.configured || provider.status === "disabled") {
-        return "Chưa cấu hình · chỉ phân tích cục bộ";
-    }
-    if (provider.status === "not_found") return "Hash chưa có kết quả";
-    if (provider.status === "queued") return `Đang quét ${provider.progress}%`;
-    if (provider.status === "failed") return "Không lấy được kết quả";
-    if (provider.total_engines > 0) {
-        return `${provider.detected_engines}/${provider.total_engines} engine phát hiện`;
-    }
-    return "Đã nhận báo cáo provider";
-}
-
 function mergeProviderResult(
     current: ExeSandboxResult,
     provider: ExeProviderResult,
@@ -402,12 +389,9 @@ function mergeProviderResult(
 
 export default function SandboxPage() {
     const [view, setView] = useState<View>("lab");
-    const [url, setUrl] = useState("https://example.com");
     const [busy, setBusy] = useState(false);
-    const [webBusy, setWebBusy] = useState(false);
     const [exeBusy, setExeBusy] = useState(false);
     const [error, setError] = useState("");
-    const [web, setWeb] = useState<BrowserSandboxResult | null>(null);
     const [exe, setExe] = useState<ExeSandboxResult | null>(null);
     const [exeFile, setExeFile] = useState<File | null>(null);
     const [shareExe, setShareExe] = useState(false);
@@ -522,6 +506,10 @@ export default function SandboxPage() {
 
     async function startSession() {
         if (cloud?.session) return;
+        if (!selectedModeAvailability.available) {
+            setError("Interactive/Auto chưa có hạ tầng cho chế độ đã chọn.");
+            return;
+        }
         setBusy(true);
         setError("");
         try {
@@ -597,22 +585,21 @@ export default function SandboxPage() {
     const displayedTimelineIndex =
         session?.tier === "free" ? browserTimelineIndex : timelineIndex;
     const selectedTierInfo = cloud?.availableTiers.find((item) => item.tier === selected);
+    const selectedModeAvailability = sandboxModeAvailability(
+        selected,
+        labMode,
+        Boolean(selectedTierInfo?.configured),
+        selectedTierInfo?.modes,
+    );
     const selectedCreditCost = selectedTierInfo?.creditCost ?? 0;
     const lacksCredits = selected !== "free" && (cloud?.credits ?? 0) < selectedCreditCost;
-    const sampleVerdict = session?.sample.report.verdict;
     const sampleAlreadySubmitted = Boolean(
         activeSession &&
             activeSession.tier !== "free" &&
             activeSession.sample.status !== "none",
     );
     const report = session?.sample.report ?? {};
-    const reportMetrics = {
-        processes: reportArrayLength(report, ["process_tree", "processes"]),
-        files: reportArrayLength(report, ["file_events", "files"]),
-        registry: reportArrayLength(report, ["registry_events", "registry"]),
-        network: reportArrayLength(report, ["network_events", "network_connections"]),
-    };
-    const labActions = labActionState(webBusy, exeBusy);
+    const labActions = labActionState(exeBusy);
     const hasPaidAccess =
         cloud?.accountTier === "pro" || cloud?.accountTier === "max";
 
@@ -640,6 +627,15 @@ export default function SandboxPage() {
             (activeSession.remoteStatus !== "staging" ||
                 activeSession.sample.status !== "none"),
     );
+    const canRequestRemoteAccess = canRequestInteractiveRemoteAccess({
+        sessionReady,
+        sessionMode,
+        leaseSeconds,
+        remoteWaitingForSample,
+        remoteExplicitlyUnavailable,
+        remoteAvailable: activeSession?.remoteAvailable,
+    });
+
     useEffect(() => {
         if (!remotePending) return;
         const timer = setInterval(() => void refresh(), 2000);
@@ -689,7 +685,7 @@ export default function SandboxPage() {
     }
 
     async function openRemoteDesktop() {
-        if (!activeSession || sessionMode !== "interactive" || !sessionReady) return;
+        if (!activeSession || !canRequestRemoteAccess) return;
         setRemoteBusy(true);
         setRemoteError("");
         try {
@@ -737,19 +733,6 @@ export default function SandboxPage() {
         }
     }
 
-    async function scanUrl() {
-        setWebBusy(true);
-        setError("");
-        setWeb(null);
-        try {
-            setWeb(await getApiClient().browserSandboxUrl(url));
-        } catch (caught) {
-            setError(caught instanceof Error ? caught.message : String(caught));
-        } finally {
-            setWebBusy(false);
-        }
-    }
-
     async function pollExeProvider(dataId: string) {
         const generation = ++providerPollGeneration.current;
         const delays = [10_000, 20_000, 30_000, 30_000, 30_000, 30_000];
@@ -789,14 +772,25 @@ export default function SandboxPage() {
 
     async function scanExe(file?: File, shareWithProvider = shareExe) {
         if (!file) return;
+        const sameFile = exeFile === file;
         providerPollGeneration.current += 1;
-        setProviderPolling(false);
-        setExeFile(file);
-        setExe(null);
+        if (sameFile) {
+            setProviderPolling(false);
+            setExe(null);
+        } else {
+            const reset = resetQuickExeSelection(file);
+            setExeFile(reset.file);
+            setExe(reset.result);
+            setShareExe(reset.shareWithProvider);
+            setProviderPolling(reset.providerPolling);
+        }
         setExeBusy(true);
         setError("");
         try {
-            const result = await getApiClient().sandboxExecutable(file, shareWithProvider);
+            const result = await getApiClient().sandboxExecutable(
+                file,
+                sameFile && shareWithProvider,
+            );
             setExe(result);
             if (result.provider?.status === "queued" && result.provider.data_id) {
                 void pollExeProvider(result.provider.data_id);
@@ -904,7 +898,7 @@ export default function SandboxPage() {
                         <span>ISOLATED ENVIRONMENT</span>
                         <b>
                             {view === "lab"
-                                ? "Quick Scan & Browser Lab"
+                                ? "Quick EXE Scan"
                                 : "Isolation Lab · Browser + Auto + Interactive"}
                         </b>
                     </div>
@@ -916,7 +910,6 @@ export default function SandboxPage() {
                     </div>
                     <button
                         onClick={() => {
-                            setWeb(null);
                             setExe(null);
                             setError("");
                             void refresh();
@@ -931,7 +924,7 @@ export default function SandboxPage() {
                         className={view === "lab" ? "active" : ""}
                         onClick={() => setView("lab")}
                     >
-                        <ShieldCheck />1. Lab<small>Tự động kiểm tra</small>
+                        <ShieldCheck />1. EXE Scan<small>Phân tích tĩnh, không chạy file</small>
                     </button>
                                     <button
                                         className={view === "sandbox" ? "active" : ""}
@@ -942,26 +935,7 @@ export default function SandboxPage() {
                 </nav>
 
                 {view === "lab" ? (
-                    <section className="live-sandbox-grid">
-                        <article className="live-sandbox-card">
-                            <Globe2 />
-                            <h2>Mở website thật</h2>
-                            <form
-                                onSubmit={(event) => {
-                                    event.preventDefault();
-                                    void scanUrl();
-                                }}
-                            >
-                                <input value={url} onChange={(event) => setUrl(event.target.value)} />
-                                <button disabled={labActions.web.disabled}>
-                                    {labActions.web.label}
-                                </button>
-                            </form>
-                            {web && (
-                                <WebIsolationReport result={web} />
-                            )}
-                        </article>
-
+                    <section className="live-sandbox-grid single-card">
                         <article className="live-sandbox-card exe-lab-card">
                             <FileWarning />
                             <h2>Test nhanh EXE</h2>
@@ -1014,9 +988,31 @@ export default function SandboxPage() {
                                                   )
                                             : undefined
                                     }
+                                    onOpenAuto={
+                                        exeFile
+                                            ? () => {
+                                                  setCloudExeFile(exeFile);
+                                                  setCloudExeConsent(false);
+                                                  setSelected("pro");
+                                                  setLabMode("auto");
+                                                  setView("sandbox");
+                                              }
+                                            : undefined
+                                    }
+                                    onOpenInteractive={
+                                        exeFile
+                                            ? () => {
+                                                  setCloudExeFile(exeFile);
+                                                  setCloudExeConsent(false);
+                                                  setSelected("pro");
+                                                  setLabMode("interactive");
+                                                  setView("sandbox");
+                                              }
+                                            : undefined
+                                    }
                                 />
                             )}
-                            <div className="local-shield-handoff">
+                            {!exe && <div className="local-shield-handoff">
                                 <Cloud />
                                 <span>
                                     <b>LOCAL SHIELD → CLOUD LAB</b>
@@ -1040,7 +1036,7 @@ export default function SandboxPage() {
                                 >
                                     {exeFile ? "Chuyển file sang Cloud Lab" : "Mở Windows Cloud Lab"}
                                 </button>
-                            </div>
+                            </div>}
                         </article>
                     </section>
                 ) : (
@@ -1254,9 +1250,9 @@ export default function SandboxPage() {
                                 {cloud?.availableTiers.filter((item) => item.tier !== "free").map((item) => (
                                     <button
                                         key={item.tier}
-                                        disabled={!item.allowed || !item.configured}
+                                        disabled={!item.allowed || !sandboxModeAvailability(item.tier, labMode, item.configured, item.modes).available}
                                         className={`${selected === item.tier ? "selected" : ""} ${
-                                            !item.allowed || !item.configured ? "locked" : ""
+                                            !item.allowed || !sandboxModeAvailability(item.tier, labMode, item.configured, item.modes).available ? "locked" : ""
                                         }`}
                                         onClick={() => {
                                             setSelected(item.tier);
@@ -1283,11 +1279,15 @@ export default function SandboxPage() {
                                             <li>{item.gpu ? "✓" : "—"} GPU/ứng dụng nặng</li>
                                         </ul>
                                         {!item.allowed && <em>Cần nâng gói</em>}
-                                        {item.allowed && !item.configured && <em>Cloud chưa cấu hình</em>}
+                                        {item.allowed && !sandboxModeAvailability(item.tier, labMode, item.configured, item.modes).available && (
+                                            <em>{labMode === "interactive" ? "Interactive chưa có hạ tầng" : "Cloud chưa cấu hình"}</em>
+                                        )}
                                     </button>
                                 ))}
                             </section>
                         )}
+
+                        {labMode === "interactive" && !selectedModeAvailability.available && <div className="sandbox-mode-unavailable" role="status"><FileWarning /><span><b>Interactive chưa thể tạo phiên thật</b><small>{remoteUnavailableLabel(selectedModeAvailability.reason)}</small></span></div>}
 
                         {showingRecentSession && (
                             <section className="lab-restart-panel">
@@ -1306,18 +1306,14 @@ export default function SandboxPage() {
                                     disabled={
                                         busy ||
                                         !selectedTierInfo?.allowed ||
-                                        !selectedTierInfo.configured ||
+                                        !selectedModeAvailability.available ||
                                         lacksCredits
                                     }
                                     onClick={() => void startSession()}
                                 >
                                     {busy
                                         ? "Đang tạo phiên…"
-                                        : selected === "free"
-                                          ? "Mở Browser Isolation miễn phí"
-                                          : labMode === "interactive"
-                                            ? `Tạo desktop ${leaseMinutes} phút`
-                                            : `Bắt đầu Auto Analyze ${selected.toUpperCase()}`}
+                                        : sandboxStartActionLabel(selected, labMode, leaseMinutes)}
                                 </button>
                             </section>
                         )}
@@ -1815,48 +1811,12 @@ export default function SandboxPage() {
                                                 : "Không mở remote desktop trong Auto Analyze"}
                                         </em>
                                     </header>
-                                    <div className="auto-report-metrics">
-                                        <span><small>VERDICT</small><b>{sampleVerdict ? String(sampleVerdict) : "CHƯA CÓ"}</b></span>
-                                        <span><small>PROCESS</small><b>{reportMetrics.processes}</b></span>
-                                        <span><small>FILE EVENT</small><b>{reportMetrics.files}</b></span>
-                                        <span><small>REGISTRY</small><b>{reportMetrics.registry}</b></span>
-                                        <span><small>NETWORK</small><b>{reportMetrics.network}</b></span>
-                                    </div>
-                                    <div className="auto-console-body">
-                                        <section className={`auto-state phase-${sessionPhase}`}>
-                                            <div className="auto-state-radar" aria-hidden><i /><Activity /></div>
-                                            <span>
-                                                <small>CURRENT PHASE</small>
-                                                <h3>{sessionPhase.replaceAll("_", " ")}</h3>
-                                                <p>
-                                                    {session.sample.status === "none"
-                                                        ? "Chọn file ở phía trên để agent bắt đầu. VM hiện chưa thực thi mẫu nào."
-                                                        : String(
-                                                              session.sample.report.summary ||
-                                                                  (session.sample.status === "completed"
-                                                                      ? "Agent đã hoàn tất và gửi bằng chứng về Risk Core."
-                                                                      : session.sample.status === "failed"
-                                                                        ? "Agent đã dừng; xem lỗi và không coi mẫu là an toàn."
-                                                                        : "Mẫu đang được xử lý trong Windows VM cô lập."),
-                                                          )}
-                                                </p>
-                                            </span>
-                                        </section>
-                                        <aside className="auto-evidence-status">
-                                            <small>EVIDENCE CHANNELS</small>
-                                            {[
-                                                ["Process tree", reportMetrics.processes],
-                                                ["File system", reportMetrics.files],
-                                                ["Registry", reportMetrics.registry],
-                                                ["Network", reportMetrics.network],
-                                            ].map(([label, count]) => (
-                                                <span className={Number(count) > 0 ? "observed" : "empty"} key={String(label)}>
-                                                    <i /><b>{label}</b>
-                                                    <em>{Number(count) > 0 ? `${count} sự kiện` : session.sample.status === "completed" ? "Không ghi nhận" : "Đang chờ"}</em>
-                                                </span>
-                                            ))}
-                                        </aside>
-                                    </div>
+                                    <CloudAnalysisReport
+                                        analysis={session.sample.analysis}
+                                        phase={sessionPhase}
+                                        sampleStatus={session.sample.status}
+                                        summary={session.sample.report.summary}
+                                    />
                                     {Object.keys(report).length > 0 && (
                                         <details className="raw-sandbox-report">
                                             <summary>Xem payload bằng chứng máy đọc được</summary>
@@ -1921,11 +1881,7 @@ export default function SandboxPage() {
                                             <span><X /> Hủy VM khi kết thúc</span>
                                         </div>
                                         {remoteError && <p className="remote-access-error" role="alert">{remoteError}</p>}
-                                        {sessionReady &&
-                                            leaseSeconds !== 0 &&
-                                            !remoteWaitingForSample &&
-                                            !remoteExplicitlyUnavailable &&
-                                            activeSession.remoteAvailable !== false && (
+                                        {canRequestRemoteAccess && (
                                             <button type="button" disabled={remoteBusy} onClick={() => void openRemoteDesktop()}>
                                                 {remoteBusy ? "Đang xin token một lần…" : remoteError ? "Thử kết nối lại" : "Kết nối desktop an toàn"}
                                             </button>
@@ -1963,24 +1919,20 @@ export default function SandboxPage() {
                                             Mua {paymentCredits} credit bằng SePay
                                         </button>
                                     )}
-                                    {selectedTierInfo?.allowed && !selectedTierInfo.configured && (
-                                        <small>Máy cloud cho tier này chưa được quản trị viên cấu hình.</small>
+                                    {selectedTierInfo?.allowed && !selectedModeAvailability.available && (
+                                        <small>{labMode === "interactive" ? "Interactive chưa có broker/AMI khả dụng." : "Máy cloud cho tier này chưa được quản trị viên cấu hình."}</small>
                                     )}
                                     {!activeSession ? (
                                         <button
                                             disabled={
                                                 busy ||
                                                 !selectedTierInfo?.allowed ||
-                                                !selectedTierInfo.configured ||
+                                                !selectedModeAvailability.available ||
                                                 lacksCredits
                                             }
                                             onClick={() => void startSession()}
                                         >
-                                            {selected === "free"
-                                                ? "Mở Browser Isolation miễn phí"
-                                                : labMode === "interactive"
-                                                  ? `Tạo desktop ${leaseMinutes} phút`
-                                                  : `Bắt đầu Auto Analyze ${selected.toUpperCase()}`}
+                                            {sandboxStartActionLabel(selected, labMode, leaseMinutes)}
                                         </button>
                                     ) : null}
                                 </div>
@@ -2099,96 +2051,5 @@ export default function SandboxPage() {
                 )}
             </main>
         </PrewiseShell>
-    );
-}
-
-function ExeQuickReport({
-    result,
-    polling,
-    onShare,
-    onRefresh,
-}: {
-    result: ExeSandboxResult;
-    polling: boolean;
-    onShare?: () => void;
-    onRefresh?: () => void;
-}) {
-    const provider = result.provider;
-    const local = result.local_analysis;
-    return (
-        <div className={`exe-quick-report verdict-${result.verdict}`}>
-            <div className="exe-report-head">
-                <span>{verdictLabel(result.verdict)}</span>
-                <strong>{result.risk_score}/100</strong>
-            </div>
-            <p className="exe-report-file">{result.filename}</p>
-            <code title={result.sha256}>{result.sha256.slice(0, 24)}…</code>
-
-            {local && (
-                <div className="exe-report-metrics">
-                    <span>
-                        <small>PE</small>
-                        <b>{local.valid ? `${local.format} · ${local.architecture}` : "Không hợp lệ"}</b>
-                    </span>
-                    <span>
-                        <small>SECTION</small>
-                        <b>{local.section_count}</b>
-                    </span>
-                    <span>
-                        <small>CHỮ KÝ</small>
-                        <b>{local.signature_present ? "Có · chưa xác minh" : "Không có"}</b>
-                    </span>
-                    <span>
-                        <small>OVERLAY</small>
-                        <b>{local.overlay_bytes.toLocaleString("vi-VN")} B</b>
-                    </span>
-                </div>
-            )}
-
-            <div className="exe-provider-row">
-                <span>
-                    <small>PROVIDER</small>
-                    <b>{providerStatusLabel(provider)}</b>
-                </span>
-                {polling && <i>Đang chờ báo cáo…</i>}
-            </div>
-
-            {provider?.error && <p className="exe-provider-error">{provider.error}</p>}
-            {onRefresh && provider?.data_id && !polling && provider.status === "queued" && (
-                <button className="exe-refresh-button" type="button" onClick={onRefresh}>
-                    Cập nhật báo cáo provider
-                </button>
-            )}
-
-            {result.upload_consent_required && onShare && (
-                <button className="exe-share-button" type="button" onClick={onShare}>
-                    Đồng ý gửi mẫu để kiểm tra sâu
-                </button>
-            )}
-
-            {result.issues.length > 0 && (
-                <ul className="exe-issue-list">
-                    {result.issues.slice(0, 6).map((issue) => (
-                        <li key={issue}>{issue}</li>
-                    ))}
-                </ul>
-            )}
-
-            {provider?.detections && provider.detections.length > 0 && (
-                <div className="exe-detections">
-                    {provider.detections.slice(0, 5).map((item) => (
-                        <span key={`${item.engine}-${item.threat}`}>
-                            <b>{item.engine}</b>
-                            <small>{item.threat}</small>
-                        </span>
-                    ))}
-                </div>
-            )}
-
-            <small className="exe-report-disclaimer">
-                Test nhanh không thực thi file. Kết quả tĩnh hoặc AV không bảo đảm file an toàn tuyệt
-                đối; phân tích hành vi đầy đủ thuộc Sandbox Pro.
-            </small>
-        </div>
     );
 }

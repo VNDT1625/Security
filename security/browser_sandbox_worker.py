@@ -156,10 +156,12 @@ class _PinnedProxyHandler(socketserver.BaseRequestHandler):
 
     def _reject(self, status_code: int, reason: str, target: str, method: str) -> None:
         message = f"HTTP/1.1 {status_code} Sandbox Blocked\r\nConnection: close\r\n\r\n"
-        try:
-            self.request.sendall(message.encode("ascii"))
-        finally:
-            self._record(target, method, True, reason)
+        # Persist the security decision before notifying the client.  Sending
+        # first lets the client observe the rejection while the handler thread
+        # has not recorded its audit event yet, which makes callers race the
+        # proxy's security telemetry.
+        self._record(target, method, True, reason)
+        self.request.sendall(message.encode("ascii"))
 
     @staticmethod
     def _tunnel(client: socket.socket, upstream: socket.socket) -> None:

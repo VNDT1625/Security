@@ -7,35 +7,10 @@ const inFlight = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 // V3 invalidates scores saved before the extension started using the
 // authoritative Risk Core final score from the balanced Web App pipeline.
-const CACHE_STORAGE_KEY = "urlAssessmentCacheV3";
+const CACHE_STORAGE_KEY = "urlAssessmentCacheV4";
 const MAX_CACHED_URLS = 100;
 const DEFAULT_WARNING_THRESHOLD = 60;
 const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
-// Product policy: these well-known services are returned immediately without
-// calling the assessment API. Matching is label-aware, so "youtube.com.evil.tld"
-// can never inherit the trusted verdict for youtube.com.
-const TRUSTED_POPULAR_DOMAINS = Object.freeze([
-  "google.com", "youtube.com", "facebook.com", "instagram.com", "x.com",
-  "twitter.com", "wikipedia.org", "reddit.com", "amazon.com", "yahoo.com",
-  "bing.com", "microsoft.com", "apple.com", "linkedin.com", "netflix.com",
-  "office.com", "live.com", "github.com", "stackoverflow.com", "tiktok.com",
-  "whatsapp.com", "telegram.org", "discord.com", "twitch.tv", "spotify.com",
-  "pinterest.com", "imdb.com", "ebay.com", "paypal.com", "adobe.com",
-  "dropbox.com", "zoom.us", "slack.com", "notion.so", "canva.com",
-  "cloudflare.com", "openai.com", "chatgpt.com", "claude.ai", "gemini.google.com",
-  "drive.google.com", "docs.google.com", "mail.google.com", "maps.google.com", "news.google.com",
-  "meet.google.com", "calendar.google.com", "translate.google.com", "play.google.com", "photos.google.com",
-  "outlook.com", "onedrive.com", "teams.microsoft.com", "azure.com", "microsoftonline.com",
-  "bbc.com", "cnn.com", "nytimes.com", "theguardian.com", "reuters.com",
-  "forbes.com", "bloomberg.com", "medium.com", "quora.com", "tumblr.com",
-  "wordpress.com", "blogger.com", "w3.org", "mozilla.org", "npmjs.com",
-  "docker.com", "gitlab.com", "bitbucket.org", "atlassian.com", "figma.com",
-  "salesforce.com", "shopify.com", "walmart.com", "target.com", "booking.com",
-  "airbnb.com", "tripadvisor.com", "expedia.com", "uber.com", "grab.com",
-  "baidu.com", "qq.com", "weibo.com", "yandex.com", "naver.com",
-  "samsung.com", "intel.com", "nvidia.com", "amd.com", "dell.com",
-  "hp.com", "lenovo.com", "tiktokshop.com", "shopee.vn", "lazada.vn",
-]);
 let requestSequence = 0;
 let rateLimitedUntil = 0;
 let rateLimitTimer = null;
@@ -78,8 +53,9 @@ function clearBadge(tabId) {
 }
 function setBadge(tabId, entry, threshold = DEFAULT_WARNING_THRESHOLD) {
   if (tabId == null) return;
-  if (entry?.status === "loading" || entry?.error || Number(entry?.score || 0) <= threshold) { clearBadge(tabId); return; }
-  const level = getRiskLevel(entry?.score || 0);
+  const level = getRiskLevel(entry?.score || 0, entry?.result?.decision);
+  const legacyBelowThreshold = !entry?.result?.decision && Number(entry?.score || 0) <= threshold;
+  if (entry?.status === "loading" || entry?.error || level.key === "safe" || legacyBelowThreshold) { clearBadge(tabId); return; }
   chrome.action.setBadgeText({ tabId, text: level.key === "danger" ? "X" : "!" });
   chrome.action.setBadgeBackgroundColor({ tabId, color: level.color });
   chrome.action.setTitle({ tabId, title: `AI Security Armor — ${level.label} (${entry.score}/100)` });
@@ -106,26 +82,6 @@ function cached(url) {
   if (hit) urlCache.delete(url);
   return null;
 }
-function trustedPopularDomain(url) {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
-    return TRUSTED_POPULAR_DOMAINS.find((domain) => hostname === domain || hostname.endsWith(`.${domain}`)) || "";
-  } catch { return ""; }
-}
-function trustedEntry(url, domain) {
-  const now = Date.now();
-  return {
-    status: "complete", url, score: 0, level: "safe", trusted: true,
-    trustedDomain: domain, requestId: ++requestSequence, startedAt: now,
-    completedAt: now, latencyMs: 0,
-    result: {
-      risk_score: 0,
-      verdict: "safe",
-      reasons: [`${domain} nằm trong danh sách 100 dịch vụ phổ biến được tin cậy sẵn.`],
-      evidence: [],
-    },
-  };
-}
 function beginCooldown(retryAfter) {
   rateLimitedUntil = Date.now() + Math.max(1, retryAfter || 60) * 1000;
   clearTimeout(rateLimitTimer);
@@ -135,20 +91,31 @@ function beginCooldown(retryAfter) {
     await Promise.all(tabs.filter((tab) => tab.id != null).map((tab) => chrome.action.setBadgeText({ tabId: tab.id, text: "" }).catch(() => {})));
   }, Math.max(1, rateLimitedUntil - Date.now()));
 }
-async function handleAssessUrl(url, tabId, force = false) {
+// Query parameters and fragments routinely carry live single-use credentials:
+// password-reset links, OAuth ?code= / #access_token= callbacks, magic links and
+// pre-signed object URLs. None of them contribute to a phishing verdict, and
+// sending them would put working credentials into gateway logs and into the
+// on-disk cache. The host and path stay: that is where the phishing signal is.
+const SENSITIVE_QUERY_PARAM = /(^|[_-])(token|code|key|secret|password|passwd|pwd|session|sid|auth|jwt|sig|signature|credential|otp|access|refresh)([_-]|$)/i;
+
+function scanTarget(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.hash = "";
+    for (const name of [...parsed.searchParams.keys()]) {
+      if (SENSITIVE_QUERY_PARAM.test(name)) parsed.searchParams.delete(name);
+    }
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+async function handleAssessUrl(rawUrl, tabId, force = false) {
   const current = await settings();
   if (!current.protectionEnabled || !current.websiteProtection) return { disabled: true };
-  if (!/^https?:\/\//i.test(url || "")) return { unsupported: true };
-  const trustedDomain = trustedPopularDomain(url);
-  if (trustedDomain) {
-    const entry = trustedEntry(url, trustedDomain);
-    if (tabId != null) {
-      tabResults.set(tabId, entry);
-      clearBadge(tabId);
-      notifyTab(tabId, entry, current);
-    }
-    return entry;
-  }
+  if (!/^https?:\/\//i.test(rawUrl || "")) return { unsupported: true };
+  const url = scanTarget(rawUrl);
   await cacheReady;
   if (Date.now() < rateLimitedUntil) {
     clearBadge(tabId);
@@ -174,7 +141,7 @@ async function handleAssessUrl(url, tabId, force = false) {
   const promise = (async () => {
     try {
       const result = await assessUrl(url);
-      const level = getRiskLevel(toDisplayScore(result.risk_score));
+      const level = getRiskLevel(toDisplayScore(result.risk_score), result.decision);
       const entry = { status: "complete", url, score: toDisplayScore(result.risk_score), level: level.key, result, requestId, startedAt, completedAt: Date.now(), latencyMs: Date.now() - startedAt };
       urlCache.set(url, entry);
       await persistUrlCache();
@@ -212,10 +179,21 @@ chrome.runtime.onInstalled.addListener(async () => {
   const tabs = await chrome.tabs.query({}); tabs.forEach((tab) => clearBadge(tab.id));
 });
 chrome.runtime.onStartup.addListener(async () => { const tabs = await chrome.tabs.query({}); tabs.forEach((tab) => clearBadge(tab.id)); });
+// Operations that change protection state, verify the account key, or read
+// another tab's result belong to the popup and options pages. Content scripts
+// run on every site, so a single compromised one must not reach them, and must
+// not be able to claim an arbitrary tab identity via message.tabId.
+const EXTENSION_PAGE_ONLY = new Set(["SET_PROTECTION_STATE", "VERIFY_API_KEY", "GET_TAB_RESULT"]);
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const tabId = sender.tab?.id ?? message.tabId;
+  if (sender.id !== chrome.runtime.id) return false;
+  const fromExtensionPage = !sender.tab;
+  const tabId = sender.tab?.id ?? (fromExtensionPage ? message.tabId : null);
   (async () => {
     try {
+      if (EXTENSION_PAGE_ONLY.has(message.type) && !fromExtensionPage) {
+        return sendResponse({ error: { type: "forbidden", message: "Không được phép." } });
+      }
       switch (message.type) {
         case "ASSESS_URL": return sendResponse(await handleAssessUrl(message.url, tabId, message.force));
         case "GET_PROTECTION_STATE": { const current = await settings(); return sendResponse({ enabled: current.protectionEnabled === true, websiteProtection: current.websiteProtection, gmailProtection: current.gmailProtection, warningThreshold: current.warningThreshold }); }
@@ -253,7 +231,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           } catch (error) { return sendResponse({ error: errorInfo(error) }); }
         }
         case "ASSESS_ACTION": try { return sendResponse({ result: await assessAction(message.actionType, message.targetUrl, message.dataTypes) }); } catch (error) { return sendResponse({ error: errorInfo(error) }); }
-        case "GET_TAB_RESULT": { const entry = tabResults.get(message.tabId); return sendResponse(entry?.url === message.url ? entry : null); }
+        case "GET_TAB_RESULT": { const entry = tabResults.get(message.tabId); return sendResponse(entry?.url === scanTarget(message.url) ? entry : null); }
         case "VERIFY_API_KEY": try { const activation = await verifyExtensionKey(); await chrome.storage.local.set({ extensionActivation: activation }); return sendResponse({ activation }); } catch (error) { return sendResponse({ error: errorInfo(error) }); }
         case "GET_SETTINGS": { const current = await settings(); const stored = await chrome.storage.local.get(["extensionApiKey", "extensionActivation"]); return sendResponse({ ...current, activated: Boolean(stored.extensionApiKey && stored.extensionActivation?.valid), activation: stored.extensionActivation || null, rateLimited: Date.now() < rateLimitedUntil, retryAfter: Math.max(0, Math.ceil((rateLimitedUntil - Date.now()) / 1000)) }); }
         default: return sendResponse({ error: { type: "unknown_message", message: "Thông điệp không được hỗ trợ." } });

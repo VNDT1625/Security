@@ -14,7 +14,25 @@ from urllib.parse import parse_qs, parse_qsl, unquote, urlparse
 
 from shared.constants import HIGH_RISK_TLDS, KNOWN_BRANDS
 
-SHORTLINK_DOMAINS = {"bit.ly", "tinyurl.com", "goo.gl", "t.co", "ow.ly", "is.gd", "buff.ly"}
+# Single source of truth for URL shorteners. The message risk core imports this
+# set too: the two used to maintain divergent lists, so the same shortened link
+# was a signal in an email but invisible to URL criterion 17, and vice versa.
+SHORTLINK_DOMAINS = {
+    "bit.ly",
+    "buff.ly",
+    "cutt.ly",
+    "goo.gl",
+    "is.gd",
+    "ow.ly",
+    "rb.gy",
+    "rebrand.ly",
+    "shorturl.at",
+    "t.co",
+    "t.ly",
+    "tiny.cc",
+    "tinyurl.com",
+    "v.gd",
+}
 
 # Shared hosting is not malicious by itself.  Attackers do, however, abuse these
 # services to make a brand-looking subdomain appear trustworthy.  The risk core

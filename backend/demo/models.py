@@ -151,10 +151,15 @@ class URLAnalysisResponse(BaseModel):
 
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), min_length=8, max_length=64)
     url: str = Field(..., description="The analyzed URL")
+    schema_version: str = "2"
+    scoring_version: str | None = None
     score_scale: Literal["0..100"] = "0..100"
     risk_score: float = Field(
         ..., ge=0.0, le=100.0, description="Overall risk score on the shared 0..100 scale"
     )
+    risk_level: Literal["safe", "low", "medium", "high", "critical"] = "safe"
+    decision: Literal["ALLOW", "WARN", "ASK_USER_CONFIRMATION", "BLOCK"] = "ALLOW"
+    reasons: list[str] = Field(default_factory=list)
     threat_level: Literal["safe", "low", "medium", "high", "critical"] = Field(
         ..., description="Categorized threat level"
     )

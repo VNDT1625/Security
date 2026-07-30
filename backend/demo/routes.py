@@ -31,7 +31,6 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session as DbSession
 
-from ai.adapters.url_adapter import analyze_url_signals
 from backend.config import settings
 from backend.db import get_db
 from backend.demo.metrics import metrics_aggregator
@@ -82,10 +81,9 @@ from backend.services.quota_service import (
     reserve_scan_quota,
 )
 from backend.services.scan_log_service import log_assessment
-from security.domain_intelligence import domain_intelligence_service
 from security.risk_core import default_config
-from security.url_risk_core import assess_url as assess_url_risk
 from shared.adapter_schemas import AdapterRunStatus, AdapterTask
+from shared.schemas import Decision, RiskCoreTrace
 
 # Router setup with prefix and tags
 router = APIRouter(prefix="/v1/demo", tags=["demo"])
@@ -188,7 +186,7 @@ def _build_access_analysis(
     original_url: str,
     sandbox_report,
     dangerous: list[URLDangerousCriterion],
-    final_score: float,
+    decision: Decision,
 ) -> URLAccessAnalysis:
     performed = sandbox_report is not None
     effects: list[str] = []
@@ -215,19 +213,19 @@ def _build_access_analysis(
             effects.append("Không quan sát thấy hành vi bất thường trong lần truy cập cô lập này.")
 
     causes = [f"{item.name}: {item.reason}" for item in dangerous[:6]]
-    if dangerous or final_score >= 60:
+    if decision == Decision.BLOCK:
         verdict = "dangerous"
         warning = (
             "NGUY HIỂM — nên cân nhắc và không truy cập trực tiếp. "
             "Không nhập mật khẩu, OTP, thông tin thẻ hoặc tải tệp từ URL này."
         )
     elif not performed:
-        verdict = "caution" if final_score >= 20 else "safe"
+        verdict = "caution" if decision != Decision.ALLOW else "safe"
         warning = "Chưa mở URL trong sandbox; kết quả hiện dựa trên cấu trúc và nguồn đối chứng."
     elif sandbox_report.error and not sandbox_report.behaviors:
         verdict = "unavailable"
         warning = "Không thể hoàn tất mô phỏng truy cập; hãy giữ trạng thái thận trọng."
-    elif final_score >= 20 or sandbox_report.behaviors:
+    elif decision != Decision.ALLOW or sandbox_report.behaviors:
         verdict = "caution"
         warning = "Có tín hiệu cần cân nhắc trước khi truy cập URL."
     else:
@@ -242,6 +240,58 @@ def _build_access_analysis(
         causes=causes,
         observed_effects=effects,
         final_url=final_url,
+    )
+
+
+def _risk_core_layer(
+    trace: RiskCoreTrace | None,
+    *,
+    layer: str,
+    criterion_ids: set[int],
+    summary: str,
+    skipped: bool = False,
+) -> URLScoreLayer:
+    """Build a display-only layer from the authoritative Risk Core trace."""
+    if trace is None:
+        return URLScoreLayer(
+            layer=layer,
+            score=0.0,
+            status="skipped" if skipped else "unavailable",
+            summary=summary,
+        )
+
+    selected = [
+        item
+        for item in trace.criteria
+        if int(item.get("criterion_id", 0) or 0) in criterion_ids
+    ]
+    risky = [
+        item
+        for item in selected
+        if float(item.get("adjusted_score", 0) or 0) > 0
+    ]
+    unavailable = {"unavailable", "not_checked"}
+    has_completed = any(str(item.get("status", "")) not in unavailable for item in selected)
+    details = [
+        {
+            "criterion": str(item.get("name") or f"Tiêu chí {item.get('criterion_id', '')}"),
+            "value": str(item.get("status") or "not_checked"),
+            "triggered": float(item.get("adjusted_score", 0) or 0) > 0,
+            "contribution": round(float(item.get("adjusted_score", 0) or 0), 2),
+            "reason": str(item.get("reason") or ""),
+        }
+        for item in selected
+    ]
+    return URLScoreLayer(
+        layer=layer,
+        score=round(
+            min(100.0, sum(float(item.get("adjusted_score", 0) or 0) for item in selected)),
+            2,
+        ),
+        status="skipped" if skipped else "completed" if has_completed else "unavailable",
+        summary=summary,
+        signals=len(risky),
+        details=details,
     )
 
 
@@ -303,33 +353,20 @@ async def analyze_url(
     # can opt out with force_rescan, in which case this fresh run uses quota.
     reserve_scan_quota(db, actor, request)
 
-    core = assess_url_risk(payload.url)
     requested_sandbox = payload.deep_analysis or payload.advanced_analysis
-    offline_danger = core.score >= 0.40 and any(
-        item.severity.value == "critical" and float(item.contribution or 0) >= 0.20
-        for item in core.evidence
-    )
-    auto_deep_analysis = not requested_sandbox and offline_danger
-    run_sandbox = requested_sandbox or auto_deep_analysis
+    auto_deep_analysis = False
+    run_sandbox = requested_sandbox
     sandbox_report = None
     sandbox_sources: tuple[tuple[object, bool], ...] = ()
     if run_sandbox:
-        try:
-            reserve_deep_scan_quota(db, actor, request)
-        except HTTPException:
-            if requested_sandbox:
-                raise
-            run_sandbox = False
-            auto_deep_analysis = False
-        if run_sandbox:
-            sandbox_report, sandbox_sources = await sandbox_runner.analyze_url_detailed(
-                payload.url,
-                prefer_browser=payload.advanced_analysis or auto_deep_analysis,
-            )
+        reserve_deep_scan_quota(db, actor, request)
+        sandbox_report, sandbox_sources = await sandbox_runner.analyze_url_detailed(
+            payload.url,
+            prefer_browser=payload.advanced_analysis,
+        )
 
-    # Run one authoritative weighted assessment after all requested observations
-    # have been collected. This prevents L3 evidence from becoming a separate,
-    # incomparable score layered on top of Risk Core.
+    # The service below is the only scorer. Sandbox and presentation layers only
+    # collect or display evidence; they never calculate a second verdict.
     production = await asyncio.to_thread(
         user_inference_service.assess_url,
         payload.url,
@@ -338,14 +375,13 @@ async def analyze_url(
         context_ai_mode="off",
     )
     dangerous_criteria = _dangerous_criteria(production.risk_core)
-    initial_final_score = (
-        float(production.risk_core.final_score)
-        if production.risk_core is not None
-        else float(production.risk_score) * 100
-    )
-    # A provider-only dangerous finding may appear after the first assessment.
-    # In quick mode, automatically investigate it and rescore with sandbox evidence.
-    if (dangerous_criteria or initial_final_score >= 60) and not run_sandbox:
+    next_action = production.risk_core.next_action if production.risk_core else None
+    # In quick mode, the authoritative policy may request more evidence. Rescore
+    # once with that evidence, using the same service and the same policy.
+    if (
+        production.decision == Decision.BLOCK
+        or next_action in {"deep_scan", "sandbox"}
+    ) and not run_sandbox:
         auto_deep_analysis = True
         run_sandbox = True
         try:
@@ -401,30 +437,44 @@ async def analyze_url(
     # the admin-configured, confidence-scaled AI Context share.  The nested
     # Risk Core trace remains available for the unblended technical audit.
     final_score = round(float(production.risk_score) * 100, 2)
-    signals = analyze_url_signals(payload.url)
-    intelligence = await asyncio.to_thread(
-        domain_intelligence_service.inspect,
-        signals.parts.registrable_domain,
-        payload.url,
-    )
-    evidence_by_feature = {item.feature: item for item in core.evidence if item.feature}
-    l1_details = _build_l1_details(signals, evidence_by_feature, intelligence)
-    l2_details = _build_l2_details(signals, evidence_by_feature)
     layers = [
-        URLScoreLayer(layer="L1 · Nhận diện URL & giả mạo thương hiệu", score=round(min(100.0, (core.layer_scores["lexical_identity"] + intelligence.score) * 100), 2), status="completed", summary="Phân tích tên miền thật, thương hiệu, HTTPS, tuổi domain và danh tiếng URLhaus.", signals=sum(item.feature in {"brand_domain_mismatch", "deceptive_subdomain", "homoglyph", "brand_typosquatting", "punycode_domain", "ip_host", "risky_tld", "no_https", "is_shortlink"} for item in core.evidence) + int(intelligence.score > 0), details=l1_details),
-        URLScoreLayer(layer="L2 · Ý đồ đánh cắp & né tránh", score=round(max(core.layer_scores["credential_intent"], core.layer_scores["evasion"]) * 100, 2), status="completed", summary="Phát hiện lure OTP/mật khẩu/thanh toán, URL mã hóa và tham số bất thường.", signals=sum(item.feature in {"credential_theft_intent", "credential_lure_cluster", "nested_url_redirect", "redirect_parameter", "at_symbol", "url_obfuscation", "excessive_query_parameters", "high_entropy_domain", "embedded_credentials", "nonstandard_port"} for item in core.evidence), details=l2_details),
-        URLScoreLayer(layer="L3 · Sandbox nội dung cô lập", score=0.0, status="skipped" if not run_sandbox else "unavailable", summary="Cân bằng quét HTTP/HTML; Chuyên sâu chạy thêm browser để quan sát redirect, script, network và DOM."),
+        _risk_core_layer(
+            production.risk_core,
+            layer="L1 · Danh tính, tên miền và hạ tầng",
+            criterion_ids=set(range(1, 20)) | {41, 42, 44, 45, 46, 48, 49},
+            summary="Điểm thành phần lấy trực tiếp từ các tiêu chí danh tính và hạ tầng của lõi chính.",
+        ),
+        _risk_core_layer(
+            production.risk_core,
+            layer="L2 · Nội dung, dữ liệu nhạy cảm và giao dịch",
+            criterion_ids=set(range(20, 33)) | {39, 40, 43, 47},
+            summary="Điểm thành phần lấy trực tiếp từ các tiêu chí nội dung và ý đồ của lõi chính.",
+        ),
+        _risk_core_layer(
+            production.risk_core,
+            layer="L3 · Hành vi và tệp trong vùng cô lập",
+            criterion_ids=set(range(33, 39)),
+            summary="Bằng chứng quan sát trong vùng cô lập được đưa lại vào cùng lõi chính.",
+            skipped=not run_sandbox,
+        ),
     ]
-    warning_required = bool(dangerous_criteria) or final_score >= 60
+    warning_required = production.decision != Decision.ALLOW
     access_analysis = _build_access_analysis(
         payload.url,
         sandbox_report,
         dangerous_criteria,
-        final_score,
+        production.decision,
     )
     response = URLAnalysisResponse(
         request_id=production.request_id,
-        url=payload.url, risk_score=final_score, threat_level=_map_risk_to_threat_level(final_score),
+        url=payload.url,
+        schema_version=production.schema_version,
+        scoring_version=production.scoring_version,
+        risk_score=final_score,
+        risk_level=production.risk_level.value,
+        decision=production.decision.value,
+        reasons=production.reasons,
+        threat_level=production.risk_level.value,
         analysis_time_ms=int((time.time() - start_time) * 1000),
         cache_hit=False,
         cache_status=(
@@ -437,10 +487,13 @@ async def analyze_url(
                 **item.model_dump(),
                 "contribution": round(float(item.contribution or 0) * 100, 2),
             }
-            for item in core.evidence
+            for item in production.evidence
         ],
         score_layers=layers,
-        deep_analysis_recommended=core.requires_deep_analysis or warning_required,
+        deep_analysis_recommended=(
+            production.risk_core is not None
+            and production.risk_core.next_action in {"deep_scan", "sandbox"}
+        ),
         warning_required=warning_required,
         auto_deep_analysis=auto_deep_analysis,
         dangerous_criteria=dangerous_criteria,
@@ -452,29 +505,6 @@ async def analyze_url(
     )
     if run_sandbox:
         assert sandbox_report is not None
-        risk_behaviors = [
-            item for item in sandbox_report.behaviors if item.get("category") != "execution"
-        ]
-        sandbox_score = min(100.0, sum({"critical": 30.0, "high": 18.0, "medium": 10.0, "low": 4.0}.get(item.get("severity"), 0.0) for item in risk_behaviors))
-        l3_layer = URLScoreLayer(
-            layer="L3 · Sandbox nội dung cô lập",
-            score=sandbox_score,
-            status="completed" if not sandbox_report.error else "unavailable",
-            summary="Quan sát live trong sandbox cô lập; khi browser engine chưa sẵn sàng, dùng HTTP sandbox an toàn để kiểm tra redirect, HTML, form và security headers.",
-            signals=len(risk_behaviors),
-            details=[
-                {
-                    "criterion": behavior.get("code", "sandbox_signal"),
-                    "value": behavior.get("category", "sandbox"),
-                    "triggered": True,
-                    "contribution": {"critical": 30.0, "high": 18.0, "medium": 10.0, "low": 4.0}.get(behavior.get("severity"), 0.0),
-                    "reason": behavior.get("message", "Sandbox phát hiện tín hiệu cần xem xét."),
-                }
-                for behavior in risk_behaviors
-            ],
-        )
-        layers[-1] = l3_layer
-        response.score_layers[-1] = l3_layer
         response.analysis_time_ms = int((time.time() - start_time) * 1000)
     if cache_eligible and not run_sandbox:
         _store_demo_url_cache(db, cache_key, response)
@@ -494,53 +524,6 @@ async def analyze_url(
     return response
 
 
-def _detail(
-    criterion: str, value: str, evidence: object | None, fallback: str
-) -> dict:
-    contribution = round(float(getattr(evidence, "contribution", 0.0) or 0.0) * 100, 2)
-    return {
-        "criterion": criterion,
-        "value": value,
-        "triggered": evidence is not None,
-        "contribution": contribution,
-        "reason": getattr(evidence, "message", fallback),
-    }
-
-
-def _build_l1_details(signals, evidence_by_feature: dict[str, object], intelligence) -> list[dict]:
-    parts = signals.parts
-    return [
-        _detail("Xác định hostname, domain thật và subdomain", f"Hostname: {parts.host} · Domain đăng ký: {parts.registrable_domain} · Subdomain: {parts.subdomain or '(không có)'}", None, "Đã tách cấu trúc URL thành công. Bước này không tự cộng điểm rủi ro."),
-        _detail("So khớp thương hiệu trên domain không chính chủ", f"Thương hiệu nhận diện: {', '.join(signals.brand_mentions) or 'không có'}", evidence_by_feature.get("brand_domain_mismatch"), "Không phát hiện thương hiệu đã biết trên tên miền không chính chủ."),
-        _detail("Phát hiện biến thể gõ sai thương hiệu", f"Nhãn domain: {parts.domain_label}", evidence_by_feature.get("brand_typosquatting"), "Không phát hiện nhãn tên miền gần giống thương hiệu đã biết."),
-        _detail("Phát hiện homoglyph, punycode và ký tự giả mạo", "Có nhãn punycode" if "xn--" in parts.host else "Không thấy nhãn punycode", evidence_by_feature.get("homoglyph") or evidence_by_feature.get("punycode_domain"), "Không phát hiện homoglyph hoặc punycode ở hostname."),
-        _detail("Kiểm tra HTTPS, IP host, TLD rủi ro và shortlink", f"Protocol: {'HTTPS' if not signals.no_https else 'HTTP'} · TLD: {parts.suffix or '—'}", next((evidence_by_feature[key] for key in ("no_https", "ip_host", "risky_tld", "is_shortlink") if key in evidence_by_feature), None), "Không phát hiện IP host, TLD rủi ro, shortlink hoặc HTTP không mã hóa."),
-        {
-            "criterion": "Tuổi domain và danh tiếng nguồn ngoài",
-            "value": (
-                f"Tuổi: {intelligence.age_days} ngày · Đăng ký: {intelligence.created_at or 'không rõ'} · "
-                f"Registrar: {intelligence.registrar or 'không rõ'} · {intelligence.reputation_source}: {intelligence.reputation_status}"
-                if intelligence.available
-                else "Không thể truy vấn RDAP/URLhaus"
-            ),
-            "triggered": intelligence.score > 0,
-            "contribution": round(intelligence.score * 100, 2),
-            "reason": " ".join(intelligence.reasons),
-        },
-    ]
-
-
-def _build_l2_details(signals, evidence_by_feature: dict[str, object]) -> list[dict]:
-    return [
-        _detail("Tìm từ khóa dữ liệu nhạy cảm", ", ".join(signals.suspicious_keywords) or "Không phát hiện", evidence_by_feature.get("credential_theft_intent"), "Không phát hiện từ khóa mật khẩu, OTP, thẻ, ngân hàng, ví hoặc token."),
-        _detail("Phát hiện cụm từ xác minh/đăng nhập", ", ".join(signals.suspicious_keywords) or "Không phát hiện", evidence_by_feature.get("credential_lure_cluster"), "Không có cụm từ đáng ngờ đủ ngưỡng kích hoạt."),
-        _detail("Phát hiện URL lồng nhau và tham số chuyển hướng", "Có tham số redirect" if "redirect_parameter" in evidence_by_feature else "Không phát hiện", evidence_by_feature.get("nested_url_redirect") or evidence_by_feature.get("redirect_parameter"), "Không phát hiện URL lồng nhau hoặc tham số chuyển hướng đáng ngờ."),
-        _detail("Kiểm tra @, thông tin đăng nhập nhúng và percent-encoding", f"@: {'có' if signals.at_symbol else 'không'} · encoding %: {'có' if signals.percent_encoded else 'không'}", next((evidence_by_feature[key] for key in ("embedded_credentials", "at_symbol", "url_obfuscation") if key in evidence_by_feature), None), "Không phát hiện ký tự hoặc cấu trúc che giấu URL."),
-        _detail("Đếm query parameter và entropy domain", f"{signals.query_param_count} tham số", evidence_by_feature.get("excessive_query_parameters") or evidence_by_feature.get("high_entropy_domain"), "Không có số lượng tham số hoặc entropy domain bất thường."),
-        _detail("Kiểm tra cổng không chuẩn", "Có cổng không chuẩn" if "nonstandard_port" in evidence_by_feature else "Không có cổng không chuẩn", evidence_by_feature.get("nonstandard_port"), "URL không dùng cổng dịch vụ bất thường."),
-    ]
-
-
 def _validate_url(url: str) -> None:
     """Validate URL and reject localhost, private IPs, file:// schemes."""
     parsed = urlparse(url)
@@ -557,20 +540,6 @@ def _validate_url(url: str) -> None:
     # Reject private IP ranges (basic check)
     if hostname.startswith("192.168.") or hostname.startswith("10.") or hostname.startswith("172."):
         raise HTTPException(status_code=400, detail="Private IP URLs are not allowed")
-
-
-def _map_risk_to_threat_level(risk_score: float) -> str:
-    """Map the shared risk score [0..100] to a threat level category."""
-    if risk_score < 20:
-        return "safe"
-    elif risk_score < 40:
-        return "low"
-    elif risk_score < 60:
-        return "medium"
-    elif risk_score < 80:
-        return "high"
-    else:
-        return "critical"
 
 
 @router.post("/deepfake/analyze", response_model=DeepfakeImageResponse)

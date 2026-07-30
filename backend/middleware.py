@@ -119,6 +119,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "/v1/assess",
                 "/v1/auth",
                 "/v1/account",
+                # The admin routers are mounted at "/admin", not "/v1/admin", so
+                # the "/v1/admin" prefix alone never matched and admin responses
+                # carrying user emails and revenue data stayed cacheable.
+                "/admin",
                 "/v1/admin",
                 "/v1/feedback",
                 "/v1/integrations/gmail",
@@ -164,7 +168,9 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
                 settings.app_env == "development"
                 and settings.local_testing_unlimited
             )
-            and request.url.path.startswith("/v1/")
+            # "/admin" is a sibling prefix of "/v1", not a child, so limiting
+            # only "/v1/" left every admin endpoint unthrottled.
+            and request.url.path.startswith(("/v1/", "/admin"))
             and request.url.path != "/v1/health"
         ):
             client = request.client.host if request.client else "unknown"

@@ -1,0 +1,309 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Prewise disposable Windows sandbox boundary and HTTPS Guacamole broker.
+  The stack creates no Windows worker; the backend launches one tagged worker
+  per session and terminates it after the bounded lease.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetId:
+    Type: AWS::EC2::Subnet::Id
+  BrokerDomain:
+    Type: String
+    Description: Public DNS name to point at the BrokerElasticIp stack output.
+    AllowedPattern: "^[A-Za-z0-9.-]+$"
+  LetsEncryptEmail:
+    Type: String
+  BrokerAllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+  BrokerInstanceType:
+    Type: String
+    Default: t3.small
+  BrokerAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  GuacamoleVersion:
+    Type: String
+    Default: "1.5.5"
+    AllowedPattern: "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+Resources:
+  GuacamoleDatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Generated database password for the private Guacamole store
+      GenerateSecretString:
+        PasswordLength: 40
+        ExcludePunctuation: true
+      Tags:
+        - Key: ManagedBy
+          Value: PrewiseSandbox
+
+  BrokerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Prewise HTTPS broker; no SSH ingress
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref BrokerAllowedCidr
+          Description: ACME redirect and certificate challenge
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref BrokerAllowedCidr
+          Description: HTTPS browser access
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Package install, ACME, backend and private RDP
+      Tags:
+        - Key: Name
+          Value: prewise-sandbox-broker
+        - Key: ManagedBy
+          Value: PrewiseSandbox
+
+  AutoWorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Prewise Auto worker; intentionally no ingress
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS callback through the deployment egress boundary
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+          Description: DNS; constrain to the VPC resolver in production
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+          Description: DNS fallback; constrain to the VPC resolver in production
+      Tags:
+        - Key: Name
+          Value: prewise-sandbox-auto
+        - Key: ManagedBy
+          Value: PrewiseSandbox
+
+  InteractiveWorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Prewise Interactive Windows worker
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          SourceSecurityGroupId: !Ref BrokerSecurityGroup
+          Description: RDP only from the Guacamole broker
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS callback through the deployment egress boundary
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: prewise-sandbox-interactive
+        - Key: ManagedBy
+          Value: PrewiseSandbox
+
+  BrokerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadOnlyGuacamoleDatabaseSecret
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref GuacamoleDatabaseSecret
+      Tags:
+        - Key: ManagedBy
+          Value: PrewiseSandbox
+
+  BrokerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BrokerRole
+
+  BrokerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref BrokerAmi
+      InstanceType: !Ref BrokerInstanceType
+      IamInstanceProfile: !Ref BrokerInstanceProfile
+      SubnetId: !Ref PublicSubnetId
+      SecurityGroupIds:
+        - !Ref BrokerSecurityGroup
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 1
+        InstanceMetadataTags: disabled
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 16
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: prewise-guacamole-broker
+        - Key: ManagedBy
+          Value: PrewiseSandbox
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          dnf install -y docker
+          systemctl enable --now docker
+          install -d -m 0700 /opt/prewise-broker/postgres /opt/prewise-broker/caddy
+          DB_PASSWORD="$(aws secretsmanager get-secret-value --secret-id '${GuacamoleDatabaseSecret}' --query SecretString --output text --region '${AWS::Region}')"
+          cat >/opt/prewise-broker/.env <<'ENV'
+          POSTGRES_PASSWORD=__PREWISE_DATABASE_PASSWORD__
+          GUAC_VERSION=${GuacamoleVersion}
+          BROKER_DOMAIN=${BrokerDomain}
+          LETSENCRYPT_EMAIL=${LetsEncryptEmail}
+          ENV
+          sed -i "s|__PREWISE_DATABASE_PASSWORD__|$DB_PASSWORD|" /opt/prewise-broker/.env
+          unset DB_PASSWORD
+          chmod 0600 /opt/prewise-broker/.env
+          install -d -m 0755 /usr/local/lib/docker/cli-plugins
+          curl -fsSL https://github.com/docker/compose/releases/download/v2.27.1/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+          docker run --rm guacamole/guacamole:${GuacamoleVersion} /opt/guacamole/bin/initdb.sh --postgresql > /opt/prewise-broker/postgres/initdb.sql
+          cat >>/opt/prewise-broker/postgres/initdb.sql <<'SQL'
+          -- Never expose Guacamole's documented default account. The Prewise
+          -- broker adapter must provide one-time-token authentication.
+          DELETE FROM guacamole_user WHERE entity_id IN
+            (SELECT entity_id FROM guacamole_entity WHERE name = 'guacadmin');
+          DELETE FROM guacamole_entity WHERE name = 'guacadmin';
+          SQL
+          cat >/opt/prewise-broker/Caddyfile <<'CADDY'
+          {$BROKER_DOMAIN} {
+            encode zstd gzip
+            header {
+              Strict-Transport-Security "max-age=31536000; includeSubDomains"
+              X-Content-Type-Options "nosniff"
+              Referrer-Policy "no-referrer"
+              -Server
+            }
+            handle /health {
+              header Content-Type application/json
+              respond `{\"status\":\"starting\",\"ready\":false,\"protocolVersion\":\"1\",\"capabilities\":[\"remote_desktop\"]}` 503
+            }
+            handle {
+              respond "Prewise broker adapter is not installed" 503
+            }
+            tls {$LETSENCRYPT_EMAIL}
+          }
+          CADDY
+          cat >/opt/prewise-broker/compose.yaml <<'COMPOSE'
+          services:
+            postgres:
+              image: postgres:16-alpine
+              restart: unless-stopped
+              environment:
+                POSTGRES_DB: guacamole_db
+                POSTGRES_USER: guacamole_user
+                POSTGRES_PASSWORD: ${!POSTGRES_PASSWORD}
+              volumes:
+                - postgres-data:/var/lib/postgresql/data
+                - ./postgres/initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
+              networks: [internal]
+            guacd:
+              image: guacamole/guacd:${!GUAC_VERSION}
+              restart: unless-stopped
+              networks: [internal]
+            guacamole:
+              image: guacamole/guacamole:${!GUAC_VERSION}
+              restart: unless-stopped
+              depends_on: [postgres, guacd]
+              environment:
+                GUACD_HOSTNAME: guacd
+                POSTGRESQL_HOSTNAME: postgres
+                POSTGRESQL_DATABASE: guacamole_db
+                POSTGRESQL_USER: guacamole_user
+                POSTGRESQL_PASSWORD: ${!POSTGRES_PASSWORD}
+                WEBAPP_CONTEXT: ROOT
+              networks: [internal]
+            caddy:
+              image: caddy:2.8-alpine
+              restart: unless-stopped
+              depends_on: [guacamole]
+              env_file: .env
+              ports: ["80:80", "443:443"]
+              volumes:
+                - ./Caddyfile:/etc/caddy/Caddyfile:ro
+                - caddy-data:/data
+                - caddy-config:/config
+              networks: [internal]
+          networks:
+            internal: {}
+          volumes:
+            postgres-data: {}
+            caddy-data: {}
+            caddy-config: {}
+          COMPOSE
+          cd /opt/prewise-broker
+          docker compose --env-file .env up -d
+
+  BrokerElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: prewise-sandbox-broker
+        - Key: ManagedBy
+          Value: PrewiseSandbox
+
+  BrokerElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt BrokerElasticIp.AllocationId
+      InstanceId: !Ref BrokerInstance
+
+Outputs:
+  BrokerElasticIp:
+    Value: !Ref BrokerElasticIp
+  BrokerHttpsUrl:
+    Value: !Sub https://${BrokerDomain}/
+  BrokerHealthUrl:
+    Value: !Sub https://${BrokerDomain}/health
+  BrokerSecurityGroupId:
+    Value: !Ref BrokerSecurityGroup
+  AutoSecurityGroupId:
+    Value: !Ref AutoWorkerSecurityGroup
+  InteractiveSecurityGroupId:
+    Value: !Ref InteractiveWorkerSecurityGroup

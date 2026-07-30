@@ -27,6 +27,13 @@ class URLRiskAssessment:
     layer_scores: dict[str, float]
 
 
+# Minimum classifier probability before the URL model becomes scored evidence.
+# Chosen from a threshold sweep on the frozen holdout: at 0.98 the model reaches
+# precision 0.8511 at a 4.20% false-positive rate, the only point where its
+# false-alarm rate is comparable to the deterministic decision path (3.20%).
+MODEL_HIGH_CONFIDENCE = 0.98
+
+
 def _clip(value: float) -> float:
     return max(0.0, min(1.0, value))
 
@@ -254,7 +261,21 @@ def assess_url(url: str, model_score: float | None = None) -> URLRiskAssessment:
         or shared_hosting_abuse
     )
     requires_deep = uncertain or signals.shortlink or (high_impact and score >= 0.45)
-    if uncorroborated_model:
+    # A very confident model verdict is real evidence and must reach Risk Core v2,
+    # which builds criteria from evidence rather than from this score. Below this
+    # bar the model stays INFO-only: measured on the frozen holdout, lowering the
+    # bar to 0.90 doubles the false-alarm rate (9.27% vs 4.20%) for little gain.
+    # The matching override caps the effect at WARN, so the model can draw
+    # attention to a URL but can never block one on its own.
+    if model_value >= MODEL_HIGH_CONFIDENCE:
+        evidence.append(_e(
+            "Mô hình phân loại URL rất tự tin đây là trang lừa đảo, dù chưa có dấu hiệu "
+            "từ vựng rõ rệt. Đây là tín hiệu cảnh báo, không phải kết luận chắc chắn.",
+            Severity.MEDIUM,
+            "model_high_confidence_phishing",
+            0.20,
+        ))
+    elif uncorroborated_model:
         evidence.append(_e(
             "Model nhận thấy mẫu cần xem xét nhưng chưa có tín hiệu URL xác thực; không nâng lên mức rủi ro cao nếu chưa chạy sandbox hoặc đối chiếu danh tiếng.",
             Severity.INFO,

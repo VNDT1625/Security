@@ -77,6 +77,16 @@ def reserve_scan_quota(db: Session, actor: ActorContext, request: Request) -> No
     limit = _daily_limit(db, actor)
     today = date.today()
 
+    # Both branches below create the day's first row with scan_count = 1 without
+    # consulting the limit: the PostgreSQL statement hardcodes the value and only
+    # its DO UPDATE arm carries the guard, and the SQLite branch mirrors it. A
+    # zero-scan plan therefore got one free scan every day. Reject up front.
+    if limit is not None and limit <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Bạn đã hết lượt quét hôm nay.",
+        )
+
     if db.bind is not None and db.bind.dialect.name == "postgresql":
         identity_column = (
             "user_id" if user_id is not None else "api_key_id" if api_key_id is not None else "anonymous_id"

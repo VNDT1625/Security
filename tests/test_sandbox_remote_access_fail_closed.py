@@ -14,7 +14,6 @@ from backend.routers import sandbox_cloud
 from backend.security_utils import utcnow
 from backend.services.cloud_sandbox_service import CloudSandboxService
 
-
 client = TestClient(app)
 _DEFAULT_PROVIDER_INSTANCE_ID = object()
 

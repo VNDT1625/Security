@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from collections import defaultdict, deque
 from typing import Any, Literal
 
 import httpx
@@ -33,6 +34,35 @@ from mcp_server.oauth import (
 from mcp_server.tools import FREE_TOOLS, TOOL_REQUIRED_SCOPES, MCPTools, normalize_tool_response
 
 logger = logging.getLogger(__name__)
+
+
+class _IPRateLimiter:
+    """Small fixed-window limiter for unauthenticated public routes."""
+
+    def __init__(self) -> None:
+        self._buckets: dict[str, deque[float]] = defaultdict(deque)
+        self._last_prune = time.monotonic()
+
+    def consume(self, client_ip: str) -> bool:
+        limit = max(1, int(settings.mcp_webhook_rate_limit_per_min))
+        now = time.monotonic()
+        if now - self._last_prune >= 60:
+            for key, tracked in list(self._buckets.items()):
+                while tracked and now - tracked[0] >= 60:
+                    tracked.popleft()
+                if not tracked:
+                    self._buckets.pop(key, None)
+            self._last_prune = now
+        bucket = self._buckets[client_ip]
+        while bucket and now - bucket[0] >= 60:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            return False
+        bucket.append(now)
+        return True
+
+
+_webhook_limiter = _IPRateLimiter()
 
 
 def build_server(host: str = "127.0.0.1", port: int = 3001) -> FastMCP:
@@ -158,6 +188,18 @@ def build_server(host: str = "127.0.0.1", port: int = 3001) -> FastMCP:
     @server.custom_route("/v1/sandbox-cloud/webhooks/sepay", methods=["POST"])
     async def sepay_webhook_proxy(request: Request) -> Response:
         """Expose only the SePay callback through the existing public MCP tunnel."""
+        # This route sits outside /mcp, so the API-key middleware waves it
+        # through. The upstream handler verifies an HMAC, but the transport is
+        # still an unauthenticated, unthrottled path into loopback: without a
+        # limiter here, flooding it exhausts the backend's shared 127.0.0.1
+        # rate-limit bucket and 429s every other localhost call.
+        client_ip = request.client.host if request.client else "unknown"
+        if not _webhook_limiter.consume(client_ip):
+            return Response(
+                '{"success":false,"error":"rate_limited"}',
+                status_code=429,
+                media_type="application/json",
+            )
         forwarded_headers = {
             name: value
             for name, value in request.headers.items()
@@ -168,6 +210,9 @@ def build_server(host: str = "127.0.0.1", port: int = 3001) -> FastMCP:
                 "x-sepay-timestamp",
             }
         }
+        # Preserve the real source so backend throttling and abuse logs do not
+        # attribute every proxied webhook to the loopback address.
+        forwarded_headers["x-forwarded-for"] = client_ip
         try:
             async with httpx.AsyncClient(timeout=25.0) as client:
                 upstream = await client.post(

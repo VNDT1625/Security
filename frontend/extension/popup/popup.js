@@ -135,7 +135,10 @@ function render(entry, tab) {
   if (entry.error) { showError(entry.error); return true; }
   if (entry.url !== tab.url) { scan(true); return true; }
   setConnection(true, `Gateway hoạt động · ${entry.latencyMs || 0} ms`);
-  if (Number(entry.score || 0) <= warningThreshold) {
+  if (
+    entry.level === "safe"
+    || (!entry.result?.decision && Number(entry.score || 0) <= warningThreshold)
+  ) {
     let parsed; try { parsed = new URL(tab.url); } catch { parsed = { hostname: tab.url || "" }; }
     $("monitor-title").textContent = "Không phát hiện rủi ro vượt ngưỡng";
     $("monitor-hostname").textContent = parsed.hostname;
@@ -144,7 +147,7 @@ function render(entry, tab) {
     show("monitoring");
     return true;
   }
-  const level = getRiskLevel(entry.score);
+  const level = getRiskLevel(entry.score, entry.result?.decision);
   $("risk-card").style.setProperty("--risk", level.color);
   $("score").textContent = entry.score;
   $("risk-label").textContent = { safe: "RỦI RO THẤP", warn: "CẦN THẬN TRỌNG", danger: "RỦI RO CAO" }[level.key];
