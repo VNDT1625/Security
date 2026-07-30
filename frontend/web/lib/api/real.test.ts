@@ -158,6 +158,18 @@ describe("RealApiClient authentication", () => {
         })).rejects.toThrow("Hệ thống đang tạm thời gián đoạn. Vui lòng thử lại sau.");
     });
 
+    it("shows a friendly Vietnamese message when the API cannot be reached", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+        await expect(new RealApiClient().register({
+            displayName: "Người dùng thử",
+            email: "network-test@example.com",
+            password: "ExamplePass123",
+        })).rejects.toThrow(
+            "Không thể kết nối máy chủ. Vui lòng kiểm tra kết nối và thử lại.",
+        );
+    });
+
     it("sends EXE bytes only with the explicit provider consent flag", async () => {
         const fetchMock = vi.fn().mockResolvedValue({
             ok: true,

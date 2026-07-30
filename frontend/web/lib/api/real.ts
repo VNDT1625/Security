@@ -286,6 +286,9 @@ function apiErrorFallback(status: number): string {
     return "Không thể hoàn tất yêu cầu. Vui lòng kiểm tra thông tin và thử lại.";
 }
 
+const API_NETWORK_ERROR =
+    "Không thể kết nối máy chủ. Vui lòng kiểm tra kết nối và thử lại.";
+
 function apiErrorMessage(rawBody: string, status: number): string {
     const body = rawBody.trim();
     if (body) {
@@ -322,13 +325,18 @@ async function requestJson<TResponse>(
     init: RequestInit,
 ): Promise<TResponse> {
     const url = `${getApiBase()}${path}`;
-    const response = await fetch(url, {
-        ...init,
-        headers: {
-            "Content-Type": "application/json",
-            ...(init.headers ?? {}),
-        },
-    });
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            ...init,
+            headers: {
+                "Content-Type": "application/json",
+                ...(init.headers ?? {}),
+            },
+        });
+    } catch {
+        throw new Error(API_NETWORK_ERROR);
+    }
 
     if (!response.ok) {
         return throwApiError(response);
