@@ -242,12 +242,63 @@ def _certificate_info(sock: socket.socket | None) -> dict:
     cert = sock.getpeercert()  # type: ignore[attr-defined]
     subject = dict(item[0] for item in cert.get("subject", ()))
     issuer = dict(item[0] for item in cert.get("issuer", ()))
+    cipher = sock.cipher() if hasattr(sock, "cipher") else None  # type: ignore[attr-defined]
+    compression = (
+        sock.compression() if hasattr(sock, "compression") else None  # type: ignore[attr-defined]
+    )
     return {
         "protocol": sock.version() if hasattr(sock, "version") else "",  # type: ignore[attr-defined]
+        "cipher": cipher or (),
+        "compression": bool(compression),
         "subject": subject.get("commonName", ""),
         "issuer": issuer.get("commonName", ""),
         "expires_at": cert.get("notAfter", ""),
     }
+
+
+_TLS_CERTIFICATE_ERROR_MARKERS = (
+    "certificate_verify_failed",
+    "certificate verify failed",
+    "certificate has expired",
+    "certificate is not yet valid",
+    "hostname mismatch",
+    "self signed certificate",
+    "self-signed certificate",
+    "unable to get local issuer certificate",
+    "unable to verify the first certificate",
+    "unknown ca",
+    "certificate revoked",
+)
+
+
+def _is_tls_certificate_error(error: object) -> bool:
+    """Return true only for errors that identify server-certificate validation.
+
+    OpenSSL normally raises ``SSLCertVerificationError``. Some runtimes and
+    wrappers expose the same failure as a generic SSL/OSError with the original
+    verification error in ``__cause__`` or ``__context__``, so inspect the
+    exception chain without treating ordinary TLS protocol failures as a bad
+    certificate.
+    """
+
+    current: object | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        text = str(current).lower()
+        if any(marker in text for marker in _TLS_CERTIFICATE_ERROR_MARKERS):
+            return True
+        if "hostname" in text and (
+            "doesn't match" in text or "does not match" in text
+        ):
+            return True
+        current = (
+            getattr(current, "__cause__", None)
+            or getattr(current, "__context__", None)
+        )
+    return False
 
 
 def _request_once(url: str, timeout: float, max_bytes: int) -> dict:
@@ -259,6 +310,7 @@ def _request_once(url: str, timeout: float, max_bytes: int) -> dict:
     display_host = f"[{host}]" if ":" in host else host
     host_header = display_host if port in {80, 443} else f"{display_host}:{port}"
     last_error: Exception | None = None
+    certificate_error: Exception | None = None
 
     for address in addresses:
         conn: http.client.HTTPConnection | None = None
@@ -292,10 +344,16 @@ def _request_once(url: str, timeout: float, max_bytes: int) -> dict:
                 "tls": tls,
             }
         except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            if _is_tls_certificate_error(exc):
+                certificate_error = exc
             last_error = exc
         finally:
             if conn is not None:
                 conn.close()
+    # Do not let a connection error from a later resolved IP overwrite real
+    # certificate evidence observed on an earlier address.
+    if certificate_error is not None:
+        raise certificate_error
     if last_error is not None:
         raise last_error
     raise ConnectionError(f"Khong the ket noi den {host}")
@@ -325,10 +383,31 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     data_terms = ("password", "otp", "cvv", "pin", "mật khẩu", "cccd", "seed phrase")
     privacy_terms = ("privacy", "chính sách bảo mật", "quyền riêng tư")
     terms_terms = ("refund", "return policy", "terms", "hoàn tiền", "đổi trả", "điều khoản")
-    contact_terms = ("contact", "liên hệ", "support", "hỗ trợ", "hotline")
     scam_template_terms = ("virus detected", "you have won", "trúng thưởng", "technical support", "đầu tư lợi nhuận")
     link_text = " ".join(f"{href} {label}" for href, label in parser.links).lower()
     emails = sorted(set(__import__("re").findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", page_text)))
+    phones = sorted(
+        set(
+            value.strip()
+            for labeled, vietnamese in re.findall(
+                (
+                    r"(?:phone|tel|telephone|hotline|sdt|dien thoai|so dien thoai)"
+                    r"\s*[:=-]?\s*(\+?\d[\d .()-]{5,}\d)"
+                    r"|((?:\+?84|0)(?:[ .()-]?\d){8,10})"
+                ),
+                page_text,
+            )
+            for value in (labeled or vietnamese,)
+            if value and 7 <= len(re.sub(r"\D", "", value)) <= 15
+        )
+    )[:20]
+    support_links = [
+        href
+        for href, label in parser.links
+        if href.lower().startswith(("mailto:", "tel:"))
+        or re.search(r"/(?:contact|support|help)(?:[/#?]|$)", href.lower())
+        or re.search(r"\b(?:contact|support|help|lien he|ho tro|hotline)\b", label.lower())
+    ][:20]
     page_host = (urlsplit(url).hostname or "").lower()
     mismatched_emails = [email for email in emails if email.rsplit("@", 1)[-1].lower() != page_host
                          and not email.lower().endswith(("@gmail.com", "@outlook.com", "@yahoo.com"))]
@@ -383,7 +462,7 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     site_name = parser.meta.get("og:site_name", "")
     title_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", parser.title.lower())}
     site_tokens = {token for token in re.findall(r"[a-z0-9]{4,}", site_name.lower())}
-    has_contact = any(term in page_text or term in link_text for term in contact_terms)
+    has_contact = bool(emails or phones or support_links)
     has_address = any(term in page_text for term in address_terms)
     has_legal_identity = any(term in page_text for term in legal_terms)
     detected_payments = [
@@ -395,7 +474,7 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     # identity/contact checks while still detecting the payment recipient.
     is_commercial = is_commercial or bool(prices or detected_payments or recipient_hints)
 
-    if not any(term in page_text or term in link_text for term in contact_terms) and is_commercial:
+    if not has_contact and is_commercial:
         issues.append(_issue("missing_contact_information", "medium", "content", "Trang thương mại không có thông tin liên hệ rõ ràng."))
     if mismatched_emails:
         issues.append(_issue("business_email_mismatch", "high", "content", "Email doanh nghiệp không khớp tên miền website.", ", ".join(mismatched_emails[:3])))
@@ -454,7 +533,9 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
         "links": len(parser.links),
         "has_privacy_policy": any(term in page_text or term in link_text for term in privacy_terms),
         "has_terms_refund": any(term in page_text or term in link_text for term in terms_terms),
-        "has_contact_channel": any(term in page_text or term in link_text for term in contact_terms),
+        "has_contact_channel": has_contact,
+        "phones": phones,
+        "support_links": support_links,
         "has_business_address": has_address,
         "has_legal_identity": has_legal_identity,
         "prices": prices,
@@ -599,7 +680,8 @@ def main() -> None:
         code = str(exc) if str(exc) in {"redirect_loop", "too_many_redirects"} else "worker_error"
         result = _failure(raw_url, code, str(exc), started)
     except (OSError, http.client.HTTPException) as exc:
-        result = _failure(raw_url, "network_error", f"{type(exc).__name__}: {exc}", started)
+        code = "tls_certificate_error" if _is_tls_certificate_error(exc) else "network_error"
+        result = _failure(raw_url, code, f"{type(exc).__name__}: {exc}", started)
     except Exception as exc:
         result = _failure(raw_url, "worker_error", f"{type(exc).__name__}: {exc}", started)
     sys.stdout.write(json.dumps(result, ensure_ascii=False))

@@ -80,7 +80,7 @@ def test_applicability_requires_explicit_context_evidence():
         assert by_id[cid].applicability_evidence_ids
 
 
-def test_new_offline_download_and_hosting_signals_reach_v2_criteria():
+def test_new_offline_download_and_shared_platform_signals_reach_v2_criteria():
     url = "https://microsoft-login.pages.dev/account/verify/CV.pdf.exe"
     obs = ScanObservations(url)
     add_offline_url_findings(obs, assess_url(url).evidence)
@@ -91,4 +91,7 @@ def test_new_offline_download_and_hosting_signals_reach_v2_criteria():
         if item.status in {CriterionStatus.SUSPICIOUS, CriterionStatus.MALICIOUS}
     }
 
-    assert {5, 15, 29, 34}.issubset(active)
+    # A deceptive pages.dev tenant is a subdomain/identity signal. Criterion 15
+    # is reserved for reverse-IP evidence about other malicious hosted domains.
+    assert {5, 7, 29, 34}.issubset(active)
+    assert 15 not in active

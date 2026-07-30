@@ -31,10 +31,20 @@ if os.name == "nt" and not os.environ.get("SYSTEMROOT"):
     os.environ["WINDIR"] = r"C:\Windows"
 
 try:  # pragma: no cover - import shape differs when run as a script.
-    from .sandbox_worker import _issue, _normalize_url, _public_addresses
+    from .sandbox_worker import (
+        _is_tls_certificate_error,
+        _issue,
+        _normalize_url,
+        _public_addresses,
+    )
     from .visual_hash import analyze_visual_hash
 except ImportError:  # pragma: no cover
-    from sandbox_worker import _issue, _normalize_url, _public_addresses
+    from sandbox_worker import (
+        _is_tls_certificate_error,
+        _issue,
+        _normalize_url,
+        _public_addresses,
+    )
     from visual_hash import analyze_visual_hash
 
 
@@ -62,9 +72,17 @@ BROWSER_FAILURE_STEP = {
     "private_network_blocked": "resolve_public_ip",
     "dns_error": "resolve_public_ip",
     "browser_engine_unavailable": "launch_browser",
+    "tls_certificate_error": "navigate_page",
     "browser_navigation_failed": "navigate_page",
     "browser_sandbox_error": "inspect_events",
 }
+
+_CHROMIUM_CERTIFICATE_ERROR_MARKERS = (
+    "err_cert_",
+    "err_certificate_transparency_required",
+    "err_ssl_pinned_key_not_in_cert_chain",
+    "err_ssl_server_cert_bad_format",
+)
 
 
 def _write_progress(stage: str) -> None:
@@ -362,6 +380,21 @@ def _request_failure_text(request) -> str:
     return str(failure or "request_failed")
 
 
+def _is_browser_tls_certificate_error(error: object) -> bool:
+    text = str(error).lower()
+    return _is_tls_certificate_error(error) or any(
+        marker in text for marker in _CHROMIUM_CERTIFICATE_ERROR_MARKERS
+    )
+
+
+def _playwright_failure_code(error: object) -> str:
+    return (
+        "tls_certificate_error"
+        if _is_browser_tls_certificate_error(error)
+        else "browser_navigation_failed"
+    )
+
+
 def _preflight_public_url(raw_url: str) -> tuple[str, str]:
     normalized = _normalize_url(raw_url)
     parts = urlsplit(normalized)
@@ -380,6 +413,10 @@ def _failure(raw_url: str, code: str, detail: str, started: float) -> dict:
         "private_network_blocked": "Browser sandbox blocked a private or non-public network target.",
         "dns_error": "The hostname could not be resolved.",
         "browser_engine_unavailable": "The browser engine is not installed for advanced sandboxing.",
+        "tls_certificate_error": (
+            "The website certificate is expired, not yet valid, untrusted, revoked, "
+            "or does not match its hostname."
+        ),
         "browser_navigation_failed": "The isolated browser could not open the page.",
         "browser_sandbox_error": "The browser sandbox failed while inspecting the page.",
     }
@@ -481,6 +518,26 @@ def _issues_from_signals(
                 "critical",
                 "network",
                 "Synthetic clone credentials were about to leave the sandbox and were blocked.",
+            )
+        )
+
+    certificate_failures = [
+        event
+        for event in network_events
+        if _is_browser_tls_certificate_error(event.get("reason", ""))
+    ]
+    if certificate_failures:
+        details = "; ".join(
+            f"{event.get('url', '')}: {event.get('reason', '')}"
+            for event in certificate_failures[:5]
+        )
+        issues.append(
+            _issue(
+                "tls_certificate_error",
+                "high",
+                "network",
+                "A browser request failed server-certificate validation.",
+                details,
             )
         )
 
@@ -1238,9 +1295,9 @@ def run(payload: dict) -> dict:
                     context.close()
                     _write_progress("browser_context_closed")
     except PlaywrightTimeoutError as exc:
-        return _failure(raw_url, "browser_navigation_failed", f"Timeout: {exc}", started)
+        return _failure(raw_url, _playwright_failure_code(exc), f"Timeout: {exc}", started)
     except PlaywrightError as exc:
-        return _failure(raw_url, "browser_navigation_failed", str(exc), started)
+        return _failure(raw_url, _playwright_failure_code(exc), str(exc), started)
 
     _write_progress("serialize_result")
     if completed_result is None:

@@ -30,6 +30,7 @@ class DomainIntelligence:
     score: float
     reasons: tuple[str, ...]
     available: bool
+    registrar_candidates: tuple[str, ...] = ()
     expiry_days: int | None = None
     certificate_age_days: int | None = None
     expires_at: str | None = None
@@ -44,6 +45,9 @@ class DomainIntelligence:
     reputation_ips: tuple[str, ...] = ()
     malicious_ips: tuple[str, ...] = ()
     malicious_observations: int = 0
+    shared_hosting_available: bool = False
+    shared_malicious_domains: tuple[str, ...] = ()
+    shared_malicious_observations: int = 0
 
 
 class DomainIntelligenceService:
@@ -81,13 +85,22 @@ class DomainIntelligenceService:
             ) = registration_future.result()
             certificates, certificate_error = certificate_future.result()
             reputation, reputation_error = reputation_future.result()
-        age_days, created_at = self._whoisxml_age(whoisxml)
-        if age_days is None:
-            age_days, created_at = self._ip2whois_age(whois)
-        if age_days is None:
-            age_days, created_at = self._domain_age(rdap)
+        age_days, created_at, registration_date_source = self._registration_age(
+            whoisxml, whois, rdap
+        )
         registration_created_at = created_at
-        registrar = self._whoisxml_registrar(whoisxml) or self._ip2whois_registrar(whois) or self._registrar(rdap)
+        registrar_candidates = tuple(
+            dict.fromkeys(
+                value
+                for value in (
+                    self._whoisxml_registrar(whoisxml),
+                    self._ip2whois_registrar(whois),
+                    self._registrar(rdap),
+                )
+                if value
+            )
+        )
+        registrar = registrar_candidates[0] if registrar_candidates else None
         expiry_days = self._expiry_days(whoisxml, whois, rdap)
         expires_at = self._expiry_date(whoisxml, whois, rdap)
         updated_at = self._updated_date(whoisxml, whois, rdap)
@@ -105,7 +118,7 @@ class DomainIntelligenceService:
         registration_statuses = tuple(
             str(value) for value in ((rdap or {}).get("status") or []) if value
         )
-        registration_source = (
+        registration_source = registration_date_source or (
             "WhoisXML API" if whoisxml else "IP2WHOIS" if whois else "RDAP"
         )
         registration_errors = [
@@ -116,6 +129,24 @@ class DomainIntelligenceService:
         reputation_ips = self._reputation_ips(reputation)
         malicious_ips = self._reputation_ips(reputation, malicious_only=True)
         malicious_observations = self._malicious_observation_count(reputation)
+        shared_hosting_available = bool(
+            isinstance(reputation, dict)
+            and reputation.get("shared_hosting_available") is True
+        )
+        shared_malicious_domains = tuple(
+            str(value)
+            for value in (
+                reputation.get("shared_malicious_domains", [])
+                if isinstance(reputation, dict)
+                else []
+            )
+            if value
+        )
+        shared_malicious_observations = int(
+            reputation.get("shared_malicious_observations", 0)
+            if isinstance(reputation, dict)
+            else 0
+        )
         reasons: list[str] = []
         score = 0.0
         if age_days is not None:
@@ -142,6 +173,7 @@ class DomainIntelligenceService:
             age_days=age_days,
             created_at=registration_created_at,
             registrar=registrar,
+            registrar_candidates=registrar_candidates,
             reputation_status="listed" if listed else "not_listed" if listed is False else "unavailable",
             reputation_source="urlscan.io",
             listed=listed,
@@ -162,6 +194,9 @@ class DomainIntelligenceService:
             reputation_ips=reputation_ips,
             malicious_ips=malicious_ips,
             malicious_observations=malicious_observations,
+            shared_hosting_available=shared_hosting_available,
+            shared_malicious_domains=shared_malicious_domains,
+            shared_malicious_observations=shared_malicious_observations,
         )
         with self._lock:
             self._cache[key] = (time.monotonic(), result)
@@ -178,8 +213,28 @@ class DomainIntelligenceService:
         str | None,
     ]:
         whoisxml, whoisxml_error = self._query_whoisxml(domain)
-        whois, whois_error = (None, None) if whoisxml else self._query_ip2whois(domain)
-        rdap, rdap_error = (None, None) if (whoisxml or whois) else self._query_rdap(domain)
+        whoisxml_age, _ = self._whoisxml_age(whoisxml)
+        if whoisxml is not None and whoisxml_age is None and not whoisxml_error:
+            whoisxml_error = "WhoisXML thiếu ngày đăng ký hợp lệ"
+
+        # A provider returning a WHOIS record does not guarantee that it returned
+        # a usable creation date. Keep falling back until criterion 1 has real
+        # registration-date evidence instead of treating a partial record as clean.
+        whois, whois_error = (
+            (None, None) if whoisxml_age is not None else self._query_ip2whois(domain)
+        )
+        whois_age, _ = self._ip2whois_age(whois)
+        if whois is not None and whois_age is None and not whois_error:
+            whois_error = "IP2WHOIS thiếu ngày đăng ký hợp lệ"
+
+        rdap, rdap_error = (
+            (None, None)
+            if whoisxml_age is not None or whois_age is not None
+            else self._query_rdap(domain)
+        )
+        rdap_age, _ = self._domain_age(rdap)
+        if rdap is not None and rdap_age is None and not rdap_error:
+            rdap_error = "RDAP thiếu ngày đăng ký hợp lệ"
         return whoisxml, whoisxml_error, whois, whois_error, rdap, rdap_error
 
     def _query_whoisxml(self, domain: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -211,16 +266,16 @@ class DomainIntelligenceService:
         if not data:
             return None, None
         registry = data.get("registryData") or {}
-        raw = (
-            registry.get("createdDateNormalized")
-            or registry.get("createdDate")
-            or data.get("createdDateNormalized")
-            or data.get("createdDate")
-        )
-        created = cls._parse_date(raw)
-        if created is None:
-            return None, str(raw) if raw else None
-        return max(0, (datetime.now(UTC) - created).days), str(raw)
+        for raw in (
+            registry.get("createdDateNormalized"),
+            registry.get("createdDate"),
+            data.get("createdDateNormalized"),
+            data.get("createdDate"),
+        ):
+            result = cls._age_from_created(raw)
+            if result[0] is not None:
+                return result
+        return None, None
 
     @staticmethod
     def _whoisxml_registrar(data: dict[str, Any] | None) -> str | None:
@@ -296,14 +351,31 @@ class DomainIntelligenceService:
         return None
 
     @classmethod
+    def _age_from_created(cls, raw: object) -> tuple[int | None, str | None]:
+        created = cls._parse_date(raw)
+        if created is None:
+            return None, None
+        elapsed = datetime.now(UTC) - created
+        # A creation timestamp materially in the future is malformed provider
+        # data, not evidence of a zero-day-old domain. Allow one day for clock
+        # skew and date-only registry timestamps.
+        if elapsed.total_seconds() < -86400:
+            return None, None
+        return max(0, elapsed.days), str(raw)
+
+    @classmethod
     def _ip2whois_age(cls, data: dict[str, Any] | None) -> tuple[int | None, str | None]:
         if not data:
             return None, None
-        raw = data.get("create_date") or data.get("created_date") or data.get("createdDate")
-        created = cls._parse_date(raw)
-        if created is None:
-            return None, str(raw) if raw else None
-        return max(0, (datetime.now(UTC) - created).days), str(raw)
+        for raw in (
+            data.get("create_date"),
+            data.get("created_date"),
+            data.get("createdDate"),
+        ):
+            result = cls._age_from_created(raw)
+            if result[0] is not None:
+                return result
+        return None, None
 
     @staticmethod
     def _ip2whois_registrar(data: dict[str, Any] | None) -> str | None:
@@ -418,10 +490,81 @@ class DomainIntelligenceService:
                 headers={"User-Agent": "Prewise/0.2"},
             )
             if response.status_code == 200:
-                return response.json(), None
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    return None, "urlscan invalid response"
+                return self._add_shared_hosting_history(domain, payload), None
             return None, f"urlscan HTTP {response.status_code}"
         except Exception as exc:
             return None, f"urlscan {type(exc).__name__}"
+
+    def _add_shared_hosting_history(
+        self,
+        domain: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Attach reverse-IP abuse context without confusing it with this domain.
+
+        The first query is scoped to the exact registrable domain. Its observed
+        public IPs are then queried separately. Only malicious results belonging
+        to other registrable domains count as shared-hosting evidence.
+        """
+
+        addresses = self._reputation_ips(payload)
+        if not addresses:
+            return {**payload, "shared_hosting_available": False}
+        malicious_domains: set[str] = set()
+        malicious_observations = 0
+        completed_queries = 0
+        errors: list[str] = []
+
+        def query(address: str) -> tuple[str, dict[str, Any] | None, str | None]:
+            try:
+                response = httpx.get(
+                    "https://urlscan.io/api/v1/search/",
+                    params={"q": f"ip:{address}", "size": 100},
+                    timeout=self.timeout_seconds,
+                    headers={"User-Agent": "Prewise/0.2"},
+                )
+                if response.status_code != 200:
+                    return address, None, f"{address}:HTTP {response.status_code}"
+                data = response.json()
+                if not isinstance(data, dict):
+                    return address, None, f"{address}:invalid response"
+                return address, data, None
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                return address, None, f"{address}:{type(exc).__name__}"
+
+        candidates = addresses[:2]
+        with ThreadPoolExecutor(
+            max_workers=len(candidates),
+            thread_name_prefix="reverse-ip-intel",
+        ) as pool:
+            results = list(pool.map(query, candidates))
+        for _address, data, error in results:
+            if error:
+                errors.append(error)
+                continue
+            if data is not None:
+                completed_queries += 1
+                for item in data.get("results", []):
+                    if not isinstance(item, dict) or not bool(
+                        item.get("verdicts", {}).get("overall", {}).get("malicious")
+                    ):
+                        continue
+                    page = item.get("page") if isinstance(item.get("page"), dict) else {}
+                    observed = str(page.get("domain") or "").lower().rstrip(".")
+                    if not observed or observed == domain or observed.endswith("." + domain):
+                        continue
+                    malicious_observations += 1
+                    malicious_domains.add(observed)
+        return {
+            **payload,
+            "shared_hosting_available": completed_queries > 0,
+            "shared_malicious_domains": sorted(malicious_domains),
+            "shared_malicious_observations": malicious_observations,
+            "shared_hosting_errors": errors,
+        }
 
     @staticmethod
     def _certificate_age(data: list[dict[str, Any]] | None) -> tuple[int | None, str | None]:
@@ -473,19 +616,37 @@ class DomainIntelligenceService:
             and bool(item.get("verdicts", {}).get("overall", {}).get("malicious"))
         )
 
-    @staticmethod
-    def _domain_age(data: dict[str, Any] | None) -> tuple[int | None, str | None]:
+    @classmethod
+    def _domain_age(cls, data: dict[str, Any] | None) -> tuple[int | None, str | None]:
         if not data:
             return None, None
         for event in data.get("events", []):
-            if event.get("eventAction") in {"registration", "registered"} and event.get("eventDate"):
-                raw = str(event["eventDate"])
-                try:
-                    created = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                    return max(0, (datetime.now(UTC) - created.astimezone(UTC)).days), raw
-                except ValueError:
-                    return None, raw
+            if not isinstance(event, dict):
+                continue
+            action = str(event.get("eventAction") or "").strip().lower()
+            if action not in {"registration", "registered"}:
+                continue
+            result = cls._age_from_created(event.get("eventDate"))
+            if result[0] is not None:
+                return result
         return None, None
+
+    @classmethod
+    def _registration_age(
+        cls,
+        whoisxml: dict[str, Any] | None,
+        whois: dict[str, Any] | None,
+        rdap: dict[str, Any] | None,
+    ) -> tuple[int | None, str | None, str | None]:
+        for source, result in (
+            ("WhoisXML API", cls._whoisxml_age(whoisxml)),
+            ("IP2WHOIS", cls._ip2whois_age(whois)),
+            ("RDAP", cls._domain_age(rdap)),
+        ):
+            age_days, created_at = result
+            if age_days is not None:
+                return age_days, created_at, source
+        return None, None, None
 
     @classmethod
     def _expiry_days(cls, whoisxml: dict[str, Any] | None,

@@ -63,8 +63,10 @@ def test_worker_reports_business_policy_and_content_findings(monkeypatch) -> Non
     })
     result = sandbox_worker.run({"url": "https://shop.example.test"})
     codes = {issue["code"] for issue in result["issues"]}
-    assert {"missing_contact_information", "business_email_mismatch", "missing_privacy_policy",
+    assert {"business_email_mismatch", "missing_privacy_policy",
             "missing_terms_refund", "scam_template_content", "urgency_language"} <= codes
+    assert "missing_contact_information" not in codes
+    assert result["page_signals"]["has_contact_channel"] is True
 
 
 def test_payment_recipient_makes_page_commercial_without_shop_words(monkeypatch) -> None:

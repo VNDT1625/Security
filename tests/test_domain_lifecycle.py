@@ -28,7 +28,7 @@ def test_expired_registration_is_malicious_evidence():
     assert result.metadata["value_origin"] == "expires_at"
 
 
-@pytest.mark.parametrize("days_remaining", [0, 1, 30])
+@pytest.mark.parametrize("days_remaining", [1, 30])
 def test_registration_inside_warning_window_is_suspicious(days_remaining):
     result = evaluate_domain_lifecycle(
         expires_at=NOW + timedelta(days=days_remaining),
@@ -40,6 +40,21 @@ def test_registration_inside_warning_window_is_suspicious(days_remaining):
     assert result.finding_type == "domain_registration_expiring_soon"
     assert result.days_remaining == days_remaining
     assert result.is_risk is True
+
+
+def test_registration_expiring_today_from_relative_provider_is_suspicious():
+    result = evaluate_domain_lifecycle(expiry_days=0, now=NOW)
+
+    assert result.state == DomainLifecycleState.EXPIRING_SOON
+    assert result.days_remaining == 0
+
+
+def test_registration_at_exact_expiry_timestamp_is_expired():
+    result = evaluate_domain_lifecycle(expires_at=NOW, now=NOW)
+
+    assert result.state == DomainLifecycleState.EXPIRED
+    assert result.days_remaining == 0
+    assert result.summary == "Domain registration has expired."
 
 
 def test_registration_beyond_warning_window_is_clean():

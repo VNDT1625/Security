@@ -47,6 +47,88 @@ def test_failed_sandbox_is_unavailable_not_clean():
     assert by_id[30]["adjusted_score"] == 0
 
 
+def test_failed_certificate_validation_is_scored_as_criterion_10():
+    report = SandboxURLResponse.failed(
+        "https://expired.example.test",
+        "tls_certificate_error",
+        "Certificate validation failed",
+        "certificate has expired",
+    )
+    observations = ScanObservations(report.url)
+    add_http_sandbox(observations, report)
+    by_id = {
+        item.criterion_id: item
+        for item in build_criteria_evidence(observations, default_config())
+    }
+
+    assert by_id[10].status == CriterionStatus.MALICIOUS
+    assert by_id[10].finding_type == "tls_certificate_error"
+    assert by_id[9].status == CriterionStatus.UNAVAILABLE
+
+
+def test_negotiated_tls_configuration_completes_criteria_9_and_10():
+    report = SandboxURLResponse(
+        ok=True,
+        execution_status="completed",
+        url="https://example.test",
+        final_url="https://example.test/",
+        tls={
+            "protocol": "TLSv1.3",
+            "cipher": ("TLS_AES_256_GCM_SHA384", "TLSv1.3", 256),
+            "compression": False,
+        },
+    )
+    observations = ScanObservations(report.url)
+    add_http_sandbox(observations, report)
+    by_id = {
+        item.criterion_id: item
+        for item in build_criteria_evidence(observations, default_config())
+    }
+
+    assert by_id[9].status == CriterionStatus.CLEAN
+    assert by_id[10].status == CriterionStatus.CLEAN
+
+
+def test_obsolete_tls_is_suspicious_but_not_a_bad_certificate():
+    report = SandboxURLResponse(
+        ok=True,
+        execution_status="completed",
+        url="https://legacy.example.test",
+        tls={
+            "protocol": "TLSv1.0",
+            "cipher": ("AES128-SHA", "TLSv1.0", 128),
+            "compression": False,
+        },
+    )
+    observations = ScanObservations(report.url)
+    add_http_sandbox(observations, report)
+    by_id = {
+        item.criterion_id: item
+        for item in build_criteria_evidence(observations, default_config())
+    }
+
+    assert by_id[9].status == CriterionStatus.SUSPICIOUS
+    assert by_id[10].status == CriterionStatus.CLEAN
+
+
+def test_http_has_no_tls_configuration_or_certificate():
+    report = SandboxURLResponse(
+        ok=True,
+        execution_status="completed",
+        url="http://example.test",
+        final_url="http://example.test/",
+    )
+    observations = ScanObservations(report.url)
+    add_http_sandbox(observations, report)
+    by_id = {
+        item.criterion_id: item
+        for item in build_criteria_evidence(observations, default_config())
+    }
+
+    assert by_id[9].status == CriterionStatus.NOT_APPLICABLE
+    assert by_id[10].status == CriterionStatus.NOT_APPLICABLE
+
+
 def test_password_form_alone_does_not_trigger_the_danger_floor():
     report = SandboxURLResponse(
         ok=True,

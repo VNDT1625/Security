@@ -21,13 +21,13 @@ def _intel(**overrides):
     return DomainIntelligence(**values)
 
 
-def test_expiry_and_certificate_observations_activate_criteria():
+def test_domain_registration_does_not_guess_tls_configuration():
     obs = ScanObservations("https://example.test")
     add_domain_intelligence(obs, _intel())
     by_id = {e.criterion_id: e for e in build_criteria_evidence(obs, default_config())}
     assert by_id[1].status == CriterionStatus.MALICIOUS
-    assert by_id[2].status == CriterionStatus.MALICIOUS
-    assert by_id[9].status == CriterionStatus.SUSPICIOUS
+    assert by_id[2].status == CriterionStatus.SUSPICIOUS
+    assert by_id[9].status == CriterionStatus.NOT_CHECKED
     assert by_id[3].status == CriterionStatus.NOT_APPLICABLE
 
 
@@ -35,8 +35,8 @@ def test_missing_expiry_is_not_reported_clean():
     obs = ScanObservations("https://example.test")
     add_domain_intelligence(obs, _intel(expiry_days=None, certificate_age_days=None))
     by_id = {e.criterion_id: e for e in build_criteria_evidence(obs, default_config())}
-    assert by_id[2].status == CriterionStatus.NOT_APPLICABLE
-    assert by_id[9].status == CriterionStatus.UNAVAILABLE
+    assert by_id[2].status == CriterionStatus.UNAVAILABLE
+    assert by_id[9].status == CriterionStatus.NOT_CHECKED
 
 
 def test_certificate_age_is_not_used_as_domain_registration_age(monkeypatch):

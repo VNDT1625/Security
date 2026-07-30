@@ -117,9 +117,9 @@ def assess_url(url: str, model_score: float | None = None) -> URLRiskAssessment:
         evidence.append(_e("Không dùng HTTPS; dữ liệu nhập có thể bị lộ trên đường truyền.",
                            Severity.MEDIUM, "no_https", 0.10))
     if signals.shortlink:
-        lexical += 0.10
+        lexical += 0.03
         evidence.append(_e("Shortlink che giấu đích đến; cần mở rộng redirect trong sandbox.",
-                           Severity.MEDIUM, "is_shortlink", 0.10))
+                           Severity.LOW, "is_shortlink", 0.03))
     if signals.long_url:
         evasion += 0.05
         evidence.append(_e(

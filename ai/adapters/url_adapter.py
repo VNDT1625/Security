@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from urllib.parse import parse_qs, parse_qsl, unquote, urlparse
 
@@ -107,13 +108,24 @@ SUSPICIOUS_KEYWORDS = (
 )
 
 MULTI_PART_PUBLIC_SUFFIXES = {
+    "ac.vn",
+    "biz.vn",
     "com.vn",
-    "net.vn",
-    "org.vn",
     "edu.vn",
     "gov.vn",
+    "health.vn",
+    "info.vn",
+    "int.vn",
+    "name.vn",
+    "net.vn",
+    "org.vn",
+    "pro.vn",
     "co.uk",
+    "org.uk",
+    "ac.uk",
     "com.au",
+    "net.au",
+    "org.au",
     "co.jp",
     "co.kr",
     "com.br",
@@ -124,6 +136,25 @@ MULTI_PART_PUBLIC_SUFFIXES = {
     "com.tw",
     "co.id",
     "co.th",
+    "co.in",
+    "co.nz",
+    "co.za",
+    "co.il",
+    "co.ke",
+    "co.tz",
+    "co.ug",
+    "com.ar",
+    "com.bd",
+    "com.co",
+    "com.ec",
+    "com.mx",
+    "com.ng",
+    "com.pe",
+    "com.ph",
+    "com.pk",
+    "com.sa",
+    "com.tr",
+    "com.ua",
 }
 
 BRAND_CANONICAL_DOMAINS: dict[str, tuple[str, ...]] = {
@@ -168,8 +199,24 @@ BRAND_CANONICAL_DOMAINS: dict[str, tuple[str, ...]] = {
     "fedex": ("fedex.com",),
 }
 
-# Digits commonly substituted for letters in homoglyph attacks.
-_HOMOGLYPH_DIGITS = "013457"
+# Common Cyrillic/Greek characters used to make an IDN label look like an
+# ASCII brand.  This is deliberately a small visual-confusable map, not a
+# transliterator: unrelated internationalized domains must not become brands.
+_CONFUSABLE_TO_ASCII = str.maketrans({
+    "а": "a", "в": "b", "с": "c", "ԁ": "d", "е": "e", "һ": "h",
+    "і": "i", "ј": "j", "к": "k", "ӏ": "l", "м": "m", "о": "o",
+    "р": "p", "ѕ": "s", "т": "t", "у": "y", "х": "x",
+    "Α": "a", "α": "a", "Β": "b", "β": "b", "Ε": "e", "ε": "e",
+    "Ι": "i", "ι": "i", "Κ": "k", "κ": "k", "Ν": "n", "ν": "v",
+    "Ο": "o", "ο": "o", "Ρ": "p", "ρ": "p", "Τ": "t", "τ": "t",
+    "Υ": "y", "υ": "y", "Χ": "x", "χ": "x",
+})
+
+_BRAND_COMBO_AFFIXES = {
+    "account", "auth", "bank", "billing", "card", "customer", "id", "login",
+    "online", "official", "pay", "payment", "secure", "security", "service",
+    "signin", "support", "update", "verify", "wallet",
+}
 
 LEGACY_FEATURE_NAMES = (
     "url_length", "domain_entropy", "subdomain_depth", "tld_risk_score",
@@ -323,6 +370,29 @@ def levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
+def _decode_idna_host(host: str) -> str:
+    """Decode ASCII IDNA labels without rejecting ordinary Unicode hosts."""
+    decoded: list[str] = []
+    for label in host.strip(".").split("."):
+        if label.lower().startswith("xn--"):
+            try:
+                label = label.encode("ascii").decode("idna")
+            except (UnicodeError, UnicodeDecodeError):
+                pass
+        decoded.append(label)
+    return ".".join(decoded).casefold()
+
+
+def _brand_skeleton(text: str) -> str:
+    """Fold brand-like visual confusables while preserving label delimiters."""
+    decoded = _decode_idna_host(text)
+    decomposed = unicodedata.normalize("NFKD", decoded)
+    without_marks = "".join(
+        char for char in decomposed if unicodedata.category(char) != "Mn"
+    )
+    return without_marks.translate(_CONFUSABLE_TO_ASCII).translate(_DIGIT_TO_LETTER)
+
+
 def min_brand_distance(domain: str) -> float:
     """Normalized min edit distance to any known brand (lower = more suspicious)."""
     if not domain:
@@ -334,7 +404,10 @@ def min_brand_distance(domain: str) -> float:
     candidates = tuple(
         dict.fromkeys(
             candidate
-            for candidate in (domain, *re.split(r"[-_]+", domain))
+            for candidate in (
+                _brand_skeleton(domain),
+                *re.split(r"[-_]+", _brand_skeleton(domain)),
+            )
             if candidate
         )
     )
@@ -404,10 +477,25 @@ def parse_url_parts(url: str) -> URLParts:
             suffix="",
         )
 
-    last_two = ".".join(labels[-2:])
-    if len(labels) >= 3 and last_two in MULTI_PART_PUBLIC_SUFFIXES:
-        suffix_labels = 2
-        domain_index = -3
+    # Treat known platform tenant suffixes (for example ``github.io``) as an
+    # effective public suffix too.  The tenant label is the accountable domain,
+    # not the platform operator's domain.
+    effective_suffixes = MULTI_PART_PUBLIC_SUFFIXES | SHARED_HOSTING_SUFFIXES
+    matched_suffix = next(
+        (
+            candidate
+            for candidate in sorted(
+                effective_suffixes,
+                key=lambda item: (item.count("."), len(item)),
+                reverse=True,
+            )
+            if host.endswith("." + candidate)
+        ),
+        "",
+    )
+    if matched_suffix:
+        suffix_labels = len(matched_suffix.split("."))
+        domain_index = -(suffix_labels + 1)
     else:
         suffix_labels = 1
         domain_index = -2
@@ -437,19 +525,15 @@ _DIGIT_TO_LETTER = str.maketrans({"0": "o", "1": "l", "3": "e", "4": "a", "5": "
 
 def has_homoglyph(url: str) -> bool:
     parts = parse_url_parts(url)
-    domain = parts.domain_label
-    host = parts.host
-    if re.search(r"[a-z]", host) and re.search(r"[^\x00-\x7f]", host):
-        return True  # mixed ASCII + non-ASCII (Cyrillic look-alikes)
-    if re.search(rf"[a-z][{_HOMOGLYPH_DIGITS}]+[a-z]", domain):
-        return True  # digit substitution inside a label (e.g. vietc0mbank)
-    # Digit-substituted brand impersonation, incl. at word boundaries (e.g. paypa1).
-    if any(ch.isdigit() for ch in domain):
-        deleet = domain.translate(_DIGIT_TO_LETTER)
-        for brand in KNOWN_BRANDS:
-            if brand in deleet and brand not in domain:
-                return True
-    return False
+    decoded_domain = _decode_idna_host(parts.domain_label)
+    skeleton = _brand_skeleton(parts.domain_label)
+    was_visually_folded = skeleton != unicodedata.normalize("NFKD", decoded_domain)
+    if not was_visually_folded:
+        return False
+    # A non-ASCII or digit-bearing label is a brand homoglyph only when folding
+    # it produces an actual/near brand.  This avoids flagging every legitimate
+    # internationalized domain merely because it uses Unicode.
+    return bool(_brand_mentions(skeleton)) or min_brand_distance(skeleton) <= 0.20
 
 
 def is_ip_host(url: str) -> bool:
@@ -473,12 +557,22 @@ def _brand_names() -> tuple[str, ...]:
 
 
 def _brand_mentions(text: str) -> tuple[str, ...]:
+    labels = [label for label in _brand_skeleton(text).split(".") if label]
     mentions = []
     for brand in _brand_names():
-        if len(brand) <= 4:
-            matched = re.search(rf"(?:^|[.\-_]){re.escape(brand)}(?:$|[.\-_])", text)
-        else:
-            matched = brand in text
+        matched = False
+        for label in labels:
+            tokens = [token for token in re.split(r"[-_]+", label) if token]
+            if brand in tokens:
+                matched = True
+                break
+            if len(brand) > 4 and any(
+                (token.startswith(brand) and token[len(brand):] in _BRAND_COMBO_AFFIXES)
+                or (token.endswith(brand) and token[:-len(brand)] in _BRAND_COMBO_AFFIXES)
+                for token in tokens
+            ):
+                matched = True
+                break
         if matched:
             mentions.append(brand)
     return tuple(mentions)
@@ -486,8 +580,14 @@ def _brand_mentions(text: str) -> tuple[str, ...]:
 
 def _brand_domain_allowed(brand: str, host: str, registrable_domain: str) -> bool:
     allowed = BRAND_CANONICAL_DOMAINS.get(brand, (f"{brand}.com",))
-    return any(registrable_domain == domain or host == domain or host.endswith("." + domain)
-               for domain in allowed)
+    ascii_host = host.encode("idna").decode("ascii").lower()
+    ascii_registrable = registrable_domain.encode("idna").decode("ascii").lower()
+    return any(
+        ascii_registrable == domain
+        or ascii_host == domain
+        or ascii_host.endswith("." + domain)
+        for domain in allowed
+    )
 
 
 def analyze_url_signals(url: str) -> URLSignals:
@@ -499,18 +599,23 @@ def analyze_url_signals(url: str) -> URLSignals:
     parts = parse_url_parts(url)
     parsed = urlparse(parts.normalized_url)
     decoded_url = unquote(parts.normalized_url).lower()
-    decoded_host = unquote(parts.host).lower()
+    decoded_host = _decode_idna_host(unquote(parts.host))
+    brand_host = _brand_skeleton(decoded_host)
     path = parsed.path or ""
     query = parsed.query or ""
     query_param_count = len(parse_qs(query))
     path_depth = len([p for p in path.split("/") if p])
     delimiter_count = sum(parts.normalized_url.count(ch) for ch in ("-", "_", "%", "@", "?", "="))
-    mentions = _brand_mentions(decoded_host)
+    mentions = _brand_mentions(brand_host)
     brand_mismatch = any(
         not _brand_domain_allowed(brand, parts.host, parts.registrable_domain)
         for brand in mentions
     )
-    brand_in_subdomain = any(brand in parts.subdomain for brand in mentions)
+    brand_subdomain = _brand_skeleton(parts.subdomain)
+    brand_in_subdomain = any(
+        brand in re.split(r"[.\-_]+", brand_subdomain)
+        for brand in mentions
+    )
     subdomain_labels = [label for label in parts.subdomain.split(".") if label]
     deceptive_subdomain = (
         brand_in_subdomain
