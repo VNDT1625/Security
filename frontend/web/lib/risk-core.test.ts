@@ -11,9 +11,15 @@ describe("mapRiskResult", () => {
     expect(result.unavailableChecks).toEqual(["sandbox"]);
   });
 
-  it("giữ tương thích legacy 0..1 và không tạo confidence giả", () => {
+  it("không dùng điểm cũ khi thiếu kết quả của lõi", () => {
     const result = mapRiskResult({ risk_score: .42, threat_level: "medium" });
-    expect(result).toMatchObject({ source: "legacy", score: 42, level: "medium", confidence: undefined });
+    expect(result).toMatchObject({
+      source: "unavailable",
+      score: 0,
+      level: "insufficient_information",
+      decision: "ASK_USER_CONFIRMATION",
+      confidence: undefined,
+    });
   });
 
   it("dùng duy nhất điểm cuối của lõi và quyết định cấp ngoài cùng", () => {

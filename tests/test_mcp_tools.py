@@ -59,8 +59,8 @@ def test_check_action_ask_confirm_or_block():
     r = tools.check_action_before_execution(
         "submit_form", "http://vietc0mbank-verify.xyz/login", ["password"]
     )
-    assert r["verdict"] == "BLOCK"
-    assert r["requires_user_confirmation"] is False
+    assert r["verdict"] == "ASK_CONFIRM"
+    assert r["requires_user_confirmation"] is True
 
 
 def test_dispatch_unknown_tool():

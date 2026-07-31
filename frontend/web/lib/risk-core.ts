@@ -1,7 +1,7 @@
 export type RiskCoreRecord = Record<string, unknown>;
 
 export interface RiskCoreView {
-  source: "risk_core_v2" | "legacy";
+  source: "risk_core_v2" | "unavailable";
   schemaVersion?: string;
   scoringVersion?: string;
   score: number;
@@ -64,7 +64,7 @@ const criterionRecords = (value: unknown): RiskCoreRecord[] => records(value).ma
 });
 
 /** Maps the evidence-based API payload without deriving policy fields locally. */
-export function mapRiskResult(payload: unknown, legacyScore?: number): RiskCoreView {
+export function mapRiskResult(payload: unknown, _storedScore?: number): RiskCoreView {
   const outer = record(payload) ?? {};
   const core = record(outer.risk_core);
   if (core) {
@@ -88,11 +88,10 @@ export function mapRiskResult(payload: unknown, legacyScore?: number): RiskCoreV
       notCheckedChecks: strings(core.not_checked_checks), reasoning: strings(core.reasoning),
     };
   }
-  const normalized = number(outer.risk_score);
   return {
-    source: "legacy", score: clamp(normalized == null ? legacyScore ?? 0 : normalized <= 1 ? normalized * 100 : normalized),
-    confidence: number(outer.confidence) == null ? undefined : clamp((number(outer.confidence) as number) <= 1 ? (number(outer.confidence) as number) * 100 : number(outer.confidence) as number),
-    level: text(outer.risk_level) ?? text(outer.threat_level), decision: text(outer.decision),
+    source: "unavailable", score: 0,
+    confidence: undefined,
+    level: "insufficient_information", decision: "ASK_USER_CONFIRMATION",
     criteria: records(outer.score_layers), evidence: records(outer.evidence), mitigations: [], overrides: [], caps: [], conflicts: [],
     unavailableChecks: [], notCheckedChecks: [], reasoning: strings(outer.reasons),
   };

@@ -19,7 +19,6 @@ from backend.services.exe_quick_scan_service import exe_quick_scan_service
 from backend.services.inference_service import InferenceService
 from security.exe_quick_scan import ExeQuickScanService
 from shared.schemas import AgentContext, Decision
-from shared.trusted_popular_domains import trusted_popular_assessment
 
 # Anything outside this set could be read as markup or an instruction boundary
 # by the agent that consumes a tool result.
@@ -313,10 +312,7 @@ class MCPTools:
         }
 
     def assess_url(self, payload: URLInput) -> dict[str, Any]:
-        trusted_result = trusted_popular_assessment(payload.url)
-        return _assessment_json(
-            trusted_result or self.service.assess_url(payload.url, payload.context)
-        )
+        return _assessment_json(self.service.assess_url(payload.url, payload.context))
 
     def assess_text(self, payload: TextInput) -> dict[str, Any]:
         modality = payload.content_type if payload.content_type in {"email", "sms", "text"} else "text"

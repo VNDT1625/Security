@@ -7,7 +7,7 @@ from security.risk_core import (
     mark_context_applicability,
 )
 from security.risk_core.detectors import add_offline_url_findings
-from security.url_risk_core import assess_url
+from security.url_risk_core import collect_url_evidence
 
 
 def test_structured_registry_can_activate_every_adapter_driven_criterion():
@@ -83,7 +83,7 @@ def test_applicability_requires_explicit_context_evidence():
 def test_new_offline_download_and_shared_platform_signals_reach_v2_criteria():
     url = "https://microsoft-login.pages.dev/account/verify/CV.pdf.exe"
     obs = ScanObservations(url)
-    add_offline_url_findings(obs, assess_url(url).evidence)
+    add_offline_url_findings(obs, collect_url_evidence(url).evidence)
     evidence = build_criteria_evidence(obs, default_config())
     active = {
         item.criterion_id

@@ -60,7 +60,7 @@ def test_url_assess_e2e_benign():
     r = client.post("/v1/assess/url", json={"url": "https://github.com"})
     assert r.status_code == 200
     assert r.json()["risk_score"] < 0.3
-    assert r.json()["decision"] == "ALLOW"
+    assert r.json()["decision"] == "ASK_USER_CONFIRMATION"
 
 
 def test_confidence_varies_with_risk_and_evidence():
@@ -228,9 +228,10 @@ def test_action_block_credential_exfil():
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["decision"] == "BLOCK"
-    assert body["requires_user_confirmation"] is False
-    assert body["security_core"]["mode"] == "shadow"
+    assert body["decision"] == "ASK_USER_CONFIRMATION"
+    assert body["requires_user_confirmation"] is True
+    assert body["security_core"]["mode"] == "new_engine"
+    assert "legacy_comparison" not in body["security_core"]
     assert body["security_core"]["audit"]["evidence_before_dedup"]
     with SessionLocal() as db:
         audit = db.scalar(

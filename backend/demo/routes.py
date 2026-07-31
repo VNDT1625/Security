@@ -910,11 +910,13 @@ async def _process_attack_simulation(
 
         # Analyze based on type
         if current_type == "url":
-            result = engine.predict_url(content)
+            risk_score = inference_service.assess_url(
+                content,
+                context_ai_mode="off",
+            ).risk_score
         else:  # prompt
             result = engine.predict_prompt(content)
-
-        risk_score = result.risk_score
+            risk_score = result.risk_score
 
         # Determine if blocked (based on protection_enabled)
         blocked = request.protection_enabled and risk_score >= 0.5

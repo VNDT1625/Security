@@ -54,7 +54,6 @@ from shared.schemas import (
     SandboxURLResponse,
     ScanPromptRequest,
 )
-from shared.trusted_popular_domains import trusted_popular_assessment
 
 router = APIRouter(prefix="/v1/assess", tags=["assess"])
 sandbox_runner = URLSandboxRunner()
@@ -171,17 +170,6 @@ def assess_url(
     require_api_key_scope(actor, "assess:url")
     url = sanitize_text(req.url)
     context = sanitize_text(req.context or "")
-    trusted_result = trusted_popular_assessment(url)
-    if trusted_result is not None:
-        log_assessment(
-            db,
-            result=trusted_result,
-            actor=actor,
-            request=request,
-            raw_input=url,
-            normalized_url=url,
-        )
-        return trusted_result
     plan = build_actor_plan_info(db, actor)
     cache_enabled = get_url_assessment_cache_enabled(
         db,

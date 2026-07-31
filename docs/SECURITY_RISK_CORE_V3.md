@@ -64,13 +64,10 @@ python -m pytest -q tests\test_policy_engine.py tests\test_agent_security.py tes
 python tools\benchmark_action_risk.py
 ```
 
-## 7. Chuyển chế độ
+## 7. Chế độ hoạt động
 
-Biến môi trường `SECURITY_CORE_MODE` nhận:
-
-- `legacy`: chỉ dùng lõi cũ.
-- `shadow`: lõi cũ quyết định chính; lõi mới chạy song song và ghi chênh lệch. Đây là mặc định.
-- `new_engine`: lõi mới quyết định chính nhưng vẫn ánh xạ về kiểu trả lời công khai cũ.
+Lõi bằng chứng mới là đường quyết định duy nhất. Không còn chế độ `legacy` hoặc
+`shadow`.
 
 ## 8. Tích hợp LightGBM
 

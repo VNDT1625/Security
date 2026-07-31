@@ -235,6 +235,20 @@ def collect_action_evidence(
 
     if (classification.sensitive or classification.privileged) and not permission:
         missing.append("permission_context")
+    if value.legal_review_required:
+        missing.append("legal_context")
+        rules.append("legal-review-required")
+        evidence.append(
+            _evidence(
+                value,
+                EvidenceCategory.MISSING_CONTEXT,
+                "legal-review-required",
+                20,
+                0.90,
+                "LEGAL_REVIEW_REQUIRED",
+                "Chưa có đủ căn cứ pháp lý để tự động cho phép hành động.",
+            )
+        )
     if classification.transfer and external and authorized is False:
         rules.append("unauthorized-destination")
         evidence.append(

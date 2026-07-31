@@ -92,6 +92,5 @@ def build_action_audit_record(
             "model_version": result.ml.model_version,
             "feature_schema_version": result.feature_schema_version,
             "scoring_version": result.scoring_version,
-            "legacy_comparison": result.legacy_comparison,
         }
     )

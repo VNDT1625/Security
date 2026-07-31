@@ -35,7 +35,25 @@ DETECT_THRESHOLD = 0.5
 
 
 def _detected_url(engine: InferenceEngine, url: str) -> bool:
-    return engine.predict_url(url).risk_score >= DETECT_THRESHOLD
+    from security.risk_core import assess as assess_risk
+    from security.risk_core import default_config
+    from security.risk_core.detectors import (
+        ScanObservations,
+        add_offline_url_findings,
+        build_criteria_evidence,
+    )
+    from security.risk_core.url_overrides import URL_OVERRIDE_RULES
+
+    prediction = engine.predict_url(url)
+    observations = ScanObservations(url)
+    add_offline_url_findings(observations, prediction.evidence)
+    config = default_config()
+    result = assess_risk(
+        build_criteria_evidence(observations, config),
+        config=config,
+        override_rules=URL_OVERRIDE_RULES,
+    )
+    return result.risk_score / 100.0 >= DETECT_THRESHOLD
 
 
 def _detected_text(engine: InferenceEngine, text: str) -> bool:

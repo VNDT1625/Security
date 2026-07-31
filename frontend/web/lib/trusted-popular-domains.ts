@@ -1,5 +1,3 @@
-import type { AssessResult } from "@/lib/types";
-
 export const TRUSTED_POPULAR_DOMAINS = [
     "google.com", "youtube.com", "facebook.com", "instagram.com", "x.com",
     "twitter.com", "wikipedia.org", "reddit.com", "amazon.com", "yahoo.com",
@@ -34,27 +32,4 @@ export function trustedPopularDomain(input: string): string | null {
     } catch {
         return null;
     }
-}
-
-export function trustedPopularResult(input: string): AssessResult | null {
-    const domain = trustedPopularDomain(input);
-    if (!domain) return null;
-    const reason = `${domain} nằm trong danh sách 100 dịch vụ phổ biến được tin cậy sẵn.`;
-    return {
-        score: 0,
-        riskLevel: "safe",
-        confidence: 1,
-        reasons: [reason],
-        evidence: [{
-            source: "trusted_popular_domains",
-            message: reason,
-            severity: "info",
-            feature: "popular_domain_policy",
-        }],
-        explanation: "Kết quả được trả trực tiếp theo chính sách tên miền phổ biến; hệ thống không truy xét độ an toàn của URL này.",
-        modality: "url",
-        modelVersion: "trusted-popular-domains-v1",
-        latencyMs: 0,
-        requestId: globalThis.crypto?.randomUUID?.() ?? `trusted-${Date.now()}`,
-    };
 }

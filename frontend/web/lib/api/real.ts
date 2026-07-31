@@ -65,7 +65,6 @@ import type {
     UserAISettings,
     UserAISettingsInput,
 } from "@/lib/types";
-import { trustedPopularResult } from "@/lib/trusted-popular-domains";
 
 // ---------------------------------------------------------------------------
 // Cấu hình base URL
@@ -402,8 +401,6 @@ export class RealApiClient implements ApiClient {
     /** Đánh giá rủi ro cho một URL qua REST `POST /v1/assess/url`.
      *  Khớp contract gateway: body `{ url, context }`. */
     async assessUrl(url: string): Promise<AssessResult> {
-        const trusted = trustedPopularResult(url);
-        if (trusted) return trusted;
         const raw = await requestJson<BackendAssessResponse>("/v1/assess/url", {
             ...withAuthentication({ method: "POST" }),
             body: JSON.stringify({ url, context: "" }),

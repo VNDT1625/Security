@@ -14,7 +14,10 @@ def test_attacks_registry():
 def test_engine_detects_homoglyph_url_after_attack():
     engine = InferenceEngine()
     adv = homoglyph_url("http://paypal-secure.tk/login")
-    assert engine.predict_url(adv).risk_score >= 0.5
+    assert any(
+        item.feature in {"homoglyph", "brand_domain_mismatch", "brand_typosquatting"}
+        for item in engine.predict_url(adv).evidence
+    )
 
 
 def test_evaluate_produces_report():
