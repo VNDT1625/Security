@@ -47,11 +47,11 @@ def _by_id(observations):
     }
 
 
-def test_server_location_is_zero_weight_context_and_blacklist_gets_weight():
+def test_criteria_are_evidence_sources_without_additive_weights():
     config = default_config()
-    assert config.criteria[10].max_weight == 4
-    assert config.criteria[13].max_weight == 0
-    assert sum(item.max_weight for item in config.criteria[:49]) == 80
+    assert config.criteria[10].criterion_id == 11
+    assert config.criteria[13].criterion_id == 14
+    assert not hasattr(config.criteria[10], "max_weight")
 
 
 def test_blacklist_and_repeated_domain_reputation_are_distinct():

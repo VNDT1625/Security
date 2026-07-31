@@ -1,9 +1,8 @@
-"""Immutable, fail-fast CoreGuide v2 scoring configuration."""
+"""Immutable configuration for URL evidence collection and confidence."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isclose
 
 _NAMES = (
     "Tuổi tên miền",
@@ -57,58 +56,6 @@ _NAMES = (
     "Đánh giá giả",
     "Điểm tổng hợp",
 )
-_WEIGHTS = (
-    1.5,
-    1,
-    1,
-    1,
-    3,
-    2,
-    3,
-    1,
-    1,
-    2,
-    4,
-    2,
-    2,
-    0,
-    1,
-    3,
-    1.5,
-    2.5,
-    3,
-    1,
-    1,
-    1.5,
-    1.5,
-    0.5,
-    0.5,
-    1,
-    0.5,
-    3,
-    3.75,
-    3.75,
-    2.5,
-    3,
-    1,
-    2,
-    2.5,
-    1,
-    1,
-    1,
-    1,
-    1.5,
-    1,
-    1,
-    1.5,
-    1.5,
-    0.5,
-    1.5,
-    0.5,
-    1.5,
-    1,
-    0,
-)
 _COVERAGE_CLASSES = {
     "direct_behavior": 3.0,
     "strong_identity": 2.0,
@@ -133,7 +80,6 @@ DANGEROUS_CRITERION_IDS = frozenset(
 class CriterionConfig:
     criterion_id: int
     name: str
-    max_weight: float
     coverage_weight: float
 
 
@@ -142,7 +88,6 @@ class SourceConfig:
     source_id: str
     name: str
     family: str
-    raw_weight: float
     coverage_weight: float
 
 
@@ -150,11 +95,7 @@ class SourceConfig:
 class RiskConfig:
     criteria: tuple[CriterionConfig, ...]
     sources: tuple[SourceConfig, ...]
-    family_caps: dict[str, float]
-    internal_cap: float = 80.0
-    external_cap: float = 20.0
-    rules_version: str = "risk-rules-v2.2"
-    weights_version: str = "risk-weights-v2"
+    rules_version: str = "risk-rules-v3.0"
     normalization_version: str = "url-normalization-v2"
 
     def validate(self) -> None:
@@ -163,21 +104,10 @@ class RiskConfig:
             raise ValueError("criteria must contain unique ordered ids 1..50")
         if any(c.coverage_weight <= 0 for c in self.criteria[:49]):
             raise ValueError("applicable criteria require positive coverage_weight")
-        if self.criteria[49].max_weight != 0:
-            raise ValueError("criterion 50 must have zero risk weight")
-        if not isclose(sum(c.max_weight for c in self.criteria[:49]), 80.0, abs_tol=1e-9):
-            raise ValueError("criteria 1..49 must total exactly 80")
         if len(self.sources) != 14 or len({s.source_id for s in self.sources}) != 14:
             raise ValueError("exactly 14 unique external sources required")
-        if not isclose(sum(s.raw_weight for s in self.sources), 25.0, abs_tol=1e-9):
-            raise ValueError("external raw weights must total exactly 25")
-        if any(
-            s.family not in self.family_caps or s.raw_weight < 0 or s.coverage_weight <= 0
-            for s in self.sources
-        ):
+        if any(not s.family or s.coverage_weight <= 0 for s in self.sources):
             raise ValueError("invalid source config")
-        if not isclose(sum(self.family_caps.values()), 20.0, abs_tol=1e-9):
-            raise ValueError("family caps must total exactly 20")
 
 
 def _coverage(i: int) -> float:
@@ -195,41 +125,36 @@ def _coverage(i: int) -> float:
 
 
 _SOURCE_ROWS = (
-    (51, "ScamAdviser", 1.5, "commercial_reputation"),
-    (52, "Criminal IP", 2.5, "infrastructure_ip"),
-    (53, "Hudson Rock", 1, "breach_infostealer"),
-    (54, "Have I Been Pwned", 0.5, "breach_infostealer"),
-    (55, "PhishTank", 2.5, "phishing_malware"),
-    (56, "CyRadar", 1.5, "phishing_malware"),
-    (57, "National Cybersecurity Association", 1.5, "phishing_malware"),
-    (58, "NCSC", 2.5, "phishing_malware"),
-    (59, "ScamVN", 1.5, "phishing_malware"),
-    (60, "IP Quality Score", 2, "infrastructure_ip"),
-    (61, "Google Safe Browsing", 4, "phishing_malware"),
-    (62, "Bfore", 1, "infrastructure_ip"),
-    (63, "APIVoid", 2, "infrastructure_ip"),
-    (64, "PhishDestroy", 1, "phishing_malware"),
+    (51, "ScamAdviser", "commercial_reputation"),
+    (52, "Criminal IP", "infrastructure_ip"),
+    (53, "Hudson Rock", "breach_infostealer"),
+    (54, "Have I Been Pwned", "breach_infostealer"),
+    (55, "PhishTank", "phishing_malware"),
+    (56, "CyRadar", "phishing_malware"),
+    (57, "National Cybersecurity Association", "phishing_malware"),
+    (58, "NCSC", "phishing_malware"),
+    (59, "ScamVN", "phishing_malware"),
+    (60, "IP Quality Score", "infrastructure_ip"),
+    (61, "Google Safe Browsing", "phishing_malware"),
+    (62, "Bfore", "infrastructure_ip"),
+    (63, "APIVoid", "infrastructure_ip"),
+    (64, "PhishDestroy", "phishing_malware"),
 )
 
 
 def default_config() -> RiskConfig:
     criteria = tuple(
-        CriterionConfig(i, _NAMES[i - 1], float(_WEIGHTS[i - 1]), _coverage(i) if i < 50 else 0.75)
+        CriterionConfig(
+            i,
+            _NAMES[i - 1],
+            _coverage(i) if i < 50 else 0.75,
+        )
         for i in range(1, 51)
     )
     sources = tuple(
-        SourceConfig(str(i), name, family, float(weight), 1.5)
-        for i, name, weight, family in _SOURCE_ROWS
+        SourceConfig(str(i), name, family, 1.5)
+        for i, name, family in _SOURCE_ROWS
     )
-    cfg = RiskConfig(
-        criteria,
-        sources,
-        {
-            "phishing_malware": 11.0,
-            "infrastructure_ip": 6.0,
-            "commercial_reputation": 1.5,
-            "breach_infostealer": 1.5,
-        },
-    )
+    cfg = RiskConfig(criteria, sources)
     cfg.validate()
     return cfg

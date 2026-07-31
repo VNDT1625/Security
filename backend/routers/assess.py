@@ -21,10 +21,7 @@ from backend.routers.auth import (
     resolve_actor,
 )
 from backend.security_utils import input_sha256, utcnow
-from backend.services.ai_context_weight_service import (
-    get_effective_ai_context_weight_percent,
-    get_url_assessment_cache_enabled,
-)
+from backend.services.ai_context_weight_service import get_url_assessment_cache_enabled
 from backend.services.action_audit_service import log_action_assessment
 from backend.services.exe_quick_scan_service import exe_quick_scan_service
 from backend.services.inference_service import InferenceService
@@ -186,11 +183,6 @@ def assess_url(
         )
         return trusted_result
     plan = build_actor_plan_info(db, actor)
-    ai_context_weight_percent = get_effective_ai_context_weight_percent(
-        db,
-        user_id=actor.user.id if actor.user else None,
-        plan_tier=plan.tier,
-    )
     cache_enabled = get_url_assessment_cache_enabled(
         db,
         default=settings.shared_assessment_cache_enabled,
@@ -200,9 +192,7 @@ def assess_url(
         auto_enabled=plan.autoWebContext,
         useful_context=bool(context),
     )
-    cache_namespace = (
-        f"{svc.adapter_cache_token}:{context_mode}:ai-weight={ai_context_weight_percent}"
-    )
+    cache_namespace = f"{svc.adapter_cache_token}:{context_mode}:unified-risk-core"
     if actor.user is not None and context_mode != "off":
         # Contextual responses may depend on a personal provider/key. Never let
         # one account receive another account's cached AI-derived evidence.
@@ -235,7 +225,6 @@ def assess_url(
             raise
         if reserved_ai:
             _refund_failed_evaluation(db, actor, request, result)
-        result = svc.apply_url_ai_context_weight(result, ai_context_weight_percent)
         result = result.model_copy(
             update={
                 "cache_hit": False,

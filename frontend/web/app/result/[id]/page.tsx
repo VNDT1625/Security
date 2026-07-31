@@ -57,7 +57,6 @@ type DangerousCriterion = {
   criterion_id?: number;
   name?: string;
   contribution?: number;
-  max_weight?: number;
   reason?: string;
 };
 type AccessAnalysis = {
@@ -153,42 +152,6 @@ type StoredRecord = {
     };
   };
 };
-
-type AIScore = { score: number; weight: number; effectiveWeight?: number };
-
-function readAIScore(result?: StoredRecord["result"]): AIScore | null {
-  const core = result?.risk_core;
-  if (!core) return null;
-  const weight = Number(core.ai_context_weight_percent ?? 0);
-  const score = Number(core.ai_context_score);
-  if (!Number.isFinite(weight) || weight <= 0 || !Number.isFinite(score))
-    return null;
-  const effectiveWeight = Number(core.ai_context_effective_weight_percent);
-  return {
-    score: Math.max(0, Math.min(100, score)),
-    weight: Math.max(0, Math.min(40, weight)),
-    effectiveWeight: Number.isFinite(effectiveWeight)
-      ? Math.max(0, Math.min(40, effectiveWeight))
-      : undefined,
-  };
-}
-
-function AIScoreCard({ value }: { value: AIScore }) {
-  const level = getRiskLevelForContext(undefined, undefined, value.score);
-  return (
-    <div
-      className={styles.aiScore}
-      aria-label={`AI hỗ trợ kết luận ${level.label}`}
-    >
-      <span>AI HỖ TRỢ ĐÁNH GIÁ</span>
-      <strong>{level.label}</strong>
-      <p>
-        Đã tham gia đối chiếu tín hiệu; quyết định cuối vẫn do lõi chính sách
-        đưa ra.
-      </p>
-    </div>
-  );
-}
 
 function ProAIContextPanel({ record }: { record: StoredRecord }) {
   const [advice, setAdvice] = useState("");
@@ -428,7 +391,6 @@ function MessageReport({
   const headerUnavailable =
     type === "email" && !record?.sender && !record?.subject;
   const contextualAI = result?.contextual_analysis;
-  const aiScore = readAIScore(result);
 
   return (
     <PrewiseShell>
@@ -470,14 +432,10 @@ function MessageReport({
               </i>
             </div>
           </div>
-          {aiScore ? (
-            <AIScoreCard value={aiScore} />
-          ) : (
-            <div className="signal-visual" aria-hidden>
-              <div className="report-core" />
-              <small>{evidence.length} TÍN HIỆU</small>
-            </div>
-          )}
+          <div className="signal-visual" aria-hidden>
+            <div className="report-core" />
+            <small>{evidence.length} TÍN HIỆU</small>
+          </div>
         </section>
         <section className="message-identity" aria-label="Thông tin đầu vào">
           {type === "email" ? (
@@ -885,7 +843,6 @@ function ResultContent() {
   }
 
   const result = record?.result;
-  const aiScore = readAIScore(result);
   const basic = result?.url_intelligence;
   const risk = mapRiskResult(result, record?.score ?? fallbackScore);
   const score = Math.round(risk.score);
@@ -1164,14 +1121,10 @@ function ResultContent() {
               </i>
             </div>
           </div>
-          {aiScore ? (
-            <AIScoreCard value={aiScore} />
-          ) : (
-            <div className="signal-visual" aria-hidden>
-              <div className="report-core" />
-              <small>{findings.length} TÍN HIỆU ĐƯỢC ĐỐI CHIẾU</small>
-            </div>
-          )}
+          <div className="signal-visual" aria-hidden>
+            <div className="report-core" />
+            <small>{findings.length} TÍN HIỆU ĐƯỢC ĐỐI CHIẾU</small>
+          </div>
         </section>
 
         {!isDemo &&

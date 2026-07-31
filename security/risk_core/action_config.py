@@ -39,6 +39,26 @@ def _direct_floors() -> dict[str, float]:
     }
 
 
+def _url_signal_caps() -> dict[EvidenceCategory, float]:
+    """Maximum strength of one URL observation before event deduplication."""
+    return {
+        EvidenceCategory.CREDENTIAL_ACCESS: 45.0,
+        EvidenceCategory.CREDENTIAL_EXFILTRATION: 60.0,
+        EvidenceCategory.OTP_EXPOSURE: 55.0,
+        EvidenceCategory.SENSITIVE_DATA_ACCESS: 35.0,
+        EvidenceCategory.EXTERNAL_TRANSFER: 45.0,
+        EvidenceCategory.MALWARE_EXECUTION: 55.0,
+        EvidenceCategory.PRIVILEGE_ESCALATION: 45.0,
+        EvidenceCategory.DESTRUCTIVE_ACTION: 55.0,
+        EvidenceCategory.INTENT_MISMATCH: 30.0,
+        EvidenceCategory.DESTINATION_REPUTATION: 35.0,
+        EvidenceCategory.BEHAVIORAL_ANOMALY: 25.0,
+        EvidenceCategory.POLICY_VIOLATION: 30.0,
+        EvidenceCategory.UNKNOWN_PAYLOAD: 20.0,
+        EvidenceCategory.MISSING_CONTEXT: 15.0,
+    }
+
+
 @dataclass(frozen=True)
 class ActionRiskConfig:
     scoring_version: str = "evidence-action-risk-v3.0.0"
@@ -47,6 +67,7 @@ class ActionRiskConfig:
 
     direct_floors: dict[str, float] = field(default_factory=_direct_floors)
     category_weights: dict[EvidenceCategory, float] = field(default_factory=_category_weights)
+    url_category_signal_caps: dict[EvidenceCategory, float] = field(default_factory=_url_signal_caps)
     supporting_bonus_ratio: float = 0.15
     supporting_bonus_cap: float = 10.0
     ml_max_contribution: float = 18.0
@@ -119,8 +140,12 @@ class ActionRiskConfig:
     def validate(self) -> None:
         if set(self.category_weights) != set(EvidenceCategory):
             raise ValueError("every evidence category requires exactly one weight")
+        if set(self.url_category_signal_caps) != set(EvidenceCategory):
+            raise ValueError("every URL evidence category requires exactly one signal cap")
         if any(not 0.0 <= value <= 1.0 for value in self.category_weights.values()):
             raise ValueError("category weights must be within 0..1")
+        if any(not 0.0 <= value <= 100.0 for value in self.url_category_signal_caps.values()):
+            raise ValueError("URL signal caps must be within 0..100")
         if any(not 0.0 <= value <= 100.0 for value in self.direct_floors.values()):
             raise ValueError("direct floors must be within 0..100")
         if not (

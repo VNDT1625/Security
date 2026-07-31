@@ -16,7 +16,7 @@ describe("mapRiskResult", () => {
     expect(result).toMatchObject({ source: "legacy", score: 42, level: "medium", confidence: undefined });
   });
 
-  it("ưu tiên điểm đã phối hợp và quyết định cấp ngoài cùng", () => {
+  it("dùng duy nhất điểm cuối của lõi và quyết định cấp ngoài cùng", () => {
     const result = mapRiskResult({
       risk_score: .68,
       risk_level: "high",
@@ -25,13 +25,12 @@ describe("mapRiskResult", () => {
         schema_version: "2",
         scoring_version: "core-2",
         final_score: 60,
-        blended_final_score: 68,
         raw_score: 12,
         confidence: 80,
         verdict: "dangerous",
         decision: "soft_block",
       },
     });
-    expect(result).toMatchObject({ score: 68, level: "high", decision: "BLOCK" });
+    expect(result).toMatchObject({ score: 60, level: "high", decision: "BLOCK" });
   });
 });

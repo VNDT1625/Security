@@ -132,7 +132,6 @@ class URLDangerousCriterion(BaseModel):
     name: str
     status: Literal["malicious"] = "malicious"
     contribution: float = Field(..., ge=0.0, le=100.0)
-    max_weight: float = Field(..., ge=0.0, le=100.0)
     reason: str
 
 

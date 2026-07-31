@@ -124,7 +124,6 @@ def _status_evidence(
         match_strength=1.0,
         authority_tier=1,
         observed_at=datetime.now(UTC).isoformat(),
-        eligible_for_external_score=False,
         metadata={
             "summary": summary,
             "adapter_status": "completed",
@@ -192,7 +191,6 @@ def _consensus_evidence(
         match_strength=1.0 if matched_subject == MatchedSubject.EXACT_URL else 0.7,
         authority_tier=2,
         observed_at=datetime.now(UTC).isoformat(),
-        eligible_for_external_score=False,
         metadata={
             "summary": summary,
             "adapter_status": "completed",
@@ -334,7 +332,6 @@ def collect_distributed_url_evidence(url: str) -> list[EvidenceV2]:
                 status=CriterionStatus.UNAVAILABLE,
                 provider_verdict=ProviderVerdict.UNAVAILABLE,
                 observed_at=datetime.now(UTC).isoformat(),
-                eligible_for_external_score=False,
                 metadata={
                     "summary": "Distributed telemetry storage is unavailable.",
                     "adapter_status": "provider_error",

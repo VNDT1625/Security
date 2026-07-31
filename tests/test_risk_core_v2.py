@@ -15,10 +15,9 @@ def ev(eid="e1", source="source_51", criterion=1, finding="f1", incident="i1"):
 
 def test_default_config_invariants():
     cfg = default_config()
-    assert sum(c.max_weight for c in cfg.criteria[:49]) == 80
-    assert cfg.criteria[49].max_weight == 0
-    assert sum(s.raw_weight for s in cfg.sources) == 25
-    assert sum(cfg.family_caps.values()) == 20
+    assert [c.criterion_id for c in cfg.criteria] == list(range(1, 51))
+    assert all(c.coverage_weight > 0 for c in cfg.criteria)
+    assert len(cfg.sources) == 14
     replace(cfg, criteria=cfg.criteria[:-1]).validate if False else None
     with pytest.raises(ValueError):
         replace(cfg, criteria=cfg.criteria[:-1]).validate()
@@ -44,11 +43,10 @@ def test_no_hit_and_clean_do_not_add_risk():
     assert assess([nohit, clean]).risk_score == 0
 
 
-def test_external_family_cap_and_internal_exclusion():
+def test_external_evidence_uses_shared_pipeline_without_legacy_totals():
     external = [replace(ev(str(i), f"source_{51+i}", None, f"f{i}", f"i{i}"), organization_id=f"o{i}") for i in range(4)]
     result = assess(external)
-    assert result.external_corroboration_score <= 6
-    assert result.internal_score == 0
+    assert result.unified_evidence_groups["destination_reputation"] > 0
 
 
 def test_override_is_floor_not_addition():

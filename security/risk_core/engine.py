@@ -8,9 +8,8 @@ from .config import RiskConfig, default_config
 from .confidence import compute_confidence
 from .evidence import resolve_evidence
 from .overrides import OverrideRule, evaluate_overrides
-from .scoring import score_external, score_internal
 from .types import EvidenceV2, RiskResultV2
-from .unified_url_evidence import evaluate_url_evidence
+from .unified_url_evidence import build_criterion_trace, evaluate_url_evidence
 
 
 def _level(score: float) -> str:
@@ -33,9 +32,8 @@ def assess(
 ) -> RiskResultV2:
     """Assess URL evidence without a second weighted scoring core.
 
-    ``score_internal`` and ``score_external`` below only preserve the old trace
-    fields for clients that display the 50 criteria.  The returned risk score is
-    solely the shared direct-floor/composite pipeline.
+    The 50 criteria are retained as an audit view only. They are never summed
+    into another score.
     """
     cfg = config or default_config()
     cfg.validate()
@@ -44,13 +42,10 @@ def assess(
         resolved,
         action_config=action_config or default_action_risk_config(),
         lightgbm=lightgbm,
-        criterion_max_weights={item.criterion_id: item.max_weight for item in cfg.criteria},
     )
 
-    # Compatibility projection; never use these values for final risk.
-    internal, criteria, internal_items = score_internal(resolved, cfg)
-    external, awards = score_external(resolved, cfg, {item.evidence_id for item in internal_items})
-    legacy_confidence = compute_confidence(criteria, resolved)
+    criteria = build_criterion_trace(resolved, cfg, shared.before_dedup)
+    audit_confidence = compute_confidence(criteria, resolved)
 
     overrides, effective = evaluate_overrides(resolved, override_rules)
     score = max(
@@ -83,25 +78,24 @@ def assess(
         risk_level=_level(score),
         confidence_score=confidence,
         confidence_band=band,
-        internal_score=internal,
-        external_corroboration_score=external,
-        # Existing clients still receive their old coverage components.  They do
-        # not influence the new score or direct-evidence policy.
-        coverage=legacy_confidence.coverage,
-        agreement=legacy_confidence.agreement,
-        freshness=legacy_confidence.freshness,
+        # Coverage components are audit metadata. They do not influence danger
+        # scoring or direct-evidence policy.
+        coverage=audit_confidence.coverage,
+        agreement=audit_confidence.agreement,
+        freshness=audit_confidence.freshness,
         criteria=criteria,
         evidence=resolved,
-        external_sources=awards,
         overrides=overrides,
         effective_override=effective,
         conflicts=conflicts,
         rules_version=cfg.rules_version,
-        weights_version=cfg.weights_version,
+        evidence_schema_version="shared-evidence-categories-v1",
         unavailable_checks=unavailable,
         not_checked_checks=not_checked,
         reasoning=reasoning,
         direct_floor=shared.direct.floor,
+        direct_evidence_ids=list(shared.direct.evidence_ids),
+        direct_evidence_kinds=list(shared.direct.kinds),
         composite_score=shared.composite_score,
         rule_score=shared.rule_score,
         ml_contribution=shared.ml.risk_contribution,

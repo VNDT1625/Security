@@ -57,20 +57,13 @@ const CRITERION_STATUS_LABEL: Record<string, string> = {
   not_checked: "Chưa kiểm tra",
 };
 const criterionRecords = (value: unknown): RiskCoreRecord[] => records(value).map((item) => {
-  const contribution = number(item.adjusted_score);
-  const weight = number(item.max_weight);
   return {
     ...item,
     status: CRITERION_STATUS_LABEL[String(item.status ?? "")] ?? item.status,
-    contribution: contribution == null
-      ? item.contribution
-      : weight == null
-        ? contribution.toFixed(2)
-        : `${contribution.toFixed(2)} / ${weight.toFixed(2)}`,
   };
 });
 
-/** Maps the additive API payload without deriving v2 policy fields locally. */
+/** Maps the evidence-based API payload without deriving policy fields locally. */
 export function mapRiskResult(payload: unknown, legacyScore?: number): RiskCoreView {
   const outer = record(payload) ?? {};
   const core = record(outer.risk_core);
@@ -80,8 +73,7 @@ export function mapRiskResult(payload: unknown, legacyScore?: number): RiskCoreV
       schemaVersion: text(core.schema_version),
       scoringVersion: text(core.scoring_version),
       score: clamp(
-        number(core.blended_final_score)
-        ?? number(core.final_score)
+        number(core.final_score)
         ?? number(core.risk_score)
         ?? 0
       ),

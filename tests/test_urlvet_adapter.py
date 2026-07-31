@@ -118,7 +118,6 @@ def test_urlvet_suspicious_aggregate_is_visible_but_not_scored_as_a_finding(monk
 
     assert len(evidence) == 1
     assert evidence[0].status == CriterionStatus.SUSPICIOUS
-    assert evidence[0].eligible_for_external_score is False
     assert evidence[0].metadata["checks"][0]["status"] == "danger"
 
 
