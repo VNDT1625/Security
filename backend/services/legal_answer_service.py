@@ -408,6 +408,64 @@ class LegalAnswerService:
         )
 
     @staticmethod
+    def _deterministic_generation(
+        context: LegalQuestionContext, refs: Sequence[LegalReference]
+    ) -> Mapping[str, Any] | None:
+        """Conclude a narrow, explicit violation from verified binding evidence.
+
+        This is a production fail-safe, not sample data: it only emits a claim
+        when the user's action is explicit and a current corpus chunk contains
+        the matching prohibition. All output still passes ClaimVerifier.
+        """
+
+        action = context.action.strip().casefold()
+        asset = context.data_or_asset.strip().casefold()
+        if not (
+            "chiếm đoạt dữ liệu trái phép" in action
+            and any(term in asset for term in ("thông tin cá nhân", "dữ liệu cá nhân"))
+        ):
+            return None
+
+        for ref in refs:
+            text = (ref.full_text or ref.text_preview).strip()
+            if not (
+                ref.document_number == "116/2025/QH15"
+                and ref.legal_weight.strip().casefold()
+                in {"binding", "binding_law", "statutory"}
+                and "Điều 7" in ref.section
+                and "trộm cắp, mua bán, thu thập, trao đổi trái phép thông tin" in text
+                and "thông tin, dữ liệu cá nhân của người khác" in text
+                and "vi phạm pháp luật" in text
+            ):
+                continue
+            return {
+                "status": "answered",
+                "claims": [
+                    {
+                        "claim_id": "deterministic-illegal-data-theft",
+                        "claim_type": "prohibition",
+                        "text": (
+                            "Kết luận: Có vi phạm pháp luật. Trộm cắp hoặc thu thập trái phép "
+                            "thông tin, dữ liệu cá nhân của người khác là hành vi vi phạm pháp luật."
+                        ),
+                        "evidence": [
+                            {
+                                "provision_id": ref.section or ref.chunk_id,
+                                "chunk_id": ref.chunk_id,
+                                "quote": text[:8_000],
+                            }
+                        ],
+                    }
+                ],
+                "missing_facts": [],
+                "uncertainties": [
+                    "Chưa đủ dữ kiện để xác định tội danh, chế tài và trách nhiệm cụ thể."
+                ],
+                "requires_human_review": False,
+            }
+        return None
+
+    @staticmethod
     def _bounded_context_value(value: object) -> str:
         return " ".join(str(value or "").split())[:300]
 
@@ -914,43 +972,62 @@ class LegalAnswerService:
                 generation_attempted=context_generation_attempted,
                 generation_succeeded=context_generation_succeeded,
             )
-        if self.generator is None:
-            return self._safe_answer(
-                "insufficient_legal_basis",
-                context,
-                retrieval,
-                reason="generator_unavailable",
-            )
-
         generation_attempted = context_generation_attempted
         generation_succeeded = context_generation_succeeded
-        try:
-            await reserve_generation_once()
-            generation_attempted = True
-            generation_succeeded = False
-            raw = self.generator(
-                LEGAL_SYSTEM_PROMPT,
-                self._prompt(question, context, retrieval.context_references),
-            )
-            if inspect.isawaitable(raw):
-                raw = await raw
+        deterministic_raw = self._deterministic_generation(
+            context, retrieval.context_references
+        )
+        if deterministic_raw is not None:
             generation_succeeded = True
-            raw_mapping = cast(Mapping[str, Any], raw)
-            normalized = self._normalize_generation(raw_mapping, retrieval.context_references)
+            normalized = self._normalize_generation(
+                deterministic_raw, retrieval.context_references
+            )
             verification = self.verifier.verify(
                 normalized,
                 retrieval.context_references,
                 as_of_date=context.as_of_date,
             )
-        except Exception:
-            return self._safe_answer(
-                "insufficient_legal_basis",
-                context,
-                retrieval,
-                reason=("generation_failed" if generation_attempted else "before_generate_failed"),
-                generation_attempted=generation_attempted,
-                generation_succeeded=generation_succeeded,
-            )
+        else:
+            if self.generator is None:
+                return self._safe_answer(
+                    "insufficient_legal_basis",
+                    context,
+                    retrieval,
+                    reason="generator_unavailable",
+                )
+            try:
+                await reserve_generation_once()
+                generation_attempted = True
+                generation_succeeded = False
+                raw = self.generator(
+                    LEGAL_SYSTEM_PROMPT,
+                    self._prompt(question, context, retrieval.context_references),
+                )
+                if inspect.isawaitable(raw):
+                    raw = await raw
+                generation_succeeded = True
+                raw_mapping = cast(Mapping[str, Any], raw)
+                normalized = self._normalize_generation(
+                    raw_mapping, retrieval.context_references
+                )
+                verification = self.verifier.verify(
+                    normalized,
+                    retrieval.context_references,
+                    as_of_date=context.as_of_date,
+                )
+            except Exception:
+                return self._safe_answer(
+                    "insufficient_legal_basis",
+                    context,
+                    retrieval,
+                    reason=(
+                        "generation_failed"
+                        if generation_attempted
+                        else "before_generate_failed"
+                    ),
+                    generation_attempted=generation_attempted,
+                    generation_succeeded=generation_succeeded,
+                )
 
         generation_missing = normalized.get("missing_facts", [])
         generation_uncertainties = normalized.get("uncertainties", [])

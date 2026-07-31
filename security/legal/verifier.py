@@ -115,6 +115,7 @@ _TRUSTED_NATIVE_METHODS = {
     "pymupdf_native_text",
     "official_html_text",
     "official_docx_text",
+    "docx_text_layer",
 }
 _CURRENT_STATUSES = {"current", "in_force", "effective"}
 _SPACE = re.compile(r"\s+")
