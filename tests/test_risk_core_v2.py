@@ -67,10 +67,10 @@ def test_high_confidence_access_hazard_gets_immediate_danger_floor():
     result = assess([dangerous])
 
     assert result.base_risk_score < 60
-    assert result.risk_score == 60
-    assert result.risk_level == "dangerous"
-    assert result.effective_override is not None
-    assert result.effective_override.rule_id == "high-confidence-dangerous-criterion-v1"
+    assert result.risk_score == 95
+    assert result.direct_floor == 95
+    assert result.risk_level == "critical"
+    assert result.effective_override is None
 
 
 def test_clean_evidence_cannot_activate_override():

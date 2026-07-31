@@ -29,7 +29,11 @@ class PolicyEngineV2:
         selected = profile or PolicyProfile()
         score = risk_result.risk_score
         confidence = risk_result.confidence_score
-        if score >= 80:
+        # Direct evidence was already validated by the shared pipeline.  A model
+        # or low confidence cannot weaken this security floor.
+        if risk_result.direct_floor >= 90:
+            decision, action = PolicyDecision.HARD_BLOCK, NextAction.REPORT
+        elif score >= 85:
             decision, action = PolicyDecision.HARD_BLOCK, NextAction.REPORT
         elif score >= 60:
             decision, action = selected.dangerous_decision, NextAction.SANDBOX
@@ -51,7 +55,9 @@ class PolicyEngineV2:
                 and item.status == CriterionStatus.SUSPICIOUS
                 for item in risk_result.criteria
             )
-            if has_malicious_finding:
+            if confidence < 40:
+                decision, action = PolicyDecision.REQUIRE_REVIEW, NextAction.SANDBOX
+            elif has_malicious_finding:
                 decision, action = PolicyDecision.WARN, NextAction.DEEP_SCAN
             else:
                 # Incomplete coverage is a reason to recommend a deeper scan,
