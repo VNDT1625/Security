@@ -213,14 +213,19 @@ def evaluate_url_evidence(
     )
     after, groups = deduplicate_evidence(before, action_config)
     direct = evaluate_direct_evidence(after, action_config)
-    missing = sorted(
-        {
-            "payload_classification"
-            for item in items
-            if item.criterion_id in {29, 30, 34, 35}
-            and item.status in {CriterionStatus.NOT_CHECKED, CriterionStatus.UNAVAILABLE}
-        }
-    )
+    missing_set = {
+        "payload_classification"
+        for item in items
+        if item.criterion_id in {29, 30, 34, 35}
+        and item.status in {CriterionStatus.NOT_CHECKED, CriterionStatus.UNAVAILABLE}
+    }
+    if not items or not any(
+        item.status
+        in {CriterionStatus.CLEAN, CriterionStatus.SUSPICIOUS, CriterionStatus.MALICIOUS}
+        for item in items
+    ):
+        missing_set.update({"destination", "payload_classification"})
+    missing = sorted(missing_set)
     features = _features(groups, direct, missing, action_config)
     ml = (lightgbm or LightGBMRiskAdapter()).assess(features, action_config)
     composite, _ = score_composite(

@@ -55,7 +55,9 @@ class PolicyEngineV2:
                 and item.status == CriterionStatus.SUSPICIOUS
                 for item in risk_result.criteria
             )
-            if has_malicious_finding:
+            if confidence < 40:
+                decision, action = PolicyDecision.REQUIRE_REVIEW, NextAction.SANDBOX
+            elif has_malicious_finding:
                 decision, action = PolicyDecision.WARN, NextAction.DEEP_SCAN
             else:
                 # Incomplete coverage is a reason to recommend a deeper scan,

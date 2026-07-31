@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from security.risk_core import LightGBMRiskAdapter, RiskEngineV2, assess
+from security.risk_core import LightGBMRiskAdapter, PolicyEngineV2, RiskEngineV2, assess
 from security.risk_core.types import CriterionStatus, EvidenceV2, ProviderVerdict
 
 
@@ -92,3 +92,12 @@ def test_lightgbm_can_raise_composite_but_not_lower_direct_floor() -> None:
     assert result.ml_contribution > 0
     assert result.direct_floor == 95
     assert result.risk_score == 95
+
+
+def test_no_observation_is_not_treated_as_safe() -> None:
+    result = assess([])
+    policy = PolicyEngineV2().decide(result)
+
+    assert result.missing_fields
+    assert result.confidence_score < 40
+    assert policy.decision.value == "require_review"
