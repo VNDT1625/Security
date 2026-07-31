@@ -155,6 +155,7 @@ class ActionRiskInput:
     workflow_id: str | None = None
     destination_risk_score: float | None = None
     destination_confidence: float | None = None
+    legal_review_required: bool = False
 
 
 @dataclass
@@ -181,7 +182,6 @@ class ActionRiskResult:
     feature_schema_version: str
     policy_version: str
     mode: str = "new_engine"
-    legacy_comparison: dict[str, Any] = field(default_factory=dict)
 
     def to_trace(self) -> dict[str, Any]:
         return {
@@ -220,5 +220,4 @@ class ActionRiskResult:
             "reason_codes": list(self.reason_codes),
             "rules_triggered": list(self.rules_triggered),
             "explanation": self.explanation,
-            "legacy_comparison": dict(self.legacy_comparison),
         }

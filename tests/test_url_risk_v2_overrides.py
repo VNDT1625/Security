@@ -8,7 +8,7 @@ from security.risk_core.detectors import (
     build_criteria_evidence,
 )
 from security.risk_core.url_overrides import URL_OVERRIDE_RULES
-from security.url_risk_core import assess_url
+from security.url_risk_core import collect_url_evidence
 
 
 @pytest.mark.parametrize(
@@ -30,7 +30,7 @@ from security.url_risk_core import assess_url
 )
 def test_high_confidence_offline_url_patterns_hard_block_in_v2(url, rule_id):
     obs = ScanObservations(url)
-    add_offline_url_findings(obs, assess_url(url).evidence)
+    add_offline_url_findings(obs, collect_url_evidence(url).evidence)
     evidence = build_criteria_evidence(obs, default_config())
     risk = assess_risk_v2(evidence, override_rules=URL_OVERRIDE_RULES)
     policy = PolicyEngineV2().decide(risk)
@@ -44,7 +44,7 @@ def test_high_confidence_offline_url_patterns_hard_block_in_v2(url, rule_id):
 def test_benign_url_has_no_v2_override():
     url = "https://github.com/openai"
     obs = ScanObservations(url)
-    add_offline_url_findings(obs, assess_url(url).evidence)
+    add_offline_url_findings(obs, collect_url_evidence(url).evidence)
     evidence = build_criteria_evidence(obs, default_config())
     risk = assess_risk_v2(evidence, override_rules=URL_OVERRIDE_RULES)
 
@@ -57,7 +57,7 @@ def test_benign_url_has_no_v2_override():
 def test_login_keyword_alone_is_not_a_warning_decision():
     url = "https://github.com/login"
     obs = ScanObservations(url)
-    add_offline_url_findings(obs, assess_url(url).evidence)
+    add_offline_url_findings(obs, collect_url_evidence(url).evidence)
     evidence = build_criteria_evidence(obs, default_config())
     risk = assess_risk_v2(evidence, override_rules=URL_OVERRIDE_RULES)
     policy = PolicyEngineV2().decide(risk)
@@ -82,31 +82,36 @@ def test_high_confidence_url_model_warns_but_never_blocks() -> None:
         build_criteria_evidence,
     )
     from security.risk_core.url_overrides import URL_OVERRIDE_RULES
-    from security.url_risk_core import MODEL_HIGH_CONFIDENCE, assess_url
+    from security.url_risk_core import collect_url_evidence
 
     url = "https://plain-looking-host.example/page"
 
     def verdict(model_score):
-        core = assess_url(url, model_score=model_score)
+        core = collect_url_evidence(url)
         observations = ScanObservations(url)
         add_offline_url_findings(observations, core.evidence)
         config = default_config()
+        from security.risk_core import LightGBMRiskAdapter
+
         risk = assess_risk_v2(
             build_criteria_evidence(observations, config),
             config=config,
             override_rules=URL_OVERRIDE_RULES,
+            lightgbm=LightGBMRiskAdapter(
+                lambda _features: model_score,
+                model_version="url-model-test",
+            ),
         )
         return PolicyEngineV2().decide(risk).decision.value, risk.risk_score
 
     quiet_decision, quiet_score = verdict(0.90)
-    loud_decision, loud_score = verdict(MODEL_HIGH_CONFIDENCE)
+    loud_decision, loud_score = verdict(0.98)
 
     # Thiếu bằng chứng độc lập không được tự động coi là an toàn.
     assert quiet_decision == "require_review"
-    # At the bar it warns, and the floor keeps it out of every blocking band.
-    assert loud_decision == "warn"
-    assert loud_score >= 20.0
-    assert loud_score < 60.0
+    # Mô hình chỉ được tăng điểm có giới hạn và không tự chặn.
+    assert loud_decision == "require_review"
+    assert loud_score < 20.0
     assert loud_score > quiet_score
 
 

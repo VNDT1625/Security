@@ -22,7 +22,6 @@ import type { ApiClient } from "@/lib/api/client";
 import { sortEvidenceBySeverity } from "@/lib/evidence";
 import { getRiskLevel } from "@/lib/risk";
 import { formatScanTimestamp } from "@/lib/time";
-import { trustedPopularResult } from "@/lib/trusted-popular-domains";
 import type {
     ApiKeyInfo,
     AssessMetadata,
@@ -281,75 +280,6 @@ function buildResult(
 }
 
 /**
- * Đánh giá rủi ro cho một URL bằng heuristic tất định (theo pseudocode design.md).
- *
- * Base score 5; +45 homoglyph, +20 nếu không https://, +18 TLD rủi ro,
- * +9 nếu path chứa "login"; kẹp về [0,100].
- *
- * **Postconditions**: `score ∈ [0,100]`; `riskLevel === getRiskLevel(score).key`;
- * tất định với cùng `url`.
- */
-export function mockAssessUrl(url: string): AssessResult {
-    const trusted = trustedPopularResult(url);
-    if (trusted) return trusted;
-    const evidence: Evidence[] = [];
-    let score = 5;
-
-    if (hasHomoglyph(url)) {
-        score += 45;
-        evidence.push({
-            source: "url_adapter",
-            message: "Domain giả mạo thương hiệu (homoglyph)",
-            severity: "critical",
-            feature: "homoglyph_score",
-            contribution: 0.38,
-        });
-    }
-    if (!/^https:\/\//i.test(url.trim())) {
-        score += 20;
-        evidence.push({
-            source: "url_adapter",
-            message: "Không dùng HTTPS",
-            severity: "medium",
-            feature: "no_https",
-            contribution: 0.21,
-        });
-    }
-    if (hasRiskyTld(url)) {
-        score += 18;
-        evidence.push({
-            source: "url_adapter",
-            message: "TLD rủi ro cao",
-            severity: "medium",
-            feature: "risky_tld",
-            contribution: 0.17,
-        });
-    }
-    if (url.toLowerCase().includes("login")) {
-        score += 9;
-        evidence.push({
-            source: "url_adapter",
-            message: "Path chứa 'login'",
-            severity: "low",
-            feature: "login_path",
-            contribution: 0.09,
-        });
-    }
-
-    if (evidence.length === 0) {
-        evidence.push({
-            source: "url_adapter",
-            message: "Không phát hiện dấu hiệu rủi ro rõ rệt",
-            severity: "info",
-            contribution: 0.02,
-        });
-    }
-
-    const explanation = buildUrlExplanation(evidence);
-    return buildResult(score, evidence, "url", explanation);
-}
-
-/**
  * Đánh giá rủi ro cho một đoạn văn bản/email bằng heuristic tất định.
  *
  * Base score 5; mỗi từ khóa khẩn cấp (tiếng Việt) +14; liên kết đáng ngờ
@@ -548,9 +478,10 @@ export class MockApiClient implements ApiClient {
     }
 
     async assessUrl(url: string): Promise<AssessResult> {
-        const result = mockAssessUrl(url);
-        this.recordScan("URL", result);
-        return result;
+        void url;
+        throw new Error(
+            "Đánh giá URL cần Security Risk Core thật; chế độ mô phỏng không tự chấm điểm.",
+        );
     }
 
     async sandboxUrl(url: string): Promise<import("@/lib/types").SandboxResult> {

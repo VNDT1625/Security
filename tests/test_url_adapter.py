@@ -12,7 +12,7 @@ from ai.adapters.url_adapter import (
     is_ip_host,
     parse_url_parts,
 )
-from security.url_risk_core import assess_url
+from security.url_risk_core import collect_url_evidence
 
 
 def test_extract_features_valid_url():
@@ -150,7 +150,7 @@ def test_unicode_punycode_and_digit_homoglyphs_trigger_brand_spoof(url):
 
 
 def test_typo_brand_on_wrong_domain_is_detected():
-    result = assess_url("https://paypa.com/login")
+    result = collect_url_evidence("https://paypa.com/login")
 
     assert any(item.feature == "brand_typosquatting" for item in result.evidence)
 

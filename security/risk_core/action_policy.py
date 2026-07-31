@@ -41,6 +41,13 @@ class EvidenceActionPolicy:
                 "DIRECT_CRITICAL_EVIDENCE",
             )
 
+        if "legal_context" in missing_fields:
+            return ActionPolicyResult(
+                ActionRiskLevel.INSUFFICIENT_INFORMATION,
+                ActionPolicyDecision.ASK_CONFIRM,
+                "LEGAL_REVIEW_REQUIRED",
+            )
+
         critical_missing = bool(
             set(missing_fields)
             & {

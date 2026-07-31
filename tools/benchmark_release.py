@@ -196,10 +196,9 @@ class Scorers:
 
     # ------------------------------------------------------------------- URL
     def url_rules_only(self, url: str) -> tuple[bool, dict[str, Any]]:
-        from security.url_risk_core import assess_url
-
-        result = assess_url(url, model_score=None)
-        return result.score >= CORE_FLAG_THRESHOLD, {"score": round(result.score, 4)}
+        result = self._url_core_result(url, model_probability=None)
+        score = result.risk_score / 100.0
+        return score >= CORE_FLAG_THRESHOLD, {"score": round(score, 4)}
 
     def url_ml_only(self, url: str) -> tuple[bool, dict[str, Any]]:
         probability = self._url_model_probability(url)
@@ -208,14 +207,45 @@ class Scorers:
         return probability >= DEFAULT_ML_THRESHOLD, {"probability": round(probability, 4)}
 
     def url_ml_plus_rules(self, url: str) -> tuple[bool, dict[str, Any]]:
-        from security.url_risk_core import assess_url
-
         probability = self._url_model_probability(url)
-        result = assess_url(url, model_score=probability)
-        return result.score >= CORE_FLAG_THRESHOLD, {
-            "score": round(result.score, 4),
+        result = self._url_core_result(url, model_probability=probability)
+        score = result.risk_score / 100.0
+        return score >= CORE_FLAG_THRESHOLD, {
+            "score": round(score, 4),
             "model": None if probability is None else round(probability, 4),
         }
+
+    @staticmethod
+    def _url_core_result(url: str, model_probability: float | None):
+        from security.risk_core import assess as assess_risk
+        from security.risk_core import default_config
+        from security.risk_core.detectors import (
+            ScanObservations,
+            add_offline_url_findings,
+            build_criteria_evidence,
+        )
+        from security.risk_core.url_overrides import URL_OVERRIDE_RULES
+        from security.url_risk_core import collect_url_evidence
+
+        observations = ScanObservations(url)
+        findings = collect_url_evidence(url)
+        add_offline_url_findings(observations, findings.evidence)
+        config = default_config()
+        if model_probability is not None:
+            from security.risk_core import LightGBMRiskAdapter
+
+            adapter = LightGBMRiskAdapter(
+                lambda _features: model_probability,
+                model_version="benchmark-url-model",
+            )
+        else:
+            adapter = None
+        return assess_risk(
+            build_criteria_evidence(observations, config),
+            config=config,
+            override_rules=URL_OVERRIDE_RULES,
+            lightgbm=adapter,
+        )
 
     def _url_model_probability(self, url: str) -> float | None:
         engine = self.engine

@@ -379,8 +379,8 @@ def test_audit_record_redacts_sensitive_metadata() -> None:
     assert "redacted" in serialized
 
 
-def test_shadow_mode_keeps_legacy_decision_and_records_comparison() -> None:
-    service = InferenceService(security_core_mode="shadow")
+def test_action_assessment_uses_only_the_unified_core() -> None:
+    service = InferenceService()
     result = service.assess_action(
         "copy_data",
         None,
@@ -393,17 +393,12 @@ def test_shadow_mode_keeps_legacy_decision_and_records_comparison() -> None:
         ),
     )
     assert result.security_core is not None
-    assert result.security_core["mode"] == "shadow"
-    assert result.security_core["legacy_comparison"]["legacy_decision"] in {
-        "ALLOW",
-        "WARN",
-        "ASK_USER_CONFIRMATION",
-        "BLOCK",
-    }
+    assert result.security_core["mode"] == "new_engine"
+    assert "legacy_comparison" not in result.security_core
 
 
 def test_new_engine_maps_direct_block_to_compatible_public_contract() -> None:
-    service = InferenceService(security_core_mode="new_engine")
+    service = InferenceService()
     result = service.assess_action(
         "execute_file",
         None,

@@ -6,13 +6,7 @@ AgentContext into a Decision. No ML, no network, no runtime learning.
 
 from __future__ import annotations
 
-from shared.constants import (
-    HIGH_RISK_ACTIONS,
-    RISK_THRESHOLD_ALLOW,
-    RISK_THRESHOLD_BLOCK,
-    RISK_THRESHOLD_WARN,
-    SENSITIVE_DATA_TYPES,
-)
+from shared.constants import RISK_THRESHOLD_ALLOW, RISK_THRESHOLD_BLOCK, RISK_THRESHOLD_WARN
 from shared.schemas import AgentContext, Decision, Evidence, RiskLevel
 
 
@@ -47,41 +41,6 @@ class PolicyEngine:
         if risk_score >= self.warn:
             return Decision.WARN
         return Decision.ALLOW
-
-    # ------------------------------------------------------------------ agent
-    def evaluate_action(
-        self,
-        action_type: str,
-        risk_score: float,
-        data_types: list[str],
-        available_assets: list[str] | None = None,
-    ) -> Decision:
-        """Action-aware decision (design.md decision matrix)."""
-        sensitive = any(d in SENSITIVE_DATA_TYPES for d in data_types)
-        high_action = action_type in HIGH_RISK_ACTIONS
-
-        action_mult = 1.3 if high_action else 1.0
-        data_mult = 1.5 if sensitive else 1.0
-        effective = min(risk_score * action_mult * data_mult, 1.0)
-
-        if effective >= self.block:
-            return Decision.BLOCK
-        if effective >= self.warn:
-            if high_action and sensitive:
-                return Decision.BLOCK
-            if sensitive or high_action:
-                return Decision.ASK_USER_CONFIRMATION
-            return Decision.WARN
-        if effective >= self.allow and sensitive:
-            return Decision.WARN
-        return Decision.ALLOW
-
-    def effective_action_score(
-        self, action_type: str, risk_score: float, data_types: list[str]
-    ) -> float:
-        sensitive = any(d in SENSITIVE_DATA_TYPES for d in data_types)
-        high_action = action_type in HIGH_RISK_ACTIONS
-        return min(risk_score * (1.3 if high_action else 1.0) * (1.5 if sensitive else 1.0), 1.0)
 
     # -------------------------------------------------------------- guidance
     def recommend_behavior(self, decision: Decision, ctx: AgentContext | None = None) -> str:

@@ -16,17 +16,6 @@ def test_policy_block_high_risk():
     assert PolicyEngine().evaluate_human(0.9) == Decision.BLOCK
 
 
-def test_ask_confirmation_for_sensitive_action():
-    # medium base risk, sensitive form submission with non-credential data
-    d = PolicyEngine().evaluate_action("submit_form", 0.4, ["personal_info"])
-    assert d in (Decision.ASK_USER_CONFIRMATION, Decision.WARN, Decision.BLOCK)
-
-
-def test_block_credential_submission_to_risky_domain():
-    d = PolicyEngine().evaluate_action("submit_form", 0.6, ["password"])
-    assert d == Decision.BLOCK
-
-
 def test_score_to_level():
     assert score_to_level(0.05) == RiskLevel.SAFE
     assert score_to_level(0.95) == RiskLevel.CRITICAL

@@ -1,16 +1,8 @@
-"""Product-policy allowlist for popular web services.
-
-These domains intentionally bypass URL intelligence and model evaluation.  Keep
-matching label-aware so lookalikes such as ``youtube.com.attacker.example`` do
-not inherit an allowlisted verdict.
-"""
+"""Popular-domain lookup used as supporting evidence, never as a score bypass."""
 
 from __future__ import annotations
 
 from urllib.parse import urlsplit
-from uuid import uuid4
-
-from shared.schemas import AssessResponse, Decision, Evidence, Modality, RiskLevel, Severity
 
 TRUSTED_POPULAR_DOMAINS: tuple[str, ...] = (
     "google.com", "youtube.com", "facebook.com", "instagram.com", "x.com",
@@ -98,34 +90,3 @@ def trusted_popular_domain(url: str) -> str | None:
             continue
         return domain
     return None
-
-
-def trusted_popular_assessment(url: str) -> AssessResponse | None:
-    """Build the shared zero-latency policy verdict without scanning the URL."""
-    domain = trusted_popular_domain(url)
-    if domain is None:
-        return None
-    reason = f"{domain} nằm trong danh sách 100 dịch vụ phổ biến được tin cậy sẵn."
-    return AssessResponse(
-        risk_score=0.0,
-        risk_level=RiskLevel.SAFE,
-        decision=Decision.ALLOW,
-        confidence=1.0,
-        modality=Modality.URL,
-        reasons=[reason],
-        evidence=[Evidence(
-            source="trusted_popular_domains",
-            message=reason,
-            severity=Severity.INFO,
-            feature="popular_domain_policy",
-        )],
-        explanation="Kết quả được trả trực tiếp theo chính sách tên miền phổ biến; hệ thống không truy xét độ an toàn của URL này.",
-        recommended_agent_behavior="Cho phép tiếp tục theo chính sách tên miền phổ biến.",
-        model_version="trusted-popular-domains-v1",
-        latency_ms=0.0,
-        request_id=str(uuid4()),
-        raw_score=0.0,
-        final_score=0.0,
-        cache_hit=True,
-        cache_status="hit",
-    )

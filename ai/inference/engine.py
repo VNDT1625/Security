@@ -26,7 +26,7 @@ from ai.adapters.url_adapter import (
 )
 from security.prompt_firewall import assess_prompt_firewall
 from security.text_risk_core import assess_text_risk
-from security.url_risk_core import assess_url as assess_url_risk
+from security.url_risk_core import collect_url_evidence
 from shared.constants import HIGH_RISK_TLDS, URGENCY_KEYWORDS_VI
 from shared.schemas import Evidence, Severity
 
@@ -43,6 +43,7 @@ class PredictionResult:
     risk_score: float
     evidence: list[Evidence] = field(default_factory=list)
     model_version: str = "heuristic-1"
+    model_probability: float | None = None
 
 
 TEXT_TRANSFORMER_MIN_F1 = 0.65
@@ -354,13 +355,20 @@ class InferenceEngine:
             except Exception:
                 model_score = None
 
-        core = assess_url_risk(url, model_score=model_score)
+        observations = collect_url_evidence(url)
         if model_score is not None:
             context_suffix = "+enriched-context" if dynamic_context_used else ""
             version = f"url_lgbm.onnx{context_suffix}+multilayer-url-core-4"
         else:
             version = "multilayer-url-core-4"
-        return PredictionResult(_clip01(core.score), core.evidence, version)
+        # URL observations are evidence only. The unified Risk Core is the sole
+        # scorer and policy engine downstream.
+        return PredictionResult(
+            0.0,
+            observations.evidence,
+            version,
+            model_probability=model_score,
+        )
 
     def _heuristic_url(self, url: str, features: list[float]) -> float:
         signals = analyze_url_signals(url)
