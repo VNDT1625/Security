@@ -341,8 +341,16 @@ def _request_once(url: str, timeout: float, max_bytes: int) -> dict:
                     "Connection": "close",
                 },
             )
+            # ``HTTPConnection.getresponse()`` clears ``conn.sock`` when the
+            # response is marked to close. Retain the negotiated TLS socket
+            # before reading response headers so protocol/cipher facts survive.
+            negotiated_socket = conn.sock
             response = conn.getresponse()
-            tls = _certificate_info(conn.sock) if parts.scheme == "https" else {}
+            tls = (
+                _certificate_info(negotiated_socket)
+                if parts.scheme == "https"
+                else {}
+            )
             body = response.read(max_bytes + 1)
             return {
                 "status": response.status,
@@ -387,9 +395,19 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
     external_forms = [action for action in parser.forms if action and not _same_host(url, action)]
     external_iframes = [src for src in parser.iframes if src and not _same_host(url, src)]
     external_scripts = [src for src in parser.scripts if src and not _same_host(url, src)]
+    risky_external_scripts: list[str] = []
+    for src in external_scripts:
+        target = urlsplit(urljoin(url, src))
+        host = target.hostname or ""
+        try:
+            host_is_ip = bool(host) and ipaddress.ip_address(host).is_global
+        except ValueError:
+            host_is_ip = False
+        if target.scheme == "http" or host_is_ip:
+            risky_external_scripts.append(urljoin(url, src))
     page_text = unquote(" ".join(parser.text_parts)).lower()
     urgency_hits = [keyword for keyword in SUSPICIOUS_TEXT if keyword in page_text]
-    commercial_terms = ("buy now", "add to cart", "checkout", "mua ngay", "giỏ hàng", "thanh toán")
+    commercial_terms = ("buy now", "add to cart", "add to basket", "shopping cart", "checkout", "mua ngay", "giỏ hàng", "thanh toán")
     data_terms = ("password", "otp", "cvv", "pin", "mật khẩu", "cccd", "seed phrase")
     scam_template_terms = ("virus detected", "you have won", "trúng thưởng", "technical support", "đầu tư lợi nhuận")
     policy_links = [
@@ -472,7 +490,7 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
         "cod": ("cash on delivery", " cod "),
     }
     prices = re.findall(
-        r"(?:[$]|vnd|usd|eur|dong)\s?\d[\d.,]*|\d[\d.,]*\s?(?:vnd|usd|eur|dong)",
+        r"(?:[$£€¥₫đ]|vnd|usd|eur|gbp|dong)\s?\d[\d.,]*|\d[\d.,]*\s?(?:vnd|usd|eur|gbp|dong)",
         page_text,
         flags=re.IGNORECASE,
     )[:20]
@@ -587,6 +605,19 @@ def _inspect_html(body: bytes, content_type: str, url: str) -> tuple[dict, list[
         issues.append(_issue("external_sensitive_form_action", "critical", "content", "Biểu mẫu nhạy cảm gửi dữ liệu sang tên miền khác.", ", ".join(external_forms[:3])))
     if external_iframes:
         issues.append(_issue("external_iframe", "medium", "content", "Trang nhúng iframe từ tên miền khác.", ", ".join(external_iframes[:3])))
+    if risky_external_scripts:
+        issues.append(
+            _issue(
+                "risky_third_party_script",
+                "high",
+                "content",
+                (
+                    "The page references a third-party script over insecure HTTP "
+                    "or directly by public IP address."
+                ),
+                ", ".join(risky_external_scripts[:5]),
+            )
+        )
     coercive_context = bool(
         urgency_hits
         and (collects_data or detected_payments or recipient_hints or external_forms)

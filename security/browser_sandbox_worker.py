@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import secrets
@@ -615,6 +616,38 @@ def _issues_from_signals(
                 "download",
                 "The page attempted to start a download; the sandbox cancelled it.",
                 ", ".join(str(event.get("filename", "")) for event in downloads[:5]),
+            )
+        )
+    third_party_scripts = [
+        event
+        for event in network_events
+        if event.get("resource_type") == "script"
+        and event.get("same_origin") is False
+    ]
+    risky_third_party_scripts: list[dict] = []
+    for event in third_party_scripts:
+        script_url = str(event.get("url", ""))
+        parts = urlsplit(script_url)
+        host = parts.hostname or ""
+        try:
+            host_is_ip = bool(host) and ipaddress.ip_address(host).is_global
+        except ValueError:
+            host_is_ip = False
+        if parts.scheme == "http" or host_is_ip:
+            risky_third_party_scripts.append(event)
+    if risky_third_party_scripts:
+        issues.append(
+            _issue(
+                "risky_third_party_script",
+                "high",
+                "browser",
+                (
+                    "The page loaded a third-party script over insecure HTTP "
+                    "or directly from a public IP address."
+                ),
+                ", ".join(
+                    str(event.get("url", "")) for event in risky_third_party_scripts[:5]
+                ),
             )
         )
     ad_markers = (
@@ -1226,8 +1259,8 @@ def run(payload: dict) -> dict:
                             for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
                                 try { visit(JSON.parse(node.textContent || 'null')); } catch (_) {}
                             }
-                            const commerceText = /add to cart|buy now|checkout|mua ngay|gio hang|thanh toan/.test(folded);
-                            const commerceLink = hrefs.some((item) => /checkout|cart|order|buy-now|mua-ngay|thanh-toan/.test((item.label + ' ' + item.href).toLowerCase()));
+                            const commerceText = /add to cart|add to basket|shopping cart|buy now|checkout|mua ngay|gio hang|thanh toan/.test(folded);
+                            const commerceLink = hrefs.some((item) => /checkout|cart|basket|order|buy-now|mua-ngay|thanh-toan/.test((item.label + ' ' + item.href).toLowerCase()));
                             const commercial = commerceText || commerceLink || recipient_hints.length > 0;
                             const high_risk_sensitive_fields = Array.from(document.querySelectorAll('input, textarea')).map((node) => [
                                 node.getAttribute('type') || '',
