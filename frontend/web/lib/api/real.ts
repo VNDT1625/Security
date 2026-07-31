@@ -56,6 +56,8 @@ import type {
     PasswordResetRequestResult,
     ProfileUpdateInput,
     RegisterInput,
+    RegistrationPending,
+    RegistrationResult,
     SandboxResult,
     ScanRecord,
     ScanRecordDetail,
@@ -75,6 +77,7 @@ const DEFAULT_WS_BASE = "ws://localhost:8000";
 const PRODUCTION_API_BASE = "https://api.prewise.site";
 const PRODUCTION_WS_BASE = "wss://api.prewise.site";
 const PRODUCTION_WEB_HOSTS = new Set(["prewise.site", "www.prewise.site"]);
+const CODESPACES_PREVIEW_SUFFIX = ".app.github.dev";
 
 /** Bỏ dấu `/` thừa ở cuối để nối path an toàn. */
 function trimTrailingSlash(url: string): string {
@@ -82,10 +85,14 @@ function trimTrailingSlash(url: string): string {
 }
 
 export function resolveApiBase(configured: string | undefined, hostname: string): string {
-    const fallback = PRODUCTION_WEB_HOSTS.has(hostname.toLowerCase())
-        ? PRODUCTION_API_BASE
-        : DEFAULT_API_BASE;
-    return trimTrailingSlash(configured?.trim() || fallback);
+  const normalizedHostname = hostname.trim().toLowerCase();
+  if (normalizedHostname.endsWith(CODESPACES_PREVIEW_SUFFIX)) {
+    return "/api/backend";
+  }
+  const fallback = PRODUCTION_WEB_HOSTS.has(normalizedHostname)
+    ? PRODUCTION_API_BASE
+    : DEFAULT_API_BASE;
+  return trimTrailingSlash(configured?.trim() || fallback);
 }
 
 export function resolveWsBase(configured: string | undefined, hostname: string): string {
@@ -288,6 +295,17 @@ function apiErrorFallback(status: number): string {
 
 const API_NETWORK_ERROR =
     "Không thể kết nối máy chủ. Vui lòng kiểm tra kết nối và thử lại.";
+const TRANSIENT_API_STATUSES = new Set([502, 503, 504]);
+const TRANSIENT_RETRY_DELAYS_MS = [250, 750, 1500] as const;
+
+function canRetryRequest(path: string, init: RequestInit): boolean {
+    const method = (init.method ?? "GET").toUpperCase();
+    return method === "GET" || method === "HEAD" || path === "/v1/auth/login";
+}
+
+function waitBeforeRetry(delayMs: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
 
 function apiErrorMessage(rawBody: string, status: number): string {
     const body = rawBody.trim();
@@ -325,19 +343,39 @@ async function requestJson<TResponse>(
     init: RequestInit,
 ): Promise<TResponse> {
     const url = `${getApiBase()}${path}`;
-    let response: Response;
-    try {
-        response = await fetch(url, {
-            ...init,
-            headers: {
-                "Content-Type": "application/json",
-                ...(init.headers ?? {}),
-            },
-        });
-    } catch {
-        throw new Error(API_NETWORK_ERROR);
+    const retryable = canRetryRequest(path, init);
+    let response: Response | undefined;
+
+    for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt += 1) {
+        try {
+            response = await fetch(url, {
+                ...init,
+                headers: {
+                    "Content-Type": "application/json",
+                    ...(init.headers ?? {}),
+                },
+            });
+        } catch {
+            if (!retryable || attempt === TRANSIENT_RETRY_DELAYS_MS.length) {
+                throw new Error(API_NETWORK_ERROR);
+            }
+            await waitBeforeRetry(TRANSIENT_RETRY_DELAYS_MS[attempt] ?? 0);
+            continue;
+        }
+
+        if (
+            !retryable ||
+            !TRANSIENT_API_STATUSES.has(response.status) ||
+            attempt === TRANSIENT_RETRY_DELAYS_MS.length
+        ) {
+            break;
+        }
+        await waitBeforeRetry(TRANSIENT_RETRY_DELAYS_MS[attempt] ?? 0);
     }
 
+    if (!response) {
+        throw new Error(API_NETWORK_ERROR);
+    }
     if (!response.ok) {
         return throwApiError(response);
     }
@@ -703,10 +741,24 @@ export class RealApiClient implements ApiClient {
     }
 
     /** Đăng ký qua REST `POST /v1/auth/register`. */
-    async register(cred: RegisterInput): Promise<Session> {
-        return requestJson<Session>("/v1/auth/register", {
+    async register(cred: RegisterInput): Promise<RegistrationResult> {
+        return requestJson<RegistrationResult>("/v1/auth/register", {
             method: "POST",
             body: JSON.stringify(cred),
+        });
+    }
+
+    async verifyRegistrationEmail(email: string, code: string): Promise<Session> {
+        return requestJson<Session>("/v1/auth/email/verify", {
+            method: "POST",
+            body: JSON.stringify({email, code}),
+        });
+    }
+
+    async resendRegistrationCode(email: string): Promise<RegistrationPending> {
+        return requestJson<RegistrationPending>("/v1/auth/email/resend", {
+            method: "POST",
+            body: JSON.stringify({email}),
         });
     }
 

@@ -128,6 +128,57 @@ describe("RealApiClient authentication", () => {
         expect(request.headers).not.toHaveProperty("Authorization");
     });
 
+    it("uses public endpoints for registration email verification", async () => {
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    ok: true,
+                    verificationRequired: true,
+                    email: "new@example.com",
+                    message: "Mã đã gửi",
+                    expiresInSeconds: 600,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({token: "verified-token", user: {}, plan: {}}),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    ok: true,
+                    verificationRequired: true,
+                    email: "new@example.com",
+                    message: "Đã gửi lại",
+                    expiresInSeconds: 600,
+                }),
+            });
+        vi.stubGlobal("fetch", fetchMock);
+        const api = new RealApiClient();
+
+        await api.register({
+            displayName: "New User",
+            email: "new@example.com",
+            password: "ExamplePass123",
+        });
+        await api.verifyRegistrationEmail("new@example.com", "123456");
+        await api.resendRegistrationCode("new@example.com");
+
+        expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+            "http://localhost:8000/v1/auth/register",
+            "http://localhost:8000/v1/auth/email/verify",
+            "http://localhost:8000/v1/auth/email/resend",
+        ]);
+        expect(fetchMock.mock.calls[1][1]).toEqual(expect.objectContaining({
+            method: "POST",
+            body: JSON.stringify({email: "new@example.com", code: "123456"}),
+        }));
+        for (const [, request] of fetchMock.mock.calls) {
+            expect(request.headers).not.toHaveProperty("Authorization");
+        }
+    });
+
     it("shows only the server-provided login message instead of technical HTTP details", async () => {
         const fetchMock = vi.fn().mockResolvedValue({
             ok: false,
@@ -159,7 +210,8 @@ describe("RealApiClient authentication", () => {
     });
 
     it("shows a friendly Vietnamese message when the API cannot be reached", async () => {
-        vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+        const fetchMock = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+        vi.stubGlobal("fetch", fetchMock);
 
         await expect(new RealApiClient().register({
             displayName: "Người dùng thử",
@@ -168,6 +220,69 @@ describe("RealApiClient authentication", () => {
         })).rejects.toThrow(
             "Không thể kết nối máy chủ. Vui lòng kiểm tra kết nối và thử lại.",
         );
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("recovers a safe request from a transient network failure", async () => {
+        vi.useFakeTimers();
+        try {
+            window.localStorage.setItem(
+                SESSION_STORAGE_KEY,
+                JSON.stringify({ token: "session-token" }),
+            );
+            const fetchMock = vi.fn()
+                .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+                .mockResolvedValueOnce({
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ remaining: 997, dailyScanLimit: 1000 }),
+                });
+            vi.stubGlobal("fetch", fetchMock);
+
+            const quotaPromise = new RealApiClient().getQuota();
+            await vi.advanceTimersByTimeAsync(250);
+
+            await expect(quotaPromise).resolves.toEqual({
+                remaining: 997,
+                dailyScanLimit: 1000,
+            });
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("retries login after a transient gateway response", async () => {
+        vi.useFakeTimers();
+        try {
+            const fetchMock = vi.fn()
+                .mockResolvedValueOnce({
+                    ok: false,
+                    status: 502,
+                    text: async () => "<html>Bad Gateway</html>",
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ token: "new-token", user: {}, plan: {} }),
+                });
+            vi.stubGlobal("fetch", fetchMock);
+
+            const loginPromise = new RealApiClient().login({
+                email: "demo@aisec.local",
+                password: "Demo@123456",
+            });
+            await vi.advanceTimersByTimeAsync(250);
+
+            await expect(loginPromise).resolves.toEqual({
+                token: "new-token",
+                user: {},
+                plan: {},
+            });
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("sends EXE bytes only with the explicit provider consent flag", async () => {
