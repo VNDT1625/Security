@@ -18,7 +18,6 @@ export interface DangerousCriterion {
   criterionId: number;
   name: string;
   contribution: number;
-  maxWeight: number;
   reason: string;
 }
 export interface AccessAnalysis {
@@ -38,11 +37,6 @@ export interface SandboxSummary {
   networkCalls: number;
   domModifications: number;
   error?: string;
-}
-export interface AIContextScore {
-  score: number;
-  weightPercent: number;
-  effectiveWeightPercent?: number;
 }
 export interface SmsAssessment {
   assessment: Assessment;
@@ -69,7 +63,6 @@ export interface Assessment {
   dangerousCriteria?: DangerousCriterion[];
   accessAnalysis?: AccessAnalysis;
   sandbox?: SandboxSummary;
-  aiContext?: AIContextScore;
 }
 export interface MailItem {
   id: string;
@@ -347,25 +340,6 @@ const level = (score: number, decision: unknown = ""): RiskLevel => {
   return score >= 70 ? "danger" : score >= 40 ? "warn" : "safe";
 };
 
-const aiContextScore = (raw: Record<string, unknown>): AIContextScore | undefined => {
-  const core =
-    raw.risk_core && typeof raw.risk_core === "object"
-      ? (raw.risk_core as Record<string, unknown>)
-      : {};
-  const weightPercent = Number(core.ai_context_weight_percent ?? 0);
-  const score = Number(core.ai_context_score);
-  if (!Number.isFinite(weightPercent) || weightPercent <= 0 || !Number.isFinite(score))
-    return undefined;
-  const effectiveWeight = Number(core.ai_context_effective_weight_percent);
-  return {
-    score: Math.max(0, Math.min(100, score)),
-    weightPercent: Math.max(0, Math.min(40, weightPercent)),
-    effectiveWeightPercent: Number.isFinite(effectiveWeight)
-      ? Math.max(0, Math.min(40, effectiveWeight))
-      : undefined,
-  };
-};
-
 const normalize = (raw: Record<string, unknown>): Assessment => {
   const numeric = Number(raw.risk_score ?? raw.score ?? 0);
   const score = Math.max(0, Math.min(100, Math.round(numeric <= 1 ? numeric * 100 : numeric)));
@@ -380,7 +354,6 @@ const normalize = (raw: Record<string, unknown>): Assessment => {
     explanation: raw.explanation as string | undefined,
     requestId: (raw.request_id as string) || crypto.randomUUID(),
     latencyMs: raw.latency_ms as number | undefined,
-    aiContext: aiContextScore(raw),
   };
 };
 
@@ -528,7 +501,6 @@ function normalizeWebUrl(raw: Record<string, unknown>): Assessment {
         criterionId: Number(item.criterion_id ?? 0),
         name: text(item.name, "Tiêu chí nguy hiểm"),
         contribution: Number(item.contribution ?? 0),
-        maxWeight: Number(item.max_weight ?? 0),
         reason: text(item.reason),
       }),
     ),
@@ -544,7 +516,6 @@ function normalizeWebUrl(raw: Record<string, unknown>): Assessment {
           error: text(sandboxRaw.error) || undefined,
         }
       : undefined,
-    aiContext: aiContextScore(raw),
   };
 }
 

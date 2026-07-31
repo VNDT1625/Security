@@ -76,7 +76,6 @@ def test_registration_unavailable_does_not_emit_clean_domain_age_status():
 
     assert by_id[1].status == CriterionStatus.UNAVAILABLE
     assert by_id[1].severity == 0
-    assert by_id[1].raw_score == 0
 
 
 def test_whoisxml_creation_date_drives_domain_age():

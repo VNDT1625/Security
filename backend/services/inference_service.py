@@ -489,61 +489,6 @@ class InferenceService:
         response.contextual_analysis = outcome.trace
         return response
 
-    def apply_url_ai_context_weight(
-        self,
-        response: AssessResponse,
-        weight_percent: int,
-    ) -> AssessResponse:
-        """Blend a completed, structured AI context result into a URL score.
-
-        The configured value is bounded to 100%. Low-confidence AI results use
-        proportionally less than the configured share, and an existing Risk Core
-        block threshold can never be diluted below 60/100.
-        """
-
-        configured_weight = max(0, min(100, int(weight_percent)))
-        trace = response.contextual_analysis
-        if configured_weight == 0 or trace is None:
-            return response
-        if (
-            trace.status != AdapterRunStatus.COMPLETED
-            or trace.risk_signal is None
-            or trace.confidence is None
-        ):
-            return response
-
-        core_score = (
-            float(response.risk_core.final_score)
-            if response.risk_core is not None
-            else float(response.risk_score) * 100.0
-        )
-        ai_score = max(0.0, min(100.0, float(trace.risk_signal) * 100.0))
-        effective_weight = configured_weight * max(0.0, min(1.0, float(trace.confidence)))
-        blended_score = (
-            core_score * (100.0 - effective_weight) + ai_score * effective_weight
-        ) / 100.0
-        # A technical risk already in the block band remains at least block-band
-        # severity even if the contextual model disagrees.
-        if core_score >= 60.0:
-            blended_score = max(60.0, blended_score)
-        blended_score = max(0.0, min(100.0, blended_score))
-
-        response.risk_score = round(blended_score / 100.0, 4)
-        response.final_score = response.risk_score
-        response.risk_level = score_to_level(response.risk_score)
-        response.decision = (
-            Decision.BLOCK
-            if core_score >= 60.0
-            else self.policy.evaluate_human(response.risk_score)
-        )
-        trace.scoring_mode = "active"
-        if response.risk_core is not None:
-            response.risk_core.ai_context_weight_percent = configured_weight
-            response.risk_core.ai_context_effective_weight_percent = round(effective_weight, 2)
-            response.risk_core.ai_context_score = round(ai_score, 2)
-            response.risk_core.blended_final_score = round(blended_score, 2)
-        return response
-
     # ------------------------------------------------------------------ url
     def assess_url(
         self,
@@ -773,10 +718,10 @@ class InferenceService:
             item.reason
             for item in sorted(
                 risk.criteria,
-                key=lambda item: item.adjusted_score,
+                key=lambda item: item.evidence_strength,
                 reverse=True,
             )
-            if item.adjusted_score > 0 and item.reason
+            if item.evidence_strength > 0 and item.reason
         ]
         response.reasons = scored_reasons[:3] or risk.reasoning[:3]
         if domain:

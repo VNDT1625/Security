@@ -1,4 +1,4 @@
-"""CoreGuide v2 contracts. Scores use the documented 0..100 scale."""
+"""Unified evidence-based risk contracts on the 0..100 scale."""
 
 from __future__ import annotations
 
@@ -77,10 +77,6 @@ class EvidenceV2:
     authority_tier: int = 0
     observed_at: str = ""
     provider_sequence: str = ""
-    max_weight: float = 0.0
-    raw_score: float = 0.0
-    adjusted_score: float = 0.0
-    eligible_for_external_score: bool = True
     applicability_evidence_ids: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -89,27 +85,16 @@ class EvidenceV2:
 class CriterionResult:
     criterion_id: int
     status: CriterionStatus
-    max_weight: float
     coverage_weight: float
     severity: float = 0.0
     evidence_quality: float = 0.0
-    raw_score: float = 0.0
-    adjusted_score: float = 0.0
     evidence_ids: list[str] = field(default_factory=list)
     incident_key: str = ""
     name: str = ""
     reason: str = ""
     applicable: bool = True
     checked: bool = False
-
-
-@dataclass(frozen=True)
-class ExternalAward:
-    evidence_id: str
-    source_id: str
-    family: str
-    candidate_score: float
-    awarded_score: float
+    evidence_strength: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -136,19 +121,16 @@ class RiskResultV2:
     risk_level: str
     confidence_score: float
     confidence_band: str
-    internal_score: float
-    external_corroboration_score: float
     coverage: float
     agreement: float
     freshness: float
     criteria: list[CriterionResult]
     evidence: list[EvidenceV2]
-    external_sources: list[ExternalAward]
     overrides: list[OverrideResult]
     effective_override: OverrideResult | None
     conflicts: list[dict[str, Any]]
     rules_version: str
-    weights_version: str
+    evidence_schema_version: str
     scan_version: str = "risk-core-url-v2.2.0"
     calibrated_probability: float | None = None
     mitigations: list[dict[str, Any]] = field(default_factory=list)
@@ -164,6 +146,8 @@ class RiskResultV2:
     # The 50 URL criteria remain available for existing clients, but final risk
     # is decided by the shared evidence pipeline exposed by these fields.
     direct_floor: float = 0.0
+    direct_evidence_ids: list[str] = field(default_factory=list)
+    direct_evidence_kinds: list[str] = field(default_factory=list)
     composite_score: float = 0.0
     rule_score: float = 0.0
     ml_contribution: float = 0.0

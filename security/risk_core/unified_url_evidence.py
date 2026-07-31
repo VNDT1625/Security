@@ -29,7 +29,9 @@ from .action_types import (
     SecurityEvidence,
     SessionRiskResult,
 )
-from .types import CriterionStatus, EvidenceV2
+from .config import RiskConfig
+from .evidence import eligible_risk_evidence
+from .types import CriterionResult, CriterionStatus, EvidenceV2
 
 
 _DESTINATION_CRITERIA = frozenset({1, 2, 4, 8, 9, 10, 11, 12, 13, 14, 15, 17, 42, 44, 45})
@@ -69,6 +71,8 @@ class UnifiedUrlEvidenceResult:
 
 def _category(item: EvidenceV2) -> EvidenceCategory:
     finding = item.finding_type
+    if item.criterion_id is None:
+        return EvidenceCategory.DESTINATION_REPUTATION
     if finding in _MALWARE_FINDINGS or item.criterion_id in {34, 35}:
         return EvidenceCategory.MALWARE_EXECUTION
     if finding in _DIRECT_KINDS or finding in {"high_risk_secret_request", "sensitive_data_request"}:
@@ -123,7 +127,7 @@ def _direct_metadata(item: EvidenceV2) -> tuple[bool, dict[str, object]]:
 def criteria_to_security_evidence(
     items: list[EvidenceV2],
     *,
-    criterion_max_weights: dict[int, float] | None = None,
+    category_signal_caps: dict[EvidenceCategory, float],
 ) -> list[SecurityEvidence]:
     output: list[SecurityEvidence] = []
     for item in items:
@@ -133,11 +137,7 @@ def criteria_to_security_evidence(
             continue
         category = _category(item)
         direct, metadata = _direct_metadata(item)
-        # The previous maximum criterion weight becomes a bounded prior for one
-        # detector, not a score to be added.  This keeps a lone contextual clue
-        # weak while independent categories can still strengthen each other.
-        prior = (criterion_max_weights or {}).get(item.criterion_id or 0, 1.5)
-        signal_strength = min(45.0, max(0.0, prior) * 10.0 * item.severity)
+        signal_strength = category_signal_caps[category] * item.severity
         metadata.update(
             {
                 "criterion_id": item.criterion_id,
@@ -161,6 +161,101 @@ def criteria_to_security_evidence(
             )
         )
     return normalize_evidence(output)
+
+
+def build_criterion_trace(
+    items: list[EvidenceV2],
+    config: RiskConfig,
+    normalized: list[SecurityEvidence],
+) -> list[CriterionResult]:
+    """Build the 50-row audit view without calculating a second risk score."""
+    strength_by_id = {
+        item.id: round(item.severity * item.reliability, 4)
+        for item in normalized
+    }
+    results: list[CriterionResult] = []
+    for criterion in config.criteria:
+        group = sorted(
+            (item for item in items if item.criterion_id == criterion.criterion_id),
+            key=lambda item: item.evidence_id,
+        )
+        if not group:
+            results.append(
+                CriterionResult(
+                    criterion_id=criterion.criterion_id,
+                    status=CriterionStatus.NOT_CHECKED,
+                    coverage_weight=criterion.coverage_weight,
+                    name=criterion.name,
+                    reason="Required observation was not collected in this scan mode.",
+                    checked=False,
+                )
+            )
+            continue
+        risky = [item for item in group if eligible_risk_evidence(item)]
+        best = max(
+            risky,
+            key=lambda item: (
+                item.severity * item.evidence_quality,
+                item.authority_tier,
+                item.freshness_factor,
+                item.evidence_id,
+            ),
+            default=None,
+        )
+        if best is not None:
+            summary = str(best.metadata.get("summary", best.finding_type)).strip()
+            results.append(
+                CriterionResult(
+                    criterion_id=criterion.criterion_id,
+                    status=best.status,
+                    coverage_weight=criterion.coverage_weight,
+                    severity=best.severity,
+                    evidence_quality=best.evidence_quality,
+                    evidence_ids=[item.evidence_id for item in group],
+                    incident_key=best.incident_key,
+                    name=criterion.name,
+                    reason=summary or best.finding_type,
+                    applicable=True,
+                    checked=True,
+                    evidence_strength=strength_by_id.get(best.evidence_id, 0.0),
+                )
+            )
+            continue
+        statuses = {item.status for item in group}
+        if CriterionStatus.CLEAN in statuses:
+            status = CriterionStatus.CLEAN
+        elif CriterionStatus.UNAVAILABLE in statuses:
+            status = CriterionStatus.UNAVAILABLE
+        elif CriterionStatus.NOT_CHECKED in statuses:
+            status = CriterionStatus.NOT_CHECKED
+        else:
+            status = CriterionStatus.NOT_APPLICABLE
+        summary = next(
+            (
+                str(item.metadata.get("summary", "")).strip()
+                for item in group
+                if str(item.metadata.get("summary", "")).strip()
+            ),
+            "Check completed without a risk finding.",
+        )
+        results.append(
+            CriterionResult(
+                criterion_id=criterion.criterion_id,
+                status=status,
+                coverage_weight=criterion.coverage_weight,
+                evidence_ids=[item.evidence_id for item in group],
+                name=criterion.name,
+                reason=summary,
+                applicable=status != CriterionStatus.NOT_APPLICABLE,
+                checked=status
+                in {
+                    CriterionStatus.CLEAN,
+                    CriterionStatus.SUSPICIOUS,
+                    CriterionStatus.MALICIOUS,
+                },
+            )
+        )
+    return results
 
 
 def _features(
@@ -205,11 +300,10 @@ def evaluate_url_evidence(
     *,
     action_config: ActionRiskConfig,
     lightgbm: LightGBMRiskAdapter | None = None,
-    criterion_max_weights: dict[int, float] | None = None,
 ) -> UnifiedUrlEvidenceResult:
     before = criteria_to_security_evidence(
         items,
-        criterion_max_weights=criterion_max_weights,
+        category_signal_caps=action_config.url_category_signal_caps,
     )
     after, groups = deduplicate_evidence(before, action_config)
     direct = evaluate_direct_evidence(after, action_config)

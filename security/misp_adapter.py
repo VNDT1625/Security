@@ -46,7 +46,6 @@ def _status_evidence(
         status=status,
         provider_verdict=verdict,
         observed_at=datetime.now(UTC).isoformat(),
-        eligible_for_external_score=False,
         metadata={
             "summary": summary,
             "adapter_status": adapter_status,

@@ -46,13 +46,13 @@ class PolicyEngineV2:
             decision, action = PolicyDecision.WARN, NextAction.DEEP_SCAN
         else:
             has_malicious_finding = any(
-                item.adjusted_score > 0
-                and item.status == CriterionStatus.MALICIOUS
+                item.status == CriterionStatus.MALICIOUS
+                and item.evidence_quality > 0
                 for item in risk_result.criteria
             )
             has_suspicious_finding = any(
-                item.adjusted_score > 0
-                and item.status == CriterionStatus.SUSPICIOUS
+                item.status == CriterionStatus.SUSPICIOUS
+                and item.evidence_quality > 0
                 for item in risk_result.criteria
             )
             if confidence < 40:

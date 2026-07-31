@@ -1621,16 +1621,6 @@ function RiskRing({ result }: { result: Assessment }) {
           <strong>{riskText(result)}</strong>
         </div>
       </div>
-      {result.aiContext && (
-        <div
-          className="ai-score-chip"
-          aria-label="AI hỗ trợ đánh giá ngữ cảnh"
-        >
-          <span>AI HỖ TRỢ NGỮ CẢNH</span>
-          <b>{riskText(result)}</b>
-          <em>Lõi chính sách đưa ra kết luận cuối cùng</em>
-        </div>
-      )}
     </div>
   );
 }

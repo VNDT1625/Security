@@ -38,7 +38,7 @@ def test_http_sandbox_report_is_scored_by_risk_core():
     # A cross-origin action alone may be an ordinary newsletter/payment
     # provider. Criterion 30 now requires a sensitive field on that form.
     assert by_id[30]["status"] == CriterionStatus.CLEAN
-    assert trace.internal_score > 0
+    assert by_id[28]["evidence_strength"] > 0
 
 
 def test_failed_sandbox_is_unavailable_not_clean():
@@ -46,7 +46,7 @@ def test_failed_sandbox_is_unavailable_not_clean():
     trace = InferenceService().assess_sandbox_report(report.url, report)
     by_id = {item["criterion_id"]: item for item in trace.criteria}
     assert by_id[30]["status"] == CriterionStatus.UNAVAILABLE
-    assert by_id[30]["adjusted_score"] == 0
+    assert by_id[30]["evidence_strength"] == 0
 
 
 def test_failed_certificate_validation_is_scored_as_criterion_10():

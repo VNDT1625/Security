@@ -51,7 +51,7 @@ def test_benign_url_has_no_v2_override():
     assert risk.effective_override is None
     assert risk.risk_score < 20
     policy = PolicyEngineV2().decide(risk)
-    assert policy.decision.value == "allow"
+    assert policy.decision.value == "require_review"
 
 
 def test_login_keyword_alone_is_not_a_warning_decision():
@@ -101,8 +101,8 @@ def test_high_confidence_url_model_warns_but_never_blocks() -> None:
     quiet_decision, quiet_score = verdict(0.90)
     loud_decision, loud_score = verdict(MODEL_HIGH_CONFIDENCE)
 
-    # Below the confidence bar the model must not disturb the user at all.
-    assert quiet_decision == "allow"
+    # Thiếu bằng chứng độc lập không được tự động coi là an toàn.
+    assert quiet_decision == "require_review"
     # At the bar it warns, and the floor keeps it out of every blocking band.
     assert loud_decision == "warn"
     assert loud_score >= 20.0

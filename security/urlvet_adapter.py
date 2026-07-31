@@ -88,7 +88,6 @@ def _status_evidence(
         match_strength=1.0,
         authority_tier=2,
         observed_at=datetime.now(UTC).isoformat(),
-        eligible_for_external_score=False,
         metadata={
             "summary": summary[:500],
             "adapter_status": adapter_status,
@@ -131,7 +130,6 @@ def _risk_evidence(
         match_strength=1.0,
         authority_tier=2,
         observed_at=datetime.now(UTC).isoformat(),
-        eligible_for_external_score=False,
         metadata={"summary": summary, "adapter_status": "completed"},
     )
 

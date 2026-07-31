@@ -81,7 +81,7 @@ class Evidence(BaseModel):
 
 
 class RiskCoreTrace(BaseModel):
-    """Additive Risk Core v2 result; all numeric scores use the explicit 0..100 scale."""
+    """Unified evidence-based Risk Core result on the explicit 0..100 scale."""
 
     schema_version: str = "2"
     scoring_version: str
@@ -98,15 +98,23 @@ class RiskCoreTrace(BaseModel):
     confidence_band: str | None = None
     decision: str | None = None
     next_action: str | None = None
-    internal_score: float | None = Field(default=None, ge=0.0, le=100.0)
-    external_corroboration_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    direct_floor: float = Field(default=0.0, ge=0.0, le=100.0)
+    direct_evidence_ids: list[str] = Field(default_factory=list)
+    direct_evidence_kinds: list[str] = Field(default_factory=list)
+    composite_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    rule_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    ml_contribution: float = Field(default=0.0, ge=0.0, le=100.0)
+    ml_model_version: str = "unavailable"
+    missing_fields: list[str] = Field(default_factory=list)
+    unified_evidence_groups: dict[str, float] = Field(default_factory=dict)
+    deduplicated_evidence_count: int = Field(default=0, ge=0)
+    reason_codes: list[str] = Field(default_factory=list)
     coverage: float | None = Field(default=None, ge=0.0, le=100.0)
     agreement: float | None = Field(default=None, ge=0.0, le=100.0)
     freshness: float | None = Field(default=None, ge=0.0, le=100.0)
     criteria: list[dict[str, Any]] = Field(default_factory=list)
     penalties: dict[str, Any] = Field(default_factory=dict)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
-    external_sources: list[dict[str, Any]] = Field(default_factory=list)
     mitigations: list[dict[str, Any]] = Field(default_factory=list)
     overrides: list[dict[str, Any]] = Field(default_factory=list)
     effective_override: dict[str, Any] | None = None
@@ -119,10 +127,6 @@ class RiskCoreTrace(BaseModel):
     timestamps: dict[str, str] = Field(default_factory=dict)
     source_adapter_versions: dict[str, str] = Field(default_factory=dict)
     reasoning: list[str] = Field(default_factory=list)
-    ai_context_weight_percent: int = Field(default=0, ge=0, le=100)
-    ai_context_effective_weight_percent: float = Field(default=0.0, ge=0.0, le=100.0)
-    ai_context_score: float | None = Field(default=None, ge=0.0, le=100.0)
-    blended_final_score: float | None = Field(default=None, ge=0.0, le=100.0)
 
 
 # ---------------------------------------------------------------------- requests

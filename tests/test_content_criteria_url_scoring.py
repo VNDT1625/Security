@@ -68,7 +68,7 @@ def test_http_url_scores_every_criterion_from_20_through_30() -> None:
             criterion_id,
             by_id[criterion_id].status,
         )
-        assert by_id[criterion_id].adjusted_score > 0, criterion_id
+        assert by_id[criterion_id].evidence_strength > 0, criterion_id
 
 
 def test_javascript_rendered_url_scores_every_criterion_from_20_through_30() -> None:
@@ -135,7 +135,7 @@ def test_javascript_rendered_url_scores_every_criterion_from_20_through_30() -> 
             criterion_id,
             by_id[criterion_id].status,
         )
-        assert by_id[criterion_id].adjusted_score > 0, criterion_id
+        assert by_id[criterion_id].evidence_strength > 0, criterion_id
 
 
 def test_price_and_payment_brand_in_advertising_do_not_make_url_commercial() -> None:

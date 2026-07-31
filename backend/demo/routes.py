@@ -70,10 +70,7 @@ from backend.routers.auth import (
     resolve_actor,
 )
 from backend.security_utils import input_sha256, utcnow
-from backend.services.ai_context_weight_service import (
-    get_effective_ai_context_weight_percent,
-    get_url_assessment_cache_enabled,
-)
+from backend.services.ai_context_weight_service import get_url_assessment_cache_enabled
 from backend.services.quota_service import (
     refund_ai_credits,
     reserve_ai_credits,
@@ -95,7 +92,6 @@ _DEMO_URL_CACHE_VERSION = default_config().rules_version
 
 def _demo_url_cache_key(
     payload: URLAnalysisRequest,
-    ai_weight_percent: int,
     service=None,
 ) -> str:
     """Hash all response-shaping inputs without storing operator context in a key."""
@@ -108,7 +104,7 @@ def _demo_url_cache_key(
             str(bool(payload.deep_analysis)),
             str(bool(payload.advanced_analysis)),
             payload.ai_context,
-            str(ai_weight_percent),
+            "unified-risk-core",
             (service or inference_service).adapter_cache_token,
         )
     )
@@ -150,11 +146,15 @@ def _dangerous_criteria(trace) -> list[URLDangerousCriterion]:
     if trace is None:
         return []
     effective_override = trace.effective_override or {}
-    if float(effective_override.get("floor", 0) or 0) < 60:
+    direct_floor = float(trace.direct_floor or 0)
+    if max(float(effective_override.get("floor", 0) or 0), direct_floor) < 60:
         return []
     matched_evidence_ids = {
         str(value)
-        for value in effective_override.get("matched_evidence_ids", [])
+        for value in (
+            trace.direct_evidence_ids
+            or effective_override.get("matched_evidence_ids", [])
+        )
     }
     if not matched_evidence_ids:
         return []
@@ -164,7 +164,7 @@ def _dangerous_criteria(trace) -> list[URLDangerousCriterion]:
         if (
             item.get("status") != "malicious"
             or float(item.get("evidence_quality", 0) or 0) < 0.75
-            or float(item.get("adjusted_score", 0) or 0) <= 0
+            or float(item.get("evidence_strength", 0) or 0) <= 0
             or not matched_evidence_ids.intersection(
                 str(value) for value in item.get("evidence_ids", [])
             )
@@ -174,8 +174,7 @@ def _dangerous_criteria(trace) -> list[URLDangerousCriterion]:
             URLDangerousCriterion(
                 criterion_id=criterion_id,
                 name=str(item.get("name") or f"Tiêu chí {criterion_id}"),
-                contribution=round(float(item.get("adjusted_score", 0) or 0), 2),
-                max_weight=round(float(item.get("max_weight", 0) or 0), 2),
+                contribution=round(float(item.get("evidence_strength", 0) or 0), 2),
                 reason=str(item.get("reason") or "Phát hiện nguy hiểm có độ tin cậy cao."),
             )
         )
@@ -268,7 +267,8 @@ def _risk_core_layer(
     risky = [
         item
         for item in selected
-        if float(item.get("adjusted_score", 0) or 0) > 0
+        if item.get("status") in {"suspicious", "malicious"}
+        and float(item.get("evidence_strength", 0) or 0) > 0
     ]
     unavailable = {"unavailable", "not_checked"}
     has_completed = any(str(item.get("status", "")) not in unavailable for item in selected)
@@ -276,8 +276,8 @@ def _risk_core_layer(
         {
             "criterion": str(item.get("name") or f"Tiêu chí {item.get('criterion_id', '')}"),
             "value": str(item.get("status") or "not_checked"),
-            "triggered": float(item.get("adjusted_score", 0) or 0) > 0,
-            "contribution": round(float(item.get("adjusted_score", 0) or 0), 2),
+            "triggered": item.get("status") in {"suspicious", "malicious"},
+            "contribution": round(float(item.get("evidence_strength", 0) or 0), 2),
             "reason": str(item.get("reason") or ""),
         }
         for item in selected
@@ -285,7 +285,10 @@ def _risk_core_layer(
     return URLScoreLayer(
         layer=layer,
         score=round(
-            min(100.0, sum(float(item.get("adjusted_score", 0) or 0) for item in selected)),
+            max(
+                (float(item.get("evidence_strength", 0) or 0) for item in selected),
+                default=0.0,
+            ),
             2,
         ),
         status="skipped" if skipped else "completed" if has_completed else "unavailable",
@@ -323,11 +326,6 @@ async def analyze_url(
     # Validate URL
     _validate_url(payload.url)
 
-    ai_weight_percent = get_effective_ai_context_weight_percent(
-        db,
-        user_id=actor.user.id if actor.user else None,
-        plan_tier=plan.tier,
-    )
     cache_enabled = get_url_assessment_cache_enabled(
         db,
         default=settings.shared_assessment_cache_enabled,
@@ -343,7 +341,7 @@ async def analyze_url(
         and not payload.deep_analysis
         and not payload.advanced_analysis
     )
-    cache_key = _demo_url_cache_key(payload, ai_weight_percent, user_inference_service)
+    cache_key = _demo_url_cache_key(payload, user_inference_service)
     if cache_eligible:
         cached = _load_demo_url_cache(db, cache_key)
         if cached is not None:
@@ -429,13 +427,7 @@ async def analyze_url(
             or production.contextual_analysis.status != AdapterRunStatus.COMPLETED
         ):
             refund_ai_credits(db, actor, request, kind="evaluation")
-        production = user_inference_service.apply_url_ai_context_weight(
-            production,
-            ai_weight_percent,
-        )
-    # ``risk_score`` is the authoritative response score here: it may include
-    # the admin-configured, confidence-scaled AI Context share.  The nested
-    # Risk Core trace remains available for the unblended technical audit.
+    # ``risk_score`` is produced once by the unified evidence-based Risk Core.
     final_score = round(float(production.risk_score) * 100, 2)
     layers = [
         _risk_core_layer(

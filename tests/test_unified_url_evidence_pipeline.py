@@ -38,7 +38,9 @@ def test_url_criteria_use_the_shared_pipeline_not_legacy_weight_sum() -> None:
     result = assess([_evidence("brand", criterion=5, finding="brand_domain_mismatch")])
 
     assert result.base_risk_score == result.composite_score
-    assert result.internal_score > 0  # Compatibility trace only.
+    assert not hasattr(result, "internal_score")
+    assert not hasattr(result, "external_corroboration_score")
+    assert all(not hasattr(item, "adjusted_score") for item in result.criteria)
     assert result.risk_score == result.composite_score
     assert result.unified_evidence_groups["intent_mismatch"] > 0
 
