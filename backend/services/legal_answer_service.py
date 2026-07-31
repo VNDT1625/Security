@@ -420,7 +420,12 @@ class LegalAnswerService:
         """
         normalized = " ".join(question.casefold().split())
 
+        # Handle common Vietnamese typing variants without inventing facts.
+        normalized = re.sub(r"\btrôm\b", "trộm", normalized)
+        normalized = re.sub(r"\bthông tin cá\b", "thông tin cá nhân", normalized)
+
         actor_patterns: tuple[tuple[str, str], ...] = (
+            (r"\b(?:tôi|mình|chúng tôi|chúng ta)\b", "cá nhân"),
             (r"\b(?:doanh nghiệp|công ty)\b", "doanh nghiệp"),
             (r"\bcơ quan nhà nước\b", "cơ quan nhà nước"),
             (r"\bnhà cung cấp dịch vụ\b", "nhà cung cấp dịch vụ"),
@@ -432,6 +437,8 @@ class LegalAnswerService:
         )
         asset_patterns: tuple[tuple[str, str], ...] = (
             (r"\bdữ liệu cá nhân\b", "dữ liệu cá nhân"),
+            (r"\bthông tin cá nhân\b", "thông tin cá nhân"),
+            (r"\bthông tin khách hàng\b", "thông tin khách hàng"),
             (r"\bdữ liệu khách hàng\b", "dữ liệu khách hàng"),
             (r"\bhệ thống thông tin\b", "hệ thống thông tin"),
             (r"\b(?:nhật ký|log) truy cập\b", "log truy cập"),
@@ -441,6 +448,14 @@ class LegalAnswerService:
             (r"\bhệ thống\b", "hệ thống"),
         )
         action_patterns: tuple[tuple[str, str], ...] = (
+            (
+                r"\b(?:trộm|đánh cắp|lấy cắp|chiếm đoạt|hack)\b",
+                "truy cập hoặc chiếm đoạt dữ liệu trái phép",
+            ),
+            (
+                r"\b(?:xâm nhập|truy cập|lấy|sao chép)\b.{0,40}\b(?:trái phép|trộm|đánh cắp)\b",
+                "truy cập hoặc chiếm đoạt dữ liệu trái phép",
+            ),
             (
                 r"\b(?:rò rỉ|lộ|lọt|mất)\s+(?:lọt\s+)?dữ liệu\b",
                 "ứng phó và thông báo sự cố rò rỉ dữ liệu",
