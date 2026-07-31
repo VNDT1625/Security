@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { PrewiseShell, RiskDial, demoFindings } from "@/components/PrewiseUI";
+import { PrewiseShell, RiskDial } from "@/components/PrewiseUI";
 import { ExportReportButton } from "@/components/ExportReportButton";
 import {
   ReportSiteButton,
@@ -863,8 +863,7 @@ function ResultContent() {
       verdict === "malicious"
     );
   });
-  const evidence =
-    risk.source === "risk_core_v2" ? riskEvidence : (result?.evidence ?? []);
+  const evidence = risk.source === "risk_core_v2" ? riskEvidence : [];
   const findings: Finding[] = evidence.length
     ? evidence.slice(0, 8).map((item: RiskCoreRecord) => ({
         title: displayValue(
@@ -892,9 +891,7 @@ function ResultContent() {
             ? "low"
             : "medium") as Finding["severity"],
       }))
-    : risk.source === "legacy" && isDemo
-      ? demoFindings
-      : [];
+    : [];
   const layers = result?.score_layers ?? [];
   const sandbox = result?.sandbox_report;
   const confidenceValue = risk.confidence;
@@ -908,20 +905,12 @@ function ResultContent() {
     risk.source === "risk_core_v2"
       ? risk.nextAction ||
         risk.decision ||
-        "Chưa có hành động được policy cung cấp."
-      : score >= 70
-        ? "Không truy cập hoặc cung cấp thông tin."
-        : score >= 40
-          ? "Hãy xác minh thêm trước khi tiếp tục."
-          : "Chưa thấy tín hiệu rủi ro nổi bật.";
+        "Chưa có hành động được tầng quyết định cung cấp."
+      : "Chưa đủ dữ liệu để đưa ra kết luận.";
   const description =
     risk.source === "risk_core_v2"
       ? `Mức ${risk.level || "chưa xác định"} · Quyết định ${risk.decision || "chưa được cung cấp"}. UI giữ nguyên kết luận của Risk Core v2.`
-      : score >= 70
-        ? "Trang đích có tín hiệu rủi ro cao. Không nhập mật khẩu, OTP, dữ liệu thẻ hoặc thông tin định danh."
-        : score >= 40
-          ? "Có một số tín hiệu cần xác minh qua kênh chính thức trước khi thao tác."
-          : "Kết quả legacy: mức rủi ro và khuyến nghị được UI suy từ điểm do payload cũ chưa có policy v2.";
+      : "Không suy luận mức nguy hiểm từ điểm cũ khi lõi chấm điểm chưa trả kết quả.";
   const checkedLayers = layers.filter(
     (layer) => layer.status === "completed",
   ).length;
@@ -1731,14 +1720,6 @@ function ResultContent() {
             </div>
           </section>
         )}
-        {risk.source === "legacy" && (
-          <p className="demo-disclosure" role="status">
-            ⚠ Chế độ tương thích legacy: payload không có{" "}
-            <code>risk_core</code>. Điểm có thể được chuẩn hóa từ thang 0..1;
-            level/khuyến nghị cục bộ không phải quyết định policy v2.
-          </p>
-        )}
-
         <details className="result-guide">
           <summary>Cách đọc và giới hạn của kết quả</summary>
           <p>
