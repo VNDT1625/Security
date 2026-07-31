@@ -941,10 +941,12 @@ function ResultContent() {
   const layers = result?.score_layers ?? [];
   const sandbox = result?.sandbox_report;
   const confidenceValue = risk.confidence;
+  const confidenceNumber =
+    typeof confidenceValue === "number" && Number.isFinite(confidenceValue)
+      ? Math.max(0, Math.min(100, Math.round(confidenceValue)))
+      : null;
   const confidence =
-    confidenceValue != null
-      ? `${Math.round(confidenceValue)}%`
-      : "Không được cung cấp";
+    confidenceNumber == null ? "Không được cung cấp" : `${confidenceNumber}%`;
   const verdict =
     risk.source === "risk_core_v2"
       ? risk.nextAction ||
@@ -1156,9 +1158,9 @@ function ResultContent() {
             <p>{description}</p>
             <div>
               <b>Độ tin cậy của kết luận</b>
-              <strong>{confidence}%</strong>
+              <strong>{confidence}</strong>
               <i aria-hidden>
-                <em style={{ width: `${confidence}%` }} />
+                <em style={{ width: `${confidenceNumber ?? 0}%` }} />
               </i>
             </div>
           </div>
