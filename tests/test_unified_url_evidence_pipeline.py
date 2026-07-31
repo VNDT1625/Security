@@ -2,6 +2,7 @@ from dataclasses import replace
 
 from security.risk_core import LightGBMRiskAdapter, PolicyEngineV2, RiskEngineV2, assess
 from security.risk_core.types import CriterionStatus, EvidenceV2, ProviderVerdict
+from security.risk_core.url_overrides import URL_OVERRIDE_RULES
 
 
 def _evidence(
@@ -103,3 +104,25 @@ def test_no_observation_is_not_treated_as_safe() -> None:
     assert result.missing_fields
     assert result.confidence_score < 40
     assert policy.decision.value == "require_review"
+
+
+def test_url_obfuscation_alone_never_blocks() -> None:
+    obfuscation = replace(
+        _evidence(
+            "obfuscation",
+            criterion=18,
+            finding="url_obfuscation",
+            severity=0.6,
+            quality=0.8,
+        ),
+        status=CriterionStatus.SUSPICIOUS,
+        provider_verdict=ProviderVerdict.SUSPICIOUS,
+    )
+
+    result = assess([obfuscation], override_rules=URL_OVERRIDE_RULES)
+    policy = PolicyEngineV2().decide(result)
+
+    assert result.direct_floor == 0
+    assert result.effective_override is None
+    assert result.risk_score < 20
+    assert policy.decision.value not in {"soft_block", "hard_block"}

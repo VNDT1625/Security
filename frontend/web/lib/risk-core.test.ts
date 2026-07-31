@@ -39,4 +39,39 @@ describe("mapRiskResult", () => {
     });
     expect(result).toMatchObject({ score: 60, level: "high", decision: "BLOCK" });
   });
+
+  it("ưu tiên bằng chứng lõi và giữ nguyên lý do cùng bằng chứng của mức sàn", () => {
+    const matchedEvidenceIds = ["payee", "legal-identity", "metadata-identity"];
+    const reason =
+      "Trang yêu cầu thanh toán nhưng chưa xác minh người nhận và danh tính pháp lý.";
+    const result = mapRiskResult({
+      evidence: [{ evidence_id: "outer-only", finding_type: "url_obfuscation" }],
+      decision: "BLOCK",
+      risk_core: {
+        schema_version: "2",
+        final_score: 60,
+        confidence: 66,
+        evidence: matchedEvidenceIds.map((evidence_id) => ({
+          evidence_id,
+          status: "suspicious",
+        })),
+        effective_override: {
+          rule_id: "url-unverified-payee-without-business-identity-v1",
+          matched_evidence_ids: matchedEvidenceIds,
+          reason,
+        },
+      },
+    });
+
+    expect(result.evidence.map((item) => item.evidence_id)).toEqual(
+      matchedEvidenceIds,
+    );
+    expect(result.evidence).not.toContainEqual(
+      expect.objectContaining({ evidence_id: "outer-only" }),
+    );
+    expect(result.effectiveOverride).toMatchObject({
+      matched_evidence_ids: matchedEvidenceIds,
+      reason,
+    });
+  });
 });
