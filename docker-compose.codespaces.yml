@@ -1,8 +1,31 @@
 services:
+  backend:
+    # Keep live Codespaces fixes available even when rebuilding the large
+    # backend image is deferred. The production container remains read-only.
+    environment:
+      CLOUDFLARE_ACCOUNT_ID: ""
+      CLOUDFLARE_API_TOKEN: ""
+      PREWISE_LEGAL_RAG_DB: /app/data/legal_rag/rag.sqlite3
+      PREWISE_LEGAL_RAG_REQUIRE_MANIFEST: "true"
+    volumes:
+      - ./security/sandbox_worker.py:/app/security/sandbox_worker.py:ro
+      - ./data/legal_rag:/app/data/legal_rag:ro
+
+  mcp:
+    environment:
+      PREWISE_LEGAL_RAG_DB: /app/data/legal_rag/rag.sqlite3
+      PREWISE_LEGAL_RAG_REQUIRE_MANIFEST: "true"
+    volumes:
+      - ./data/legal_rag:/app/data/legal_rag:ro
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     network_mode: host
+    # The Codespaces preparation script writes the tunnel token as mode 0600
+    # owned by the vscode user. Match that UID/GID so cloudflared can read the
+    # secret without weakening its filesystem permissions.
+    user: "1000:1000"
     command: ["tunnel", "--no-autoupdate", "--protocol", "http2", "run", "--token-file", "/run/secrets/tunnel-token"]
     secrets:
       - tunnel-token

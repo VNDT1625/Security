@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "corpus_release_id": "vn-official-2026-07-31-r3",
+  "jurisdictions": [
+    "VN"
+  ],
+  "verified_through": "2026-07-31",
+  "coverage_domains": [
+    "personal_data",
+    "ai",
+    "cybersecurity",
+    "copyright",
+    "electronic_transactions",
+    "data_governance",
+    "ecommerce"
+  ],
+  "sqlite_sha256": "968ea81fed4d9b11eb93db4e5812943d4e0881fd51ba2c9f2602bc7461c60ac7",
+  "chunk_count": 279,
+  "document_count": 7,
+  "source_revision": "official-government-sources-fetched-2026-07-31-utf8-metadata"
+}

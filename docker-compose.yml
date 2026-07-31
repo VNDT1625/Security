@@ -1,3 +1,5 @@
+name: security-runpod
+
 services:
   backend:
     build:

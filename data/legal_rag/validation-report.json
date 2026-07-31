@@ -1,0 +1,28 @@
+{
+  "available": true,
+  "ready": true,
+  "quick_check": "ok",
+  "reason_codes": [],
+  "snapshot": {
+    "release_id": "vn-official-2026-07-31-r3",
+    "schema_version": 1,
+    "sha256": "968ea81fed4d9b11eb93db4e5812943d4e0881fd51ba2c9f2602bc7461c60ac7",
+    "verified_through": "2026-07-31",
+    "chunk_count": 279,
+    "searchable_chunk_count": 279,
+    "document_count": 7,
+    "searchable_document_count": 7,
+    "coverage_domains": [
+      "personal_data",
+      "ai",
+      "cybersecurity",
+      "copyright",
+      "electronic_transactions",
+      "data_governance",
+      "ecommerce"
+    ],
+    "manifest_verified": true
+  },
+  "invalid_source_count": 0,
+  "missing_provenance_count": 0
+}
