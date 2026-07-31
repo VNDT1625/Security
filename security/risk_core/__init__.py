@@ -58,11 +58,19 @@ def validate_config(config: RiskConfig) -> None:
 
 
 class RiskEngineV2:
-    """Small stable facade over deterministic two-phase evidence scoring."""
+    """Stable facade over the shared evidence scoring pipeline."""
 
-    def __init__(self, config: RiskConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: RiskConfig | None = None,
+        *,
+        action_config: ActionRiskConfig | None = None,
+        lightgbm: LightGBMRiskAdapter | None = None,
+    ) -> None:
         self.config = config or default_config()
         self.config.validate()
+        self.action_config = action_config or default_action_risk_config()
+        self.lightgbm = lightgbm
 
     def evaluate(
         self,
@@ -70,7 +78,13 @@ class RiskEngineV2:
         *,
         override_rules: tuple[OverrideRule, ...] = (),
     ) -> RiskResultV2:
-        return assess(evidence, config=self.config, override_rules=override_rules)
+        return assess(
+            evidence,
+            config=self.config,
+            override_rules=override_rules,
+            action_config=self.action_config,
+            lightgbm=self.lightgbm,
+        )
 
 
 __all__ = [

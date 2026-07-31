@@ -1,45 +1,25 @@
-"""Two-phase deterministic Risk Core v2 orchestration."""
+"""URL orchestration through the shared evidence-based risk pipeline."""
 
 from __future__ import annotations
 
+from .action_config import ActionRiskConfig, default_action_risk_config
+from .action_lightgbm import LightGBMRiskAdapter
+from .config import RiskConfig, default_config
 from .confidence import compute_confidence
-from .config import DANGEROUS_CRITERION_IDS, RiskConfig, default_config
 from .evidence import resolve_evidence
 from .overrides import OverrideRule, evaluate_overrides
 from .scoring import score_external, score_internal
-from .types import CriterionStatus, EvidenceV2, OverrideResult, RiskResultV2
-
-# Only direct, independently actionable hazards may force an immediate danger
-# floor. Contextual or circumstantial criteria remain additive and can still be
-# escalated by the explicit multi-signal rules in ``url_overrides.py``.
-_IMMEDIATE_DANGER_FINDINGS = frozenset(
-    {
-        "public_malicious_listing",
-        "credential_exfiltration",
-        "credential_form_with_external_destination",
-        "sensitive_form_with_external_destination",
-        "untrusted_sensitive_form_destination",
-        "credential_field_with_deception_or_exfiltration",
-        "cross_origin_form_action",
-        "external_form_action",
-        "canary_exfiltration_blocked",
-        "private_network_request_blocked",
-        "websocket_request_blocked",
-        "disguised_executable_download",
-        "malicious_javascript_behavior",
-    }
-)
+from .types import EvidenceV2, RiskResultV2
+from .unified_url_evidence import evaluate_url_evidence
 
 
 def _level(score: float) -> str:
-    if score >= 80:
+    if score >= 85:
         return "critical"
     if score >= 60:
         return "dangerous"
-    if score >= 40:
+    if score >= 35:
         return "suspicious"
-    if score >= 20:
-        return "caution"
     return "low"
 
 
@@ -48,84 +28,68 @@ def assess(
     *,
     config: RiskConfig | None = None,
     override_rules: tuple[OverrideRule, ...] = (),
+    action_config: ActionRiskConfig | None = None,
+    lightgbm: LightGBMRiskAdapter | None = None,
 ) -> RiskResultV2:
+    """Assess URL evidence without a second weighted scoring core.
+
+    ``score_internal`` and ``score_external`` below only preserve the old trace
+    fields for clients that display the 50 criteria.  The returned risk score is
+    solely the shared direct-floor/composite pipeline.
+    """
     cfg = config or default_config()
     cfg.validate()
     resolved, conflicts = resolve_evidence(evidence)
-    internal, criteria, internal_items = score_internal(resolved, cfg)
-    external, awards = score_external(resolved, cfg, {e.evidence_id for e in internal_items})
-    base = min(100.0, internal + external)
-    overrides, effective = evaluate_overrides(resolved, override_rules)
-    immediate_evidence_ids = {
-        item.evidence_id
-        for item in internal_items
-        if item.criterion_id in DANGEROUS_CRITERION_IDS
-        and item.status == CriterionStatus.MALICIOUS
-        and item.evidence_quality >= 0.75
-        and item.adjusted_score > 0
-        and item.finding_type in _IMMEDIATE_DANGER_FINDINGS
-        and not item.source_id.startswith("web_context:")
-    }
-    dangerous = sorted(
-        (
-            item
-            for item in criteria
-            if item.criterion_id in DANGEROUS_CRITERION_IDS
-            and item.status == CriterionStatus.MALICIOUS
-            and item.evidence_quality >= 0.75
-            and item.adjusted_score > 0
-            and bool(immediate_evidence_ids.intersection(item.evidence_ids))
-        ),
-        key=lambda item: item.criterion_id,
+    shared = evaluate_url_evidence(
+        resolved,
+        action_config=action_config or default_action_risk_config(),
+        lightgbm=lightgbm,
+        criterion_max_weights={item.criterion_id: item.max_weight for item in cfg.criteria},
     )
-    if dangerous:
-        immediate = OverrideResult(
-            rule_id="high-confidence-dangerous-criterion-v1",
-            floor=60.0,
-            minimum_decision="soft_block",
-            matched_evidence_ids=tuple(
-                sorted(
-                    {
-                        evidence_id
-                        for item in dangerous
-                        for evidence_id in item.evidence_ids
-                        if evidence_id in immediate_evidence_ids
-                    }
-                )
-            ),
-            reason=(
-                "At least one high-confidence access-hazard criterion was malicious: "
-                + ", ".join(str(item.criterion_id) for item in dangerous)
-                + "."
-            ),
-        )
-        overrides.append(immediate)
-        overrides.sort(
-            key=lambda item: (-item.floor, -len(item.matched_evidence_ids), item.rule_id)
-        )
-        effective = overrides[0]
-    score = max(base, effective.floor if effective else 0.0)
-    confidence = compute_confidence(criteria, resolved)
-    band = "high" if confidence.score >= 70 else "medium" if confidence.score >= 40 else "low"
-    unavailable = [c.criterion_id for c in criteria if c.status.value == "unavailable"]
-    not_checked = [c.criterion_id for c in criteria if c.status.value == "not_checked"]
+
+    # Compatibility projection; never use these values for final risk.
+    internal, criteria, internal_items = score_internal(resolved, cfg)
+    external, awards = score_external(resolved, cfg, {item.evidence_id for item in internal_items})
+    legacy_confidence = compute_confidence(criteria, resolved)
+
+    overrides, effective = evaluate_overrides(resolved, override_rules)
+    score = max(
+        shared.direct.floor,
+        shared.composite_score,
+        effective.floor if effective else 0.0,
+    )
+    confidence = shared.confidence
+    band = "high" if confidence >= 70 else "medium" if confidence >= 40 else "low"
+    unavailable = [item.criterion_id for item in criteria if item.status.value == "unavailable"]
+    not_checked = [item.criterion_id for item in criteria if item.status.value == "not_checked"]
     reasoning = [
-        f"Internal evidence contributed {internal:.2f}/80.",
-        f"External corroboration contributed {external:.2f}/20.",
+        "All URL criteria were normalized into the shared evidence pipeline.",
+        f"Deduplicated composite evidence contributed {shared.composite_score:.2f}/100.",
     ]
+    if shared.direct.floor:
+        reasoning.append(f"Confirmed direct evidence applied floor {shared.direct.floor:.2f}.")
     if effective:
         reasoning.append(f"Override {effective.rule_id} applied floor {effective.floor:.2f}.")
+
+    category_scores = {
+        category.value: round(
+            max(item.score for item in shared.groups if item.category == category), 4
+        )
+        for category in {item.category for item in shared.groups}
+    }
     return RiskResultV2(
-        base_risk_score=base,
+        base_risk_score=shared.composite_score,
         risk_score=score,
         risk_level=_level(score),
-        confidence_score=confidence.score,
+        confidence_score=confidence,
         confidence_band=band,
         internal_score=internal,
         external_corroboration_score=external,
-        coverage=confidence.coverage,
-        agreement=confidence.agreement,
-        freshness=confidence.freshness,
+        # Existing clients still receive their old coverage components.  They do
+        # not influence the new score or direct-evidence policy.
+        coverage=legacy_confidence.coverage,
+        agreement=legacy_confidence.agreement,
+        freshness=legacy_confidence.freshness,
         criteria=criteria,
         evidence=resolved,
         external_sources=awards,
@@ -137,4 +101,15 @@ def assess(
         unavailable_checks=unavailable,
         not_checked_checks=not_checked,
         reasoning=reasoning,
+        direct_floor=shared.direct.floor,
+        composite_score=shared.composite_score,
+        rule_score=shared.rule_score,
+        ml_contribution=shared.ml.risk_contribution,
+        ml_model_version=shared.ml.model_version,
+        missing_fields=shared.missing_fields,
+        unified_evidence_groups=category_scores,
+        deduplicated_evidence_count=len(shared.after_dedup),
+        reason_codes=sorted(
+            {item.reason_code for item in shared.after_dedup if item.reason_code}
+        ),
     )

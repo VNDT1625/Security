@@ -161,6 +161,17 @@ class RiskResultV2:
     scan_started_at: str = ""
     scan_cutoff_at: str = ""
     scan_completed_at: str = ""
+    # The 50 URL criteria remain available for existing clients, but final risk
+    # is decided by the shared evidence pipeline exposed by these fields.
+    direct_floor: float = 0.0
+    composite_score: float = 0.0
+    rule_score: float = 0.0
+    ml_contribution: float = 0.0
+    ml_model_version: str = "unavailable"
+    missing_fields: list[str] = field(default_factory=list)
+    unified_evidence_groups: dict[str, float] = field(default_factory=dict)
+    deduplicated_evidence_count: int = 0
+    reason_codes: list[str] = field(default_factory=list)
 
 
 class PolicyDecision(StrEnum):

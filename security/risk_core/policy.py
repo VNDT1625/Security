@@ -29,7 +29,11 @@ class PolicyEngineV2:
         selected = profile or PolicyProfile()
         score = risk_result.risk_score
         confidence = risk_result.confidence_score
-        if score >= 80:
+        # Direct evidence was already validated by the shared pipeline.  A model
+        # or low confidence cannot weaken this security floor.
+        if risk_result.direct_floor >= 90:
+            decision, action = PolicyDecision.HARD_BLOCK, NextAction.REPORT
+        elif score >= 85:
             decision, action = PolicyDecision.HARD_BLOCK, NextAction.REPORT
         elif score >= 60:
             decision, action = selected.dangerous_decision, NextAction.SANDBOX
