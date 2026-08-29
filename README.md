@@ -1,5 +1,7 @@
 # Prewise
 
+<p align="right"><strong>English</strong> · <a href="README.vi.md">Tiếng Việt</a></p>
+
 **Pre-action risk control for people, applications, and AI agents.**
 
 Prewise inspects untrusted URLs, messages, prompts, files, and planned actions
