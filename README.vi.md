@@ -93,8 +93,8 @@ python -m tools.benchmark_release
 Yêu cầu Python 3.11+, Node.js 20+ và Docker Compose nếu dùng container:
 
 ```bash
-git clone https://github.com/VNDT1625/Security.git
-cd Security
+git clone https://github.com/VNDT1625/Prewise.git
+cd Prewise
 cp .env.example .env
 docker compose up -d --build
 ```

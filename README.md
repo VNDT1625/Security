@@ -187,8 +187,8 @@ quality gates.
 ### Docker Compose
 
 ```bash
-git clone https://github.com/VNDT1625/Security.git
-cd Security
+git clone https://github.com/VNDT1625/Prewise.git
+cd Prewise
 cp .env.example .env
 docker compose up -d --build
 ```
@@ -217,8 +217,8 @@ in the `armor-data` Docker volume.
 ### Local development
 
 ```bash
-git clone https://github.com/VNDT1625/Security.git
-cd Security
+git clone https://github.com/VNDT1625/Prewise.git
+cd Prewise
 python -m venv .venv
 ```
 
