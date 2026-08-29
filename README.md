@@ -18,6 +18,37 @@ available evidence when a deployment explicitly configures them.
 > Prewise is a decision-support and risk-control system, not a replacement for
 > a SOC, malware laboratory, or forensic deepfake analysis.
 
+## Product walkthrough
+
+### Interactive landing experience
+
+The landing page introduces Prewise as a digital witness through a responsive,
+cursor-driven visual system.
+
+<p align="center">
+  <img src="docs/assets/readme/prewise-eye-hover.gif" alt="Prewise interactive eye hover effect" width="960" />
+</p>
+
+### URL assessment and explainable Risk Core
+
+Submit a suspicious URL, select the analysis depth, and inspect the resulting
+signals, rule evidence, and Risk Core breakdown instead of receiving only an
+opaque score.
+
+<p align="center">
+  <img src="docs/assets/readme/prewise-url-risk-core.gif" alt="Prewise URL analysis and Risk Core evidence workflow" width="960" />
+</p>
+
+### ChatGPT integration over MCP
+
+Add Prewise as a ChatGPT MCP connector, authorize the security tool, and invoke
+the live assessment workflow directly from a conversation. The credential field
+is intentionally masked in this recording.
+
+<p align="center">
+  <img src="docs/assets/readme/prewise-chatgpt-mcp.gif" alt="ChatGPT connecting to and invoking Prewise through MCP" width="960" />
+</p>
+
 ## Why Prewise
 
 - **One Risk Core, multiple surfaces.** The same assessment and policy concepts

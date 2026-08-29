@@ -10,6 +10,32 @@ Kiến trúc local-first cho phép các luồng URL, văn bản, prompt, tệp v
 
 > Prewise là hệ thống hỗ trợ quyết định và kiểm soát rủi ro, không thay thế SOC, phòng phân tích malware hoặc quy trình giám định deepfake chuyên nghiệp.
 
+## Minh họa sản phẩm
+
+### Trải nghiệm landing page tương tác
+
+Landing page giới thiệu Prewise như một “nhân chứng số” thông qua hệ thống hình ảnh phản hồi theo chuyển động con trỏ.
+
+<p align="center">
+  <img src="docs/assets/readme/prewise-eye-hover.gif" alt="Hiệu ứng mắt tương tác trên landing page Prewise" width="960" />
+</p>
+
+### Phân tích URL và Risk Core có thể giải thích
+
+Nhập URL đáng ngờ, chọn mức độ phân tích và kiểm tra signal, bằng chứng từ rule cùng phân rã Risk Core thay vì chỉ nhận một điểm số khó giải thích.
+
+<p align="center">
+  <img src="docs/assets/readme/prewise-url-risk-core.gif" alt="Luồng phân tích URL và bằng chứng Risk Core của Prewise" width="960" />
+</p>
+
+### Tích hợp ChatGPT qua MCP
+
+Thêm Prewise như một MCP connector của ChatGPT, cấp quyền cho security tool và gọi luồng đánh giá trực tiếp trong cuộc hội thoại. Trường credential đã được chủ động che trong bản ghi.
+
+<p align="center">
+  <img src="docs/assets/readme/prewise-chatgpt-mcp.gif" alt="ChatGPT kết nối và gọi Prewise thông qua MCP" width="960" />
+</p>
+
 ## Điểm nổi bật
 
 - **Một Risk Core, nhiều bề mặt:** web, Chrome Extension Manifest V3, Electron desktop, REST API và MCP server dùng chung mô hình đánh giá và policy.
